@@ -2,18 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! gpu3d.hpp
 //!
-use crate::gpu_3d::structs::{Gpu3D, Matrix, Polygon, Vertex};
-
-fn safe_clone<T>(dest: &mut Vec<T>, src: &mut Vec<T>, size: usize)
-where
-    T: Default + Clone,
-{
-    let src: Vec<T> = core::mem::take(src);
-    for (d, s) in dest.iter_mut().zip(src.iter()).take(size) {
-        *d = s.clone();
-    }
-    let _ = core::mem::replace(dest, src);
-}
+use crate::gpu_3d::structs::{Gpu3D, Matrix, Vertex};
 
 impl Gpu3D {
     // ============= private method =============
@@ -77,8 +66,11 @@ impl Gpu3D {
             let geo_vert_count = self.geo_vert_count as usize;
             let geo_poly_count = self.geo_poly_count as usize;
 
-            safe_clone(&mut self.rend_vert, &mut self.geo_vert, geo_vert_count);
-            safe_clone(&mut self.rend_poly, &mut self.geo_poly, geo_poly_count);
+            // The geometry lists become the render lists. Swapping keeps both
+            // buffers at full capacity (the geometry side is refilled from
+            // index 0 next frame).
+            core::mem::swap(&mut self.rend_vert, &mut self.geo_vert);
+            core::mem::swap(&mut self.rend_poly, &mut self.geo_poly);
 
             // #[cfg(feature = "tracing")]
             // tracing::info!("Geo_vert_count: {}", geo_vert_count);
@@ -117,8 +109,10 @@ impl Gpu3D {
                         // #[cfg(feature = "tracing")]
                         // tracing::info!("Poly {} ww == 0?", i);
                     } else {
-                        let width = self.viewport.x2 - self.viewport.x1 + 1;
-                        let height = self.viewport.y1 - self.viewport.y2 + 1;
+                        // In i32: x2 = 255 (full-screen viewport) overflowed u8,
+                        // giving width 0 in release and a panic in debug builds.
+                        let width = i32::from(self.viewport.x2) - i32::from(self.viewport.x1) + 1;
+                        let height = i32::from(self.viewport.y1) - i32::from(self.viewport.y2) + 1;
                         // let width = (self.viewport.x2 as u16 - self.viewport.x1 as u16 + 1) & 0x1FF;
                         // let height = (self.viewport.y1 - self.viewport.y2 + 1) & 0xFF;
 
@@ -126,10 +120,12 @@ impl Gpu3D {
                         // let width = (self.viewport.x2 - self.viewport.x1 + 1) & 0x1FF;
                         // let height = self.viewport.y2 - self.viewport.y1 + 1;
 
-                        let screen_x =
-                            (((xx + ww) * width as i32) / (ww << 1)) + self.viewport.x1 as i32;
-                        let screen_y =
-                            (((-yy + ww) * height as i32) / (ww << 1)) + self.viewport.y2 as i32;
+                        let screen_x = ((((i64::from(xx) + i64::from(ww)) * i64::from(width))
+                            / (i64::from(ww) << 1)) as i32)
+                            .wrapping_add(i32::from(self.viewport.x1));
+                        let screen_y = ((((i64::from(ww) - i64::from(yy)) * i64::from(height))
+                            / (i64::from(ww) << 1)) as i32)
+                            .wrapping_add(i32::from(self.viewport.y2));
 
                         final_x = screen_x & 0x1FF;
                         final_y = screen_y & 0xFF;
@@ -153,31 +149,14 @@ impl Gpu3D {
                 }
             }
 
-            //Sort polygons by translucency
-            let mut index = 0;
-            let mut opaque_count = 0;
-            let mut temp: Vec<Polygon> = Vec::new(); // [2048]
-
-            for i in 0..self.rend_poly_count as usize {
-                if !self.rend_poly[i].translucent {
-                    temp[index] = self.rend_poly[i].clone();
-                    index += 1;
-                    opaque_count += 1;
-                }
-            }
-
-            for i in 0..self.rend_poly_count as usize {
-                if self.rend_poly[i].translucent {
-                    temp[index] = self.rend_poly[i].clone();
-                    index += 1;
-                }
-            }
-
-            safe_clone(
-                &mut self.rend_poly,
-                &mut temp,
-                self.rend_poly_count as usize,
-            );
+            // Sort polygons by translucency: opaque first, then translucent
+            // (stable, so submission order is kept within each group).
+            let count = self.rend_poly_count as usize;
+            let opaque_count = self.rend_poly[..count]
+                .iter()
+                .filter(|p| !p.translucent)
+                .count();
+            self.rend_poly[..count].sort_by_key(|p| p.translucent);
 
             // y-sorting: opaque = false -> translucent = true
             if (self.flush_mode & 0x1) != 0 {
@@ -451,9 +430,9 @@ impl Gpu3D {
 
         //viewport y-coords are upside down
         self.viewport.x1 = (word & 0xFF) as u8;
-        self.viewport.y1 = ((191 - ((word >> 8) & 0xFF)) & 0xFF) as u8;
+        self.viewport.y1 = 191_u32.wrapping_sub((word >> 8) & 0xFF) as u8;
         self.viewport.x2 = ((word >> 16) & 0xFF) as u8;
-        self.viewport.y2 = ((191 - ((word >> 24) & 0xFF)) & 0xFF) as u8;
+        self.viewport.y2 = 191_u32.wrapping_sub((word >> 24) & 0xFF) as u8;
     }
 
     pub fn box_test(&mut self) {
@@ -505,26 +484,26 @@ impl Gpu3D {
             let y = c.coords[1];
             let z = c.coords[2];
 
-            c.coords[0] = (x * self.clip_mtx.m[0][0]
-                + y * self.clip_mtx.m[1][0]
-                + z * self.clip_mtx.m[2][0]
-                + 0x1000 * self.clip_mtx.m[3][0])
-                >> 12;
-            c.coords[1] = (x * self.clip_mtx.m[0][1]
-                + y * self.clip_mtx.m[1][1]
-                + z * self.clip_mtx.m[2][1]
-                + 0x1000 * self.clip_mtx.m[3][1])
-                >> 12;
-            c.coords[2] = (x * self.clip_mtx.m[0][2]
-                + y * self.clip_mtx.m[1][2]
-                + z * self.clip_mtx.m[2][2]
-                + 0x1000 * self.clip_mtx.m[3][2])
-                >> 12;
-            c.coords[3] = (x * self.clip_mtx.m[0][3]
-                + y * self.clip_mtx.m[1][3]
-                + z * self.clip_mtx.m[2][3]
-                + 0x1000 * self.clip_mtx.m[3][3])
-                >> 12;
+            c.coords[0] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][0])
+                + i64::from(y) * i64::from(self.clip_mtx.m[1][0])
+                + i64::from(z) * i64::from(self.clip_mtx.m[2][0])
+                + 0x1000 * i64::from(self.clip_mtx.m[3][0]))
+                >> 12) as i32;
+            c.coords[1] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][1])
+                + i64::from(y) * i64::from(self.clip_mtx.m[1][1])
+                + i64::from(z) * i64::from(self.clip_mtx.m[2][1])
+                + 0x1000 * i64::from(self.clip_mtx.m[3][1]))
+                >> 12) as i32;
+            c.coords[2] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][2])
+                + i64::from(y) * i64::from(self.clip_mtx.m[1][2])
+                + i64::from(z) * i64::from(self.clip_mtx.m[2][2])
+                + 0x1000 * i64::from(self.clip_mtx.m[3][2]))
+                >> 12) as i32;
+            c.coords[3] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][3])
+                + i64::from(y) * i64::from(self.clip_mtx.m[1][3])
+                + i64::from(z) * i64::from(self.clip_mtx.m[2][3])
+                + 0x1000 * i64::from(self.clip_mtx.m[3][3]))
+                >> 12) as i32;
         }
 
         let mut vertices;
@@ -612,10 +591,10 @@ impl Gpu3D {
         });
 
         for col in 0..3 {
-            let mut result = (bark[0] * self.vector_mtx.m[0][col]
-                + bark[1] * self.vector_mtx.m[1][col]
-                + bark[2] * self.vector_mtx.m[2][col])
-                >> 9;
+            let mut result = ((0..3)
+                .map(|k| i64::from(bark[k]) * i64::from(self.vector_mtx.m[k][col]))
+                .sum::<i64>()
+                >> 9) as i32;
             result |= (result & 0x1000) * 0xF;
             self.vec_test_result[col] = result as i16;
         }
@@ -648,9 +627,10 @@ impl Gpu3D {
                     // vec-matrix setting
                     for i in 0..4 {
                         for j in 0..4 {
-                            let mut temp_calc = 0;
+                            let mut temp_calc = 0_i64;
                             for k in 0..4 {
-                                temp_calc += (self.mult_params.m[i][k] * temp.m[k][j]) as i64;
+                                temp_calc +=
+                                    i64::from(self.mult_params.m[i][k]) * i64::from(temp.m[k][j]);
                             }
                             self.vector_mtx.m[i][j] = (temp_calc >> 12) as i32;
                         }
@@ -669,9 +649,9 @@ impl Gpu3D {
         // target setting
         for i in 0..4 {
             for j in 0..4 {
-                let mut temp_calc = 0;
+                let mut temp_calc = 0_i64;
                 for k in 0..4 {
-                    temp_calc += (self.mult_params.m[i][k] * temp.m[k][j]) as i64;
+                    temp_calc += i64::from(self.mult_params.m[i][k]) * i64::from(temp.m[k][j]);
                 }
                 target.m[i][j] = (temp_calc >> 12) as i32;
             }
@@ -684,28 +664,35 @@ impl Gpu3D {
 
     pub fn normal(&mut self) {
         // Let's calculate some lighting!
-        self.normal_vector[0] = (((self.cmd_params[0] & 0x3FF) << 6) >> 6) as i16;
-        self.normal_vector[1] = ((((self.cmd_params[0] >> 10) & 0x3FF) << 6) >> 6) as i16;
-        self.normal_vector[2] = ((((self.cmd_params[0] >> 20) & 0x3FF) << 6) >> 6) as i16;
+        // Signed 10-bit components (the shifts were done on u32 and never
+        // sign-extended).
+        let sext10 = |v: u32| (((v & 0x3FF) << 6) as u16 as i16) >> 6;
+        self.normal_vector[0] = sext10(self.cmd_params[0]);
+        self.normal_vector[1] = sext10(self.cmd_params[0] >> 10);
+        self.normal_vector[2] = sext10(self.cmd_params[0] >> 20);
         let normal_vector_i32 = self.normal_vector.map(|x| x as i32);
 
         if self.teximage_param.transformation_mode == 2 {
-            self.current_texcoords[0] += ((normal_vector_i32[0] * self.texture_mtx.m[0][0]
-                + normal_vector_i32[1] * self.texture_mtx.m[1][0]
-                + normal_vector_i32[2] * self.texture_mtx.m[2][0])
-                >> 21) as i16;
-            self.current_texcoords[1] += ((normal_vector_i32[0] * self.texture_mtx.m[0][1]
-                + normal_vector_i32[1] * self.texture_mtx.m[1][1]
-                + normal_vector_i32[2] * self.texture_mtx.m[2][1])
-                >> 21) as i16;
+            self.current_texcoords[0] = self.current_texcoords[0].wrapping_add(
+                ((0..3)
+                    .map(|k| i64::from(normal_vector_i32[k]) * i64::from(self.texture_mtx.m[k][0]))
+                    .sum::<i64>()
+                    >> 21) as i16,
+            );
+            self.current_texcoords[1] = self.current_texcoords[1].wrapping_add(
+                ((0..3)
+                    .map(|k| i64::from(normal_vector_i32[k]) * i64::from(self.texture_mtx.m[k][1]))
+                    .sum::<i64>()
+                    >> 21) as i16,
+            );
         }
 
         let mut normal_vec = [0, 0, 0];
         for (i, normal) in normal_vec.iter_mut().enumerate() {
-            *normal = normal_vector_i32[0] * self.vector_mtx.m[0][i]
-                + normal_vector_i32[1] * self.vector_mtx.m[1][i]
-                + normal_vector_i32[2] * self.vector_mtx.m[2][i];
-            *normal >>= 12;
+            *normal = ((0..3)
+                .map(|k| i64::from(normal_vector_i32[k]) * i64::from(self.vector_mtx.m[k][i]))
+                .sum::<i64>()
+                >> 12) as i32;
         }
 
         let mut r = (self.emission_color & 0x1F) as u32;
@@ -723,18 +710,19 @@ impl Gpu3D {
 
             let light_direction_i32 = self.light_direction.map(|vec| vec.map(|x| x as i32));
 
-            let mut diffuse_level = (-(light_direction_i32[light][0] * normal_vec[0]
-                + light_direction_i32[light][1] * normal_vec[1]
-                + light_direction_i32[light][2] * normal_vec[2]))
-                >> 10;
+            // 64-bit dot products: normals and light vectors are up to
+            // 16 bits each.
+            let ld = light_direction_i32[light].map(i64::from);
+            let nv = normal_vec.map(i64::from);
+            let mut diffuse_level =
+                ((-(ld[0] * nv[0] + ld[1] * nv[1] + ld[2] * nv[2])) >> 10) as i32;
 
             // Overflow handling taken from melonDS (same goes for specular)
             diffuse_level = diffuse_level.clamp(0, 0xFF);
 
-            let mut shine_level = -(((light_direction_i32[light][0] >> 1) * normal_vec[0]
-                + (light_direction_i32[light][1] >> 1) * normal_vec[1]
-                + ((light_direction_i32[light][2] - 0x200) >> 1) * normal_vec[2])
-                >> 10);
+            let mut shine_level =
+                (-(((ld[0] >> 1) * nv[0] + (ld[1] >> 1) * nv[1] + ((ld[2] - 0x200) >> 1) * nv[2])
+                    >> 10)) as i32;
 
             if shine_level < 0 {
                 shine_level = 0;
@@ -751,7 +739,10 @@ impl Gpu3D {
 
             if self.using_shine_table {
                 shine_level >>= 1;
-                shine_level = self.shine_table[shine_level as usize] as i32;
+                shine_level = self
+                    .shine_table
+                    .get(shine_level as usize)
+                    .map_or(0, |&v| v as i32);
             }
 
             r += ((lr as i32 * (self.specular_color & 0x1F) as i32 * shine_level) >> 13) as u32;

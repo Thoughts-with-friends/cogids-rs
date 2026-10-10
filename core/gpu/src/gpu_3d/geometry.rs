@@ -16,18 +16,20 @@ impl Gpu3D {
         depth_scale_start: i32,
         depth_scale_end: i32,
     ) -> i64 {
-        let pixel = step as i64;
-        let pixel_range = step_count as i64;
-        let w1 = depth_scale_start as i64;
-        let w2 = depth_scale_end as i64;
+        // 128-bit: value * depth can exceed 64 bits for extreme geometry.
+        let pixel = i128::from(step);
+        let pixel_range = i128::from(step_count);
+        let w1 = i128::from(depth_scale_start);
+        let w2 = i128::from(depth_scale_end);
 
-        let mut bark = (pixel_range - pixel) * (value_start * w2);
-        bark += pixel * (value_end * w1);
+        let bark = (pixel_range - pixel) * (i128::from(value_start) * w2)
+            + pixel * (i128::from(value_end) * w1);
+        let denom = (pixel_range - pixel) * w2 + pixel * w1;
 
-        let mut denom = (pixel_range - pixel) * w2;
-        denom += pixel * w1;
-
-        bark / denom
+        if denom == 0 {
+            return value_start;
+        }
+        (bark / denom) as i64
     }
 
     // Moved to impl Matrix
@@ -51,11 +53,12 @@ impl Gpu3D {
         if self.clip_dirty {
             for i in 0..4 {
                 for j in 0..4 {
-                    let mut temp_calc = 0;
+                    let mut temp_calc = 0_i64;
                     for k in 0..4 {
-                        temp_calc += self.modelview_mtx.m[i][k] * self.projection_mtx.m[k][j];
+                        temp_calc += i64::from(self.modelview_mtx.m[i][k])
+                            * i64::from(self.projection_mtx.m[k][j]);
                     }
-                    self.clip_mtx.m[i][j] = temp_calc >> 12;
+                    self.clip_mtx.m[i][j] = (temp_calc >> 12) as i32;
                 }
             }
             self.clip_dirty = false;
@@ -144,15 +147,15 @@ impl Gpu3D {
 
             let v = temp_v_list[i].clone();
 
-            if v.coords[plane] < -v.coords[3] {
+            if i64::from(v.coords[plane]) < -i64::from(v.coords[3]) {
                 let vp = temp_v_list[prev_v].clone();
-                if vp.coords[plane] >= -vp.coords[3] {
+                if i64::from(vp.coords[plane]) >= -i64::from(vp.coords[3]) {
                     self.clip_vertex(plane, &mut v_list[clip_index], &v, &vp, -1, add_attributes);
                     clip_index += 1;
                 }
 
                 let vn = temp_v_list[next_v].clone();
-                if vn.coords[plane] >= -vn.coords[3] {
+                if i64::from(vn.coords[plane]) >= -i64::from(vn.coords[3]) {
                     self.clip_vertex(plane, &mut v_list[clip_index], &v, &vn, -1, add_attributes);
                     clip_index += 1;
                 }
@@ -177,17 +180,18 @@ impl Gpu3D {
         // Copied logic from melonDS version
         let factor_num: i64 = v_in.coords[3] as i64 - (side as i64 * v_in.coords[plane] as i64);
 
-        let factor_den: i32 = (factor_num
-            - (v_out.coords[3] as i64 - (side as i64 * v_out.coords[plane] as i64)))
-            as i32;
+        let factor_den: i64 =
+            factor_num - (v_out.coords[3] as i64 - (side as i64 * v_out.coords[plane] as i64));
 
-        if factor_den == 0 {
-            panic!("Error: factor_den equals zero!");
-        }
-
-        // Helper closure for interpolation
+        // Degenerate edge (both ends on the plane): keep the inside vertex.
+        // This used to `panic!`, which stopped emulation on such geometry.
         let interp = |vin: i32, vout: i32| -> i32 {
-            vin + (((vout - vin) as i64 * factor_num) / factor_den as i64) as i32
+            if factor_den == 0 {
+                return vin;
+            }
+            (i128::from(vin)
+                + (i128::from(vout) - i128::from(vin)) * i128::from(factor_num)
+                    / i128::from(factor_den)) as i32
         };
 
         if plane != 0 {
@@ -201,7 +205,7 @@ impl Gpu3D {
         }
 
         v_list.coords[3] = interp(v_in.coords[3], v_out.coords[3]);
-        v_list.coords[plane] = side * v_list.coords[3];
+        v_list.coords[plane] = side.wrapping_mul(v_list.coords[3]);
 
         if add_attributes {
             v_list.colors[0] = interp(v_in.colors[0], v_out.colors[0]);
@@ -233,36 +237,39 @@ impl Gpu3D {
         let mut vtx = self.vertex_list[index].clone();
 
         for i in 0..4 {
-            vtx.coords[i] = (coords[0] * self.clip_mtx.m[0][i]
-                + coords[1] * self.clip_mtx.m[1][i]
-                + coords[2] * self.clip_mtx.m[2][i]
-                + coords[3] * self.clip_mtx.m[3][i])
-                >> 12;
+            let m = &self.clip_mtx.m;
+            vtx.coords[i] = ((0..4)
+                .map(|k| i64::from(coords[k]) * i64::from(m[k][i]))
+                .sum::<i64>()
+                >> 12) as i32;
         }
 
         if self.teximage_param.transformation_mode == 3 {
             let texcoords = self.current_texcoords;
             let texture_mtx_i32 = self.texture_mtx.m;
 
-            self.current_texcoords[0] = ((coords[0] * texture_mtx_i32[0][0]
-                + coords[1] * texture_mtx_i32[1][0]
-                + coords[2] * texture_mtx_i32[2][0])
-                >> 24) as i16
-                + texcoords[0];
+            self.current_texcoords[0] = (((0..3)
+                .map(|k| i64::from(coords[k]) * i64::from(texture_mtx_i32[k][0]))
+                .sum::<i64>()
+                >> 24) as i16)
+                .wrapping_add(texcoords[0]);
 
-            self.current_texcoords[1] = ((coords[0] * texture_mtx_i32[0][1]
-                + coords[1] * texture_mtx_i32[1][1]
-                + coords[2] * texture_mtx_i32[2][1])
-                >> 24) as i16
-                + texcoords[1];
+            self.current_texcoords[1] = (((0..3)
+                .map(|k| i64::from(coords[k]) * i64::from(texture_mtx_i32[k][1]))
+                .sum::<i64>()
+                >> 24) as i16)
+                .wrapping_add(texcoords[1]);
         }
 
-        // vtx.colors[0] = (((self.current_color & 0x1F) << 12) + 0xFFF) as i32;
-        // vtx.colors[1] = ((((self.current_color >> 5) & 0x1F) << 12) + 0xFFF) as i32;
-        // vtx.colors[2] = ((((self.current_color >> 10) & 0x1F) << 12) + 0xFFF) as i32;
-        // vtx.texcoords[0] = self.current_texcoords[0] as i32;
-        // vtx.texcoords[1] = self.current_texcoords[1] as i32;
-        // vtx.clipped = false;
+        vtx.colors[0] = (((self.current_color & 0x1F) << 12) + 0xFFF) as i32;
+        vtx.colors[1] = ((((self.current_color >> 5) & 0x1F) << 12) + 0xFFF) as i32;
+        vtx.colors[2] = ((((self.current_color >> 10) & 0x1F) << 12) + 0xFFF) as i32;
+        vtx.texcoords[0] = i32::from(self.current_texcoords[0]);
+        vtx.texcoords[1] = i32::from(self.current_texcoords[1]);
+        vtx.clipped = false;
+        // The transformed vertex was computed but never stored, so no
+        // polygon ever got real coordinates.
+        self.vertex_list[index] = vtx;
 
         self.vertex_list_count += 1;
 
@@ -283,53 +290,26 @@ impl Gpu3D {
                     self.vertex_list_count = 0;
                 }
             }
+            // Triangle strip: every new vertex forms a triangle with the
+            // previous two (the winding of odd triangles is flipped in
+            // `add_polygon`).
             2 => {
-                let mask = self.consecutive_polygons & 0x1;
-
-                if mask >= 0 {
-                    // a -> [0]
-                    // b -> [1..]
-                    let (a, b) = self.vertex_list.split_at_mut(1);
-                    core::mem::swap(&mut a[0], &mut b[0]); // vertex_list[0] = vertex_list[1]
-
+                if self.vertex_list_count == 3 {
                     self.add_polygon();
                     self.consecutive_polygons += 1;
                     self.vertex_list_count = 2;
-
-                    // Intended:
-                    // vertex_list[1] = vertex_list[2];
+                    self.vertex_list[0] = self.vertex_list[1].clone();
                     self.vertex_list[1] = self.vertex_list[2].clone();
-                } else if self.vertex_list_count == 3 {
-                    self.add_polygon();
-                    self.consecutive_polygons += 1;
-                    self.vertex_list_count = 2;
-
-                    let vertex_list_2 = self.vertex_list[2].clone();
-                    let (vertex_list_0, vertex_list_1) = {
-                        // a -> [0]
-                        // b -> [1..]
-                        let (a, b) = self.vertex_list.split_at_mut(1);
-                        (&mut a[0], &mut b[0])
-                    };
-
-                    // Intended:
-                    // vertex_list[0] = vertex_list[1];
-                    // vertex_list[1] = vertex_list[2];
-                    core::mem::swap(vertex_list_0, vertex_list_1);
-                    *vertex_list_1 = vertex_list_2;
                 }
             }
+            // Quad strip: vertices 0,1,2,3 form the quad 0-1-3-2; the next
+            // quad starts from 2,3.
             3 => {
-                let is_4 = self.vertex_list_count == 4;
-
-                if is_4 {
+                if self.vertex_list_count == 4 {
+                    self.vertex_list.swap(2, 3);
                     self.add_polygon();
                     self.consecutive_polygons += 1;
                     self.vertex_list_count = 2;
-
-                    // Intended:
-                    // vertex_list[0] = vertex_list[3];
-                    // vertex_list[1] = vertex_list[2];
                     self.vertex_list[0] = self.vertex_list[3].clone();
                     self.vertex_list[1] = self.vertex_list[2].clone();
                 }
@@ -347,37 +327,43 @@ impl Gpu3D {
             tracing::error!("Error: add_polygon called with invalid vertex_list_count");
         }
 
-        // Cull front/back face polygons
-        let [v0, v1, v2] = &self.vertex_list[..3] else {
-            return;
+        // Cull front/back face polygons. Odd triangles of a strip have
+        // their winding reversed.
+        let flip = self.polygon_type == 2 && self.consecutive_polygons & 1 != 0;
+        let (v0, v1, v2) = if flip {
+            (
+                &self.vertex_list[1],
+                &self.vertex_list[0],
+                &self.vertex_list[2],
+            )
+        } else {
+            (
+                &self.vertex_list[0],
+                &self.vertex_list[1],
+                &self.vertex_list[2],
+            )
         };
 
-        // for cross-product
-        let ax = v0.coords[0] - v1.coords[0];
-        let ay = v0.coords[1] - v1.coords[1];
-        let az = v0.coords[2] - v1.coords[2];
-
-        let bx = v2.coords[0] - v1.coords[0];
-        let by = v2.coords[1] - v1.coords[1];
-        let bz = v2.coords[2] - v1.coords[2];
-
-        // Culling code taken shamelessly from melonDS :P
-        let mut normal =
-            [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx].map(|x| x as u64);
-
-        // TODO: check what real DS does. Maybe help StapleButter?
-        while (((normal[0] >> 31) ^ (normal[0] >> 63)) != 0)
-            || (((normal[1] >> 31) ^ (normal[1] >> 63)) != 0)
-            || (((normal[2] >> 31) ^ (normal[2] >> 63)) != 0)
-        {
-            normal[0] >>= 4;
-            normal[1] >>= 4;
-            normal[2] >>= 4;
+        // Facing test (melonDS `GPU3D::SubmitPolygon`), in 128 bits: vertex
+        // differences reach 2^33, so 64-bit products can overflow.
+        let c = |v: &Vertex, i: usize| i128::from(v.coords[i]);
+        let (ax, ay, az) = (
+            c(v0, 0) - c(v1, 0),
+            c(v0, 1) - c(v1, 1),
+            c(v0, 3) - c(v1, 3),
+        );
+        let (bx, by, bz) = (
+            c(v2, 0) - c(v1, 0),
+            c(v2, 1) - c(v1, 1),
+            c(v2, 3) - c(v1, 3),
+        );
+        let mut normal = [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+        while normal.iter().any(|&n| (n >> 31) != (n >> 127)) {
+            for n in &mut normal {
+                *n >>= 4;
+            }
         }
-
-        let dot = v1.coords[0] * normal[0] as i32
-            + v1.coords[1] * normal[1] as i32
-            + v1.coords[3] * normal[2] as i32;
+        let dot = c(v1, 0) * normal[0] + c(v1, 1) * normal[1] + c(v1, 3) * normal[2];
         let front_view = dot < 0;
 
         let render = match front_view {
@@ -434,21 +420,21 @@ impl Gpu3D {
         //     }
         // }
 
-        let mut clipped_list: Vec<Vertex> = self.vertex_list[clip_start..clipped_count].to_vec(); // [10]
+        // Clipping against the 6 planes can add vertices: up to 10.
+        let mut clipped_list = vec![Vertex::default(); 10];
+        clipped_list[..clipped_count].clone_from_slice(&self.vertex_list[..clipped_count]);
+        if flip {
+            clipped_list.swap(0, 1);
+        }
         clipped_count = self.clip(&mut clipped_list, clipped_count, clip_start, true);
-        if clipped_count != 0 {
+        // Fully clipped away (the check was inverted, dropping every visible
+        // polygon instead).
+        if clipped_count == 0 {
             return;
         }
 
         // Time to make a polygon!
         // Also normalize w
-
-        let mut w_len = 0;
-        for clipped in &clipped_list[0..clipped_count] {
-            while (clipped.coords[3] >> w_len) != 0 && w_len < 32 {
-                w_len += 4;
-            }
-        }
 
         for (i, clipped) in clipped_list[0..clipped_count].iter().enumerate() {
             let v = i + self.geo_vert_count as usize;

@@ -205,8 +205,6 @@ impl SPIBus {
         self.spicnt.busy = false;
 
         let hold = self.spicnt.chipselect_hold;
-        #[cfg(feature = "tracing")]
-        tracing::trace!(target: "spi", "dev{} hold={hold} in={data:02X}", self.spicnt.device);
         self.output = match self.spicnt.device {
             1 => {
                 let out = self.firmware.transfer_data(data);
@@ -231,6 +229,14 @@ impl SPIBus {
             }
             _ => 0,
         };
+
+        #[cfg(feature = "tracing")]
+        tracing::trace!(
+            target: "spi",
+            "dev{} hold={hold} in={data:02X} out={:02X}",
+            self.spicnt.device,
+            self.output
+        );
 
         self.spicnt.irq_after_transfer
     }

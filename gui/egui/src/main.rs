@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod config;
 mod font;
+mod input;
 
-use self::config::{Config, load_config, save_config};
+use self::config::{Config, ScreenLayout, load_config, save_config};
+use self::input::{Gamepads, Touch};
 use eframe::egui;
 use lunaris_ds_emu::Emulator;
 use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
@@ -55,6 +57,9 @@ struct App {
     frame_count: u64,
     fps: f32,
     rom_list_open: bool,
+
+    gamepads: Gamepads,
+    touch: Touch,
 }
 
 impl App {
@@ -73,6 +78,8 @@ impl App {
             frame_count: 0,
             fps: 0.0,
             rom_list_open: false,
+            gamepads: Gamepads::new(),
+            touch: Touch::default(),
         }
     }
 
@@ -114,8 +121,27 @@ impl App {
             ui.label("Scale: ");
             ui.add(egui::Slider::new(&mut self.config.scale, 1.0..=5.0));
 
+            ui.separator();
+            ui.label("Layout:");
+            ui.radio_value(&mut self.config.layout, ScreenLayout::Vertical, "Vertical");
+            ui.radio_value(
+                &mut self.config.layout,
+                ScreenLayout::Horizontal,
+                "Horizontal",
+            );
+
+            ui.separator();
             ui.checkbox(&mut self.config.show_fps, "FPS");
             self.update_fps(ui);
+        });
+
+        ui.horizontal(|ui| {
+            let pads = self.gamepads.names();
+            if pads.is_empty() {
+                ui.small("Controller: none (keyboard: arrows, X=A, Z=B, S=X, A=Y, Q=L, W=R, Enter=START, Backspace=SELECT)");
+            } else {
+                ui.small(format!("Controller: {}", pads.join(", ")));
+            }
         });
     }
 
@@ -174,17 +200,8 @@ impl App {
 
     fn ui_emulator(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.is_running {
-                if let Some(emu) = &mut self.emu {
-                    Self::render_frame(
-                        ctx,
-                        ui,
-                        emu,
-                        &mut self.upper_tex,
-                        &mut self.lower_tex,
-                        self.config.scale,
-                    );
-                }
+            if self.is_running && self.emu.is_some() {
+                self.render_frame(ctx, ui);
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label("Select a ROM and press Run");
@@ -237,20 +254,21 @@ impl App {
     }
 
     // ===== rendering =====
-    fn render_frame(
-        ctx: &egui::Context,
-        ui: &mut egui::Ui,
-        emu: &mut Emulator,
-        upper_tex: &mut Option<egui::TextureHandle>,
-        lower_tex: &mut Option<egui::TextureHandle>,
-        scale: f32,
-    ) {
+    /// Runs one emulated frame with the current input and draws both screens.
+    fn render_frame(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         const PIXEL: usize = PIXELS_PER_LINE * SCANLINES;
+        let Some(emu) = self.emu.as_mut() else {
+            return;
+        };
 
         let mut upper_buffer = vec![0_u32; PIXEL];
         let mut lower_buffer = vec![0_u32; PIXEL];
 
-        Self::apply_keys(ctx, emu);
+        self.gamepads.poll();
+        input::apply_keyboard(ctx, emu);
+        self.gamepads.apply(emu);
+        self.touch.apply(emu);
+
         emu.run();
         emu.get_upper_frame(&mut upper_buffer);
         emu.get_lower_frame(&mut lower_buffer);
@@ -265,66 +283,44 @@ impl App {
             [PIXELS_PER_LINE, SCANLINES],
             bytemuck::cast_slice(&upper_buffer),
         );
-
         let lower_img = egui::ColorImage::from_rgba_unmultiplied(
             [PIXELS_PER_LINE, SCANLINES],
             bytemuck::cast_slice(&lower_buffer),
         );
 
-        Self::update_texture(ctx, upper_tex, "upper", upper_img);
-        Self::update_texture(ctx, lower_tex, "lower", lower_img);
+        Self::update_texture(ctx, &mut self.upper_tex, "upper", upper_img);
+        Self::update_texture(ctx, &mut self.lower_tex, "lower", lower_img);
 
-        ui.vertical_centered(|ui| {
-            if let Some(tex) = upper_tex.as_ref() {
-                ui.add(egui::Image::new(tex).fit_to_exact_size(tex.size_vec2() * scale));
-            }
+        let (Some(upper), Some(lower)) = (self.upper_tex.as_ref(), self.lower_tex.as_ref()) else {
+            return;
+        };
+        let scale = self.config.scale;
+        let size = upper.size_vec2() * scale;
 
+        let draw = |ui: &mut egui::Ui| {
+            ui.add(egui::Image::new(upper).fit_to_exact_size(size));
             ui.add_space(8.0);
-
-            if let Some(tex) = lower_tex.as_ref() {
-                let resp = ui.add(
-                    egui::Image::new(tex)
-                        .fit_to_exact_size(tex.size_vec2() * scale)
-                        .sense(egui::Sense::click_and_drag()),
-                );
-                // Stylus: map the pointer inside the lower screen to DS pixels.
-                let touch = resp
-                    .interact_pointer_pos()
-                    .filter(|_| resp.is_pointer_button_down_on())
-                    .map(|pos| {
-                        let rel = (pos - resp.rect.min) / resp.rect.size();
-                        (
-                            (rel.x * PIXELS_PER_LINE as f32).clamp(0.0, 255.0) as i32,
-                            (rel.y * SCANLINES as f32).clamp(0.0, 191.0) as i32,
-                        )
-                    });
-                match touch {
-                    Some((x, y)) => emu.touchscreen_press(x, y),
-                    None => emu.touchscreen_press(0, 0xFFF),
-                }
+            ui.add(
+                egui::Image::new(lower)
+                    .fit_to_exact_size(size)
+                    .sense(egui::Sense::click_and_drag()),
+            )
+        };
+        let lower_resp = match self.config.layout {
+            ScreenLayout::Vertical => ui.vertical_centered(draw).inner,
+            ScreenLayout::Horizontal => {
+                ui.horizontal_centered(|ui| {
+                    // Center the pair horizontally as well.
+                    let total = size.x.mul_add(2.0, 8.0);
+                    ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+                    draw(ui)
+                })
+                .inner
             }
-        });
-    }
+        };
 
-    /// Keyboard -> DS buttons. Arrows = D-pad, X = A, Z = B, S = X, A = Y,
-    /// Q = L, W = R, Enter = START, Backspace = SELECT.
-    fn apply_keys(ctx: &egui::Context, emu: &mut Emulator) {
-        use egui::Key;
-        ctx.input(|i| {
-            let k = &mut emu.key_input;
-            k.up = i.key_down(Key::ArrowUp);
-            k.down = i.key_down(Key::ArrowDown);
-            k.left = i.key_down(Key::ArrowLeft);
-            k.right = i.key_down(Key::ArrowRight);
-            k.button_a = i.key_down(Key::X);
-            k.button_b = i.key_down(Key::Z);
-            k.button_l = i.key_down(Key::Q);
-            k.button_r = i.key_down(Key::W);
-            k.start = i.key_down(Key::Enter);
-            k.select = i.key_down(Key::Backspace);
-            emu.ext_key_in.button_x = i.key_down(Key::S);
-            emu.ext_key_in.button_y = i.key_down(Key::A);
-        });
+        // Stylus input for the next frame.
+        self.touch.update(ctx, &lower_resp);
     }
 
     fn update_texture(

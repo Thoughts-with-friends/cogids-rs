@@ -1,12 +1,24 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
+/// How the two DS screens are arranged in the window.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenLayout {
+    /// Upper screen above the lower screen (like the real console).
+    #[default]
+    Vertical,
+    /// Upper screen left of the lower screen.
+    Horizontal,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
 pub struct Config {
     pub rom_dir: PathBuf,
     pub selected_rom: Option<PathBuf>,
     pub scale: f32,
     pub show_fps: bool,
+    pub layout: ScreenLayout,
 }
 
 impl Default for Config {
@@ -16,6 +28,7 @@ impl Default for Config {
             selected_rom: None,
             scale: 2.0,
             show_fps: true,
+            layout: ScreenLayout::default(),
         }
     }
 }

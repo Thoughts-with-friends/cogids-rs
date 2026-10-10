@@ -20,6 +20,8 @@ impl Emulator {
 
             // Execute command once all parameters are available.
             if self.gpu.engine_3d.cmd_param_count >= CMD_PARAM_AMOUNTS[cmd_index] {
+                #[cfg(feature = "tracing")]
+                tracing::trace!(target: "gx", "cmd {cmd_index:02X} {:08X}", self.gpu.engine_3d.cmd_params[0]);
                 self.gpu.engine_3d.cycles += CMD_CYCLE_AMOUNTS[cmd_index] as i64;
 
                 // Update GEO_BUSY flag:
@@ -191,6 +193,9 @@ impl Emulator {
                                     .engine_3d
                                     .cmd_params
                                     .iter()
+                                    // Only the 16 parameters of this command
+                                    // (cmd_params holds 32 → rows 4..7 overflowed).
+                                    .take(16)
                                     .map(|&x| x as i32)
                                     .collect::<Vec<_>>()
                                     .as_chunks::<4>()
@@ -386,13 +391,17 @@ impl Emulator {
                             ];
 
                             for i in 0..2 {
-                                self.gpu.engine_3d.current_texcoords[i] = ((texcoords[0] as i32
-                                    * self.gpu.engine_3d.texture_mtx.m[0][i]
-                                    + texcoords[1] as i32 * self.gpu.engine_3d.texture_mtx.m[1][i]
-                                    + self.gpu.engine_3d.texture_mtx.m[2][i]
-                                    + self.gpu.engine_3d.texture_mtx.m[3][i])
-                                    >> 12)
-                                    as i16;
+                                let m = &self.gpu.engine_3d.texture_mtx.m;
+                                let (s0, t0) = (
+                                    i64::from(texcoords[0] as i16),
+                                    i64::from(texcoords[1] as i16),
+                                );
+                                self.gpu.engine_3d.current_texcoords[i] =
+                                    ((s0 * i64::from(m[0][i])
+                                        + t0 * i64::from(m[1][i])
+                                        + i64::from(m[2][i])
+                                        + i64::from(m[3][i]))
+                                        >> 12) as i16;
                             }
                         } else {
                             self.gpu.engine_3d.current_texcoords[0] =
@@ -457,12 +466,14 @@ impl Emulator {
                     0x28 => {
                         #[cfg(feature = "tracing")]
                         tracing::trace!("VTX_DIFF");
-                        self.gpu.engine_3d.current_vertex[2] =
-                            ((self.gpu.engine_3d.cmd_params[0] & 0x000003FF) << 6) as i16;
-                        self.gpu.engine_3d.current_vertex[1] =
-                            ((self.gpu.engine_3d.cmd_params[0] & 0x000FFC00) >> 4) as i16;
-                        self.gpu.engine_3d.current_vertex[2] =
-                            ((self.gpu.engine_3d.cmd_params[0] >> 16 & 0x3FF00000) >> 14) as i16;
+                        // Signed 10-bit deltas added to the current vertex
+                        // (melonDS `GPU3D` command 0x28).
+                        let p = self.gpu.engine_3d.cmd_params[0];
+                        let delta = |field: u32| ((field << 6) as u16 as i16) >> 6;
+                        let v = &mut self.gpu.engine_3d.current_vertex;
+                        v[0] = v[0].wrapping_add(delta(p & 0x3FF));
+                        v[1] = v[1].wrapping_add(delta((p >> 10) & 0x3FF));
+                        v[2] = v[2].wrapping_add(delta((p >> 20) & 0x3FF));
                         self.gpu.engine_3d.add_vertex();
                     }
                     0x29 => {

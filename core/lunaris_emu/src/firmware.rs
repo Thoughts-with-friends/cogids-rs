@@ -94,21 +94,7 @@ impl Firmware {
             }
         }
 
-        // Patch user configuration fields (exact offsets preserved)
-        self.write_u16((self.user_data + 0x58) as usize, 0);
-        self.write_u16((self.user_data + 0x5A) as usize, 0);
-        self.raw_firmware[(self.user_data + 0x5C) as usize] = 0;
-        self.raw_firmware[(self.user_data + 0x5D) as usize] = 0;
-
-        self.write_u16((self.user_data + 0x5E) as usize, 255 << 4);
-        self.write_u16((self.user_data + 0x60) as usize, 191 << 4);
-        self.raw_firmware[(self.user_data + 0x62) as usize] = 255;
-        self.raw_firmware[(self.user_data + 0x63) as usize] = 191;
-
-        // Recalculate USER data CRC
-        let user_crc =
-            Self::create_crc(&self.raw_firmware[self.user_data as usize..], 0x70, 0xFFFF);
-        self.write_u16((self.user_data + 0x72) as usize, user_crc);
+        self.patch_user_settings();
 
         // Recalculate firmware header CRC
         let header_len = self.read_u16(0x2C) as usize;
@@ -142,6 +128,51 @@ impl Firmware {
 
         // Always return 0 in C++ version; here we return loaded size
         Ok(Self::SIZE)
+    }
+
+    /// Fixes up the user settings (GBATEK "DS Firmware User Settings") and
+    /// mirrors them into both slots.
+    ///
+    /// The bundled image ships empty settings. Software (libnds, the Nitro
+    /// SDK) picks one of the two slots by their update counters and CRCs, so
+    /// patching only one slot let it read the other, empty one: the touch
+    /// calibration was all zeros and every touch converted to pixel (0, 0).
+    /// Like melonDS, the calibration maps ADC `x << 4, y << 4` (what
+    /// [`lunaris_ds_touchscreen::TouchScreen`] reports) to pixel `x, y`.
+    fn patch_user_settings(&mut self) {
+        let base = self.user_data as usize;
+
+        // Empty settings: fill in sane defaults (melonDS `UserData`).
+        if self.read_u16(base) == 0 || self.read_u16(base) == 0xFFFF {
+            self.raw_firmware[base..base + 0x70].fill(0);
+            self.write_u16(base, 5); // version
+            self.raw_firmware[base + 0x03] = 1; // birthday month
+            self.raw_firmware[base + 0x04] = 1; // birthday day
+            for (i, ch) in "Lunaris".encode_utf16().enumerate() {
+                self.write_u16(base + 0x06 + i * 2, ch);
+            }
+            self.write_u16(base + 0x1A, 7); // nickname length
+            // Language 0 (Japanese), backlight max.
+            self.write_u16(base + 0x64, 0x0030);
+        }
+
+        // Touch screen calibration: ADC (0,0) = pixel (0,0),
+        // ADC (255<<4, 191<<4) = pixel (255,191).
+        self.write_u16(base + 0x58, 0);
+        self.write_u16(base + 0x5A, 0);
+        self.raw_firmware[base + 0x5C] = 0;
+        self.raw_firmware[base + 0x5D] = 0;
+        self.write_u16(base + 0x5E, 255 << 4);
+        self.write_u16(base + 0x60, 191 << 4);
+        self.raw_firmware[base + 0x62] = 255;
+        self.raw_firmware[base + 0x63] = 191;
+
+        let crc = Self::create_crc(&self.raw_firmware[base..], 0x70, 0xFFFF);
+        self.write_u16(base + 0x72, crc);
+
+        // Same settings (and update counter) in the other slot.
+        let other = 0x3FE00 + ((base - 0x3FE00) ^ 0x100);
+        self.raw_firmware.copy_within(base..base + 0x100, other);
     }
 
     /// Read a little-endian u16 from firmware

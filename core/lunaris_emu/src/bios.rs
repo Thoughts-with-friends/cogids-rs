@@ -90,32 +90,32 @@ impl Emulator {
         self.get_cpu_mut(cpu_type).halt();
     }
 
-    /// Calculates CRC16 over a sequence of halfwords.
+    /// `SWI 0x0E` GetCRC16: r0 = initial value, r1 = address, r2 = length
+    /// in bytes; returns the CRC in r0.
+    ///
+    /// This is the reflected CRC-16 with polynomial 0xA001 (GBATEK "BIOS
+    /// Misc Functions"), the same checksum the firmware stores for its user
+    /// settings. The previous table-based variant produced different
+    /// values, so the SDK rejected the firmware user settings and the touch
+    /// screen calibration ended up all zeros.
     fn get_crc16(&mut self, cpu_type: CpuType) {
-        let crcs: [u16; 8] = [
-            0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001,
-        ];
+        let cpu = self.get_cpu(cpu_type);
+        let mut crc = (cpu.get_register(0) & 0xFFFF) as u16;
+        let addr = cpu.get_register(1);
+        let len = cpu.get_register(2);
 
-        let mut crc = (self.get_cpu_mut(cpu_type).get_register(0) & 0xFFFF) as u16;
-        let mut addr = self.get_cpu_mut(cpu_type).get_register(1);
-        let len = self.get_cpu_mut(cpu_type).get_register(2);
-        let end = addr + len;
-
-        while addr < end {
-            crc ^= self.read_halfword(addr, cpu_type);
-
-            for (i, crc_) in crcs.iter().enumerate() {
-                let carry = (crc & 1) != 0;
-                crc >>= 1;
-                if carry {
-                    crc ^= crc_ << (7 - i);
-                }
+        for i in 0..len {
+            crc ^= u16::from(self.read_byte(addr.wrapping_add(i), cpu_type));
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xA001
+                } else {
+                    crc >> 1
+                };
             }
-
-            addr += 2;
         }
 
-        self.get_cpu_mut(cpu_type).set_register(0, crc as u32);
+        self.get_cpu_mut(cpu_type).set_register(0, u32::from(crc));
     }
 
     /// Executes SWI 7 (ARM7 BIOS).
