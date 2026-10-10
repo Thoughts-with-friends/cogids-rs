@@ -8,6 +8,9 @@ impl Emulator {
     /// # Panics
     #[expect(clippy::unwrap_used)]
     pub fn arm9_read_word(&mut self, address: u32) -> u32 {
+        if crate::emulator::gpu::io_2d::is_2d_reg(address) {
+            return self.read_io_2d_u32(address);
+        }
         match address {
             // ARM9 BIOS
             0xFFFF_0000..=0xFFFF_FFFF => {
@@ -58,6 +61,10 @@ impl Emulator {
             0x040000EC => self.dma_fill[3],
             0x04000180 => self.ipc.read_sync(Side::Arm9).into(),
             0x04000184 => self.ipc.read_cnt(Side::Arm9).into(),
+            0x040001A0 => {
+                (u32::from(self.cart.get_auxspicnt()))
+                    | (u32::from(self.cart.read_auxspidata()) << 16)
+            }
             0x040001A4 => self.cart.get_romctrl(),
             0x04000208 => self.int9_reg.ime,
             0x04000210 => self.int9_reg.irq_enable,
@@ -71,6 +78,8 @@ impl Emulator {
             0x040002A4 => (self.div_result >> 32) as u32,
             0x040002A8 => (self.div_remresult & 0xFFFF_FFFF) as u32,
             0x040002AC => (self.div_remresult >> 32) as u32,
+            0x04000280 => u32::from(self.divcnt),
+            0x040002B0 => u32::from(self.sqrtcnt),
             0x040002B4 => self.sqrt_result,
             0x040002B8 => (self.sqrt_param & 0xFFFF_FFFF) as u32,
             0x040002BC => (self.sqrt_param >> 32) as u32,
@@ -94,6 +103,8 @@ impl Emulator {
             0x04004000 | 0x04004008 => 0,
             0x04100000 => {
                 let (word, irq) = self.ipc.receive(Side::Arm9);
+                #[cfg(feature = "tracing")]
+                tracing::debug!(target: "ipc", "Arm9 recv {word:08X}");
                 self.raise_ipc(irq);
                 word
             }
@@ -141,6 +152,9 @@ impl Emulator {
     /// # Panics
     #[expect(clippy::unwrap_used)]
     pub fn arm9_read_halfword(&self, address: u32) -> u16 {
+        if crate::emulator::gpu::io_2d::is_2d_reg(address) {
+            return self.read_io_2d_u16(address);
+        }
         // I/O registers
         match address {
             0xFFFF_0000.. => {
@@ -205,6 +219,7 @@ impl Emulator {
             0x0400_0180 => self.ipc.read_sync(Side::Arm9),
             0x0400_0184 => self.ipc.read_cnt(Side::Arm9),
             0x0400_01A0 => self.cart.get_auxspicnt(),
+            0x0400_01A2 => self.cart.read_auxspidata().into(),
             0x0400_0204 => self.ex_mem_cnt,
             0x0400_0208 => self.int9_reg.ime as u16,
             0x0400_0280 => self.divcnt,
@@ -248,6 +263,9 @@ impl Emulator {
     /// - Cartridge SPI registers
     /// - Some I/O registers
     pub fn arm9_read_byte(&self, address: u32) -> u8 {
+        if crate::emulator::gpu::io_2d::is_2d_reg(address) {
+            return self.read_io_2d_u8(address);
+        }
         // I/O registers
         match address {
             0x04000180 => self.ipc.read_sync(Side::Arm9) as u8,
@@ -266,6 +284,8 @@ impl Emulator {
                     _ => unreachable!(),
                 }
             }
+            0x0400_01a0 => self.cart.get_auxspicnt() as u8,
+            0x0400_01a1 => (self.cart.get_auxspicnt() >> 8) as u8,
             0x0400_01a2 => self.cart.read_auxspidata(),
             0x0400_01a8..=0x0400_01af => self.cart.read_command((address & 0x7) as usize),
             0x0400_0208 => self.int9_reg.ime as u8,

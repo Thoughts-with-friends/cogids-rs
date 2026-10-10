@@ -3,6 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod rom_list;
+pub mod save;
+
+pub use save::{BackupMemory, SaveChip, SaveMemType};
+
 /// Cartridge command types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartCommand {
@@ -35,40 +40,6 @@ impl CartCommand {
             5 => Self::EnableKey2,
             6 => Self::GetSecureAreaBlock,
             7 => Self::ReadRom,
-            _ => Self::Empty,
-        }
-    }
-}
-
-/// Auxiliary SPI command types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuxSpiCommand {
-    /// No command
-    Empty = 0,
-    /// Write to memory
-    WriteMem = 1,
-    /// Read from memory
-    ReadMem = 2,
-    /// Read status register
-    ReadStatusReg = 3,
-    /// Page write operation
-    PageWrite = 4,
-    /// Write high address
-    WriteHi = 5,
-    /// Read high address
-    ReadHi = 6,
-}
-
-impl AuxSpiCommand {
-    /// Convert numeric value to AuxSpiCommand
-    pub const fn from_value(val: u32) -> Self {
-        match val {
-            1 => Self::WriteMem,
-            2 => Self::ReadMem,
-            3 => Self::ReadStatusReg,
-            4 => Self::PageWrite,
-            5 => Self::WriteHi,
-            6 => Self::ReadHi,
             _ => Self::Empty,
         }
     }
@@ -171,74 +142,6 @@ impl Default for RegRomCtrl {
     }
 }
 
-/// Auxiliary SPI control register
-#[derive(Debug, Clone, Copy)]
-pub struct RegAuxSpiCnt {
-    /// Baud rate divider
-    pub bandwidth: u32,
-    /// Hold chip select after transfer
-    pub hold_chipselect: bool,
-    /// Transfer in progress
-    pub is_busy: bool,
-    /// Serial transfer mode
-    pub serial_transfer: bool,
-    /// Generate interrupt after transfer
-    pub irq_after_transfer: bool,
-    /// SPI enabled
-    pub enabled: bool,
-}
-
-impl RegAuxSpiCnt {
-    /// Create new auxiliary SPI control register
-    pub const fn new() -> Self {
-        Self {
-            bandwidth: 0,
-            hold_chipselect: false,
-            is_busy: false,
-            serial_transfer: false,
-            irq_after_transfer: false,
-            enabled: false,
-        }
-    }
-
-    /// Get register value as 16-bit halfword
-    pub const fn get(&self) -> u16 {
-        let mut value = 0_u16;
-        value |= (self.bandwidth & 0x3) as u16;
-        if self.hold_chipselect {
-            value |= 1 << 3;
-        }
-        if self.is_busy {
-            value |= 1 << 7;
-        }
-        if self.serial_transfer {
-            value |= 1 << 13;
-        }
-        if self.irq_after_transfer {
-            value |= 1 << 14;
-        }
-        if self.enabled {
-            value |= 1 << 15;
-        }
-        value
-    }
-
-    /// Set register value from 16-bit halfword
-    pub const fn set(&mut self, value: u16) {
-        self.bandwidth = (value & 0x3) as u32;
-        self.hold_chipselect = (value & (1 << 3)) != 0;
-        self.serial_transfer = (value & (1 << 13)) != 0;
-        self.irq_after_transfer = (value & (1 << 14)) != 0;
-        self.enabled = (value & (1 << 15)) != 0;
-    }
-}
-
-impl Default for RegAuxSpiCnt {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Game Cartridge Controller
 /// Manages ROM data, encryption/decryption, and cartridge interface
 #[derive(Debug)]
@@ -254,14 +157,8 @@ pub struct NDSCart {
     pub save_database: Vec<u8>,
     /// ROM filename
     pub rom_name: String,
-    /// SPI save data (8MB)
-    pub spi_save: Vec<u8>,
-    /// Save size in bytes
-    pub save_size: usize,
-    /// Save type
-    pub save_type: u32,
-    /// Save data has been modified
-    pub dirty_save: bool,
+    /// Backup memory (save chip) behind AUXSPI
+    pub backup: BackupMemory,
     /// Database size
     pub database_size: u64,
     /// ROM size
@@ -286,18 +183,13 @@ pub struct NDSCart {
 
     /// ROM control register
     pub romctrl: RegRomCtrl,
-    /// Auxiliary SPI control register
-    pub auxspicnt: RegAuxSpiCnt,
-    /// Current SPI command
-    spi_cmd: AuxSpiCommand,
-    /// SPI data byte
+    /// AUXSPICNT (0x040001A0): bits 0-1 baud rate, 6 chip select hold,
+    /// 7 busy, 13 SPI mode, 14 transfer IRQ, 15 slot enable
+    pub auxspicnt: u16,
+    /// Last byte received on AUXSPIDATA (0x040001A2)
     spi_data: u8,
-    /// SPI command parameters
-    spi_params: i32,
-    /// SPI address for read/write
-    spi_addr: u32,
-    /// SPI write enabled flag
-    spi_write_enabled: bool,
+    /// Save chip select line is held low between bytes
+    spi_selected: bool,
 
     /// Encryption seed 0
     encrypt_seed0: u64,
@@ -323,10 +215,7 @@ impl NDSCart {
             rom: Vec::new(),
             save_database: Vec::new(),
             rom_name: String::new(),
-            spi_save: vec![0_u8; 1024 * 1024 * 8],
-            save_size: 0,
-            save_type: 0,
-            dirty_save: false,
+            backup: BackupMemory::default(),
             database_size: 0,
             rom_size: 0,
             command_buffer: [0_u8; 8],
@@ -337,12 +226,9 @@ impl NDSCart {
             cycles_left: 0,
             bytes_left: 0,
             romctrl: RegRomCtrl::new(),
-            auxspicnt: RegAuxSpiCnt::new(),
-            spi_cmd: AuxSpiCommand::Empty,
+            auxspicnt: 0,
             spi_data: 0,
-            spi_params: 0,
-            spi_addr: 0,
-            spi_write_enabled: false,
+            spi_selected: false,
             encrypt_seed0: 0,
             encrypt_seed1: 0,
             keycode: [0_u32; 3],
@@ -350,32 +236,19 @@ impl NDSCart {
     }
 
     /// Resets cartridge state to power-on defaults.
-    pub fn power_on(&mut self) {
-        self.save_size = 1024 * 1024;
-        self.save_type = 2;
+    ///
+    /// The loaded ROM and the backup memory contents are kept.
+    pub const fn power_on(&mut self) {
         self.cycles_left = 8;
         self.bytes_left = 0;
         self.romctrl.word_ready = true;
         self.romctrl.block_busy = false;
         self.cmd_encrypt_mode = 0;
-        self.auxspicnt.hold_chipselect = false;
-        self.auxspicnt.is_busy = false;
-        self.auxspicnt.serial_transfer = false;
-        self.auxspicnt.irq_after_transfer = false;
-        self.auxspicnt.enabled = false;
 
-        self.spi_save.fill(0);
-        self.dirty_save = false;
-
-        if !self.rom.is_empty() {
-            self.rom.fill(0);
-        }
-
-        self.rom_name.clear();
-
-        self.spi_cmd = AuxSpiCommand::Empty;
+        self.auxspicnt = 0;
         self.spi_data = 0;
-        self.spi_params = 0;
+        self.spi_selected = false;
+        self.backup.reset();
     }
 
     /// Loads save database file into memory.
@@ -455,21 +328,33 @@ impl NDSCart {
     /// Writes save data to disk if modified.
     ///
     /// # Errors
+    ///
+    /// Called once per frame; the file is only written after the game has
+    /// stopped writing for a short while (see [`BackupMemory::end_frame`]).
     pub fn save_check(&mut self) -> Result<(), CartridgeError> {
-        if !self.dirty_save {
-            return Ok(());
+        self.backup
+            .end_frame()
+            .map_err(|source| self.save_error(source))
+    }
+
+    /// Writes pending save data to disk immediately (e.g. on exit).
+    ///
+    /// # Errors
+    pub fn flush_save(&mut self) -> Result<(), CartridgeError> {
+        self.backup
+            .flush()
+            .map_err(|source| self.save_error(source))
+    }
+
+    fn save_error(&self, source: std::io::Error) -> CartridgeError {
+        CartridgeError::SaveWrite {
+            path: self
+                .backup
+                .path()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+            source,
         }
-        self.dirty_save = false;
-
-        let path = PathBuf::from(format!("{}.sav", self.rom_name));
-
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("Flushing save file: {}", path.display());
-
-        std::fs::write(&path, &self.spi_save)
-            .map_err(|source| CartridgeError::SaveWrite { path, source })?;
-
-        Ok(())
     }
 
     /// Reads a command byte from command buffer.
@@ -494,7 +379,7 @@ impl NDSCart {
 
     /// Reads raw byte from ROM without timing effects.
     pub fn direct_read(&self, address: u32) -> u8 {
-        self.rom.get(address as usize).copied().unwrap_or({
+        self.rom.get(address as usize).copied().unwrap_or_else(|| {
             #[cfg(feature = "tracing")]
             tracing::warn!("Direct read out of bounds: {address:08X}");
             0
@@ -531,253 +416,83 @@ impl NDSCart {
     }
 
     /// Returns AUXSPICNT register value.
+    ///
+    /// Transfers complete instantly, so the busy bit (7) never reads as set.
     pub const fn get_auxspicnt(&self) -> u16 {
-        let mut reg = self.auxspicnt.bandwidth as u16;
-        reg |= (self.auxspicnt.hold_chipselect as u16) << 6;
-        reg |= (self.auxspicnt.is_busy as u16) << 7;
-        reg |= (self.auxspicnt.serial_transfer as u16) << 13;
-        reg |= (self.auxspicnt.irq_after_transfer as u16) << 14;
-        reg |= (self.auxspicnt.enabled as u16) << 15;
-        reg
+        self.auxspicnt & !(1 << 7)
     }
 
-    /// Reads AUXSPIDATA register value.
+    /// Reads AUXSPIDATA: the byte the save chip sent back during the last
+    /// transfer (0 while the slot or SPI mode is disabled).
     pub const fn read_auxspidata(&self) -> u8 {
+        if self.auxspicnt & 0xA000 != 0xA000 {
+            return 0;
+        }
         self.spi_data
     }
 
-    /// Sets high byte of AUXSPICNT register.
-    pub const fn set_hi_auxspicnt(&mut self, value: u8) {
-        self.auxspicnt.serial_transfer = (value & (1 << 5)) != 0;
-        self.auxspicnt.irq_after_transfer = (value & (1 << 6)) != 0;
-        self.auxspicnt.enabled = (value & (1 << 7)) != 0;
+    /// Writes AUXSPICNT bits selected by `mask`.
+    ///
+    /// Clearing bit 13 (SPI mode) while the chip is selected releases the
+    /// chip select line, setting it again re-asserts it (melonDS
+    /// `NDSCartSlot::Interface::WriteSPICnt`).
+    pub fn write_auxspicnt(&mut self, value: u16, mask: u16) {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(target: "auxspi", "cnt {:04X} -> {value:04X}/{mask:04X} sel={}", self.auxspicnt, self.spi_selected);
+        let value = value & mask;
+        if self.spi_selected {
+            if self.auxspicnt & !value & (1 << 13) != 0 {
+                self.backup.release();
+                self.spi_selected = false;
+            } else if !self.auxspicnt & value & (1 << 13) != 0 {
+                self.backup.select();
+            }
+        }
+        self.auxspicnt = (self.auxspicnt & !mask) | (value & 0xE043);
     }
 
     /// Sets AUXSPICNT register value.
-    pub const fn set_auxspicnt(&mut self, value: u16) {
-        self.auxspicnt.bandwidth = (value & 0x3) as u32;
-        self.auxspicnt.hold_chipselect = (value & (1 << 6)) != 0;
-        self.set_hi_auxspicnt((value >> 8) as u8);
+    pub fn set_auxspicnt(&mut self, value: u16) {
+        self.write_auxspicnt(value, 0xFFFF);
     }
 
-    /// Handles AUX SPI data write and updates SPI state machine.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
-    #[expect(clippy::cognitive_complexity)]
+    /// Sets low byte of AUXSPICNT register.
+    pub fn set_lo_auxspicnt(&mut self, value: u8) {
+        self.write_auxspicnt(value as u16, 0x00FF);
+    }
+
+    /// Sets high byte of AUXSPICNT register.
+    pub fn set_hi_auxspicnt(&mut self, value: u8) {
+        self.write_auxspicnt((value as u16) << 8, 0xFF00);
+    }
+
+    /// Writes AUXSPIDATA: exchanges one byte with the save chip.
+    ///
+    /// The chip is selected by the first byte and released after any byte
+    /// written while AUXSPICNT bit 6 (chip select hold) is clear.
     pub fn set_auxspidata(&mut self, value: u8) {
-        if self.spi_cmd == AuxSpiCommand::Empty {
-            self.spi_params = 0;
-
-            match value {
-                0 => {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!("AUXSPI derp");
-                }
-
-                2 => {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!("AUXSPI write");
-                    self.spi_cmd = AuxSpiCommand::WriteMem;
-                }
-
-                3 => {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!("AUXSPI read");
-                    self.spi_cmd = AuxSpiCommand::ReadMem;
-                }
-
-                4 => {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!("AUXSPI write disabled");
-                    self.spi_write_enabled = false;
-                }
-
-                5 => {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!("AUXSPI read status reg");
-                    self.spi_cmd = AuxSpiCommand::ReadStatusReg;
-                    self.spi_addr = 0;
-                }
-
-                6 => {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!("AUXSPI write enabled");
-                    self.spi_write_enabled = true;
-                }
-
-                10 => {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!("AUXSPI page write");
-
-                    self.spi_cmd = if self.save_type == 2 {
-                        AuxSpiCommand::PageWrite
-                    } else {
-                        AuxSpiCommand::WriteHi
-                    };
-                }
-
-                11 => {
-                    if self.save_type == 0 {
-                        self.spi_cmd = AuxSpiCommand::ReadHi;
-                    }
-                }
-
-                _ => {
-                    #[cfg(feature = "tracing")]
-                    tracing::error!("Unrecognized AUXSPI cmd {}", value);
-                    return;
-                }
-            }
-        } else {
-            match self.spi_cmd {
-                AuxSpiCommand::ReadStatusReg => {
-                    self.spi_data = (self.spi_write_enabled as u8) << 1;
-                    if self.save_type == 0 {
-                        self.spi_data |= 0xF0;
-                    }
-                }
-
-                AuxSpiCommand::WriteMem => {
-                    match self.save_type {
-                        0 => {
-                            if self.spi_params < 2 {
-                                self.spi_addr = value as u32;
-                            } else if self.spi_write_enabled {
-                                self.dirty_save = true;
-                                let idx = (self.spi_addr & 0xFF) as usize;
-                                self.spi_save[idx] = value;
-                                self.spi_addr += 1;
-                            }
-                        }
-
-                        1 => {
-                            if self.spi_params < 3 {
-                                self.spi_addr |= (value as u32) << ((2 - self.spi_params) * 8);
-                            } else if self.spi_write_enabled {
-                                self.dirty_save = true;
-                                let idx = (self.spi_addr & (self.save_size as u32 - 1)) as usize;
-                                self.spi_save[idx] = value;
-                                self.spi_addr += 1;
-                            }
-                        }
-
-                        2 => {
-                            if self.spi_params < 4 {
-                                self.spi_addr |= (value as u32) << ((3 - self.spi_params) * 8);
-                            } else if self.spi_write_enabled {
-                                self.dirty_save = true;
-                                let idx = (self.spi_addr & (self.save_size as u32 - 1)) as usize;
-                                self.spi_save[idx] = 0;
-                                self.spi_addr += 1;
-                            }
-                        }
-
-                        _ => {}
-                    }
-
-                    // #[cfg(feature = "tracing")]
-                    // tracing::trace!("WRITE_MEM {}", value);
-                }
-
-                AuxSpiCommand::ReadMem => {
-                    match self.save_type {
-                        0 => {
-                            if self.spi_params < 2 {
-                                self.spi_addr |= value as u32;
-                            } else {
-                                let idx = (self.spi_addr & 0xFF) as usize;
-                                self.spi_data = self.spi_save[idx];
-                                self.spi_addr += 1;
-                            }
-                        }
-
-                        1 => {
-                            if self.spi_params < 3 {
-                                self.spi_addr |= (value as u32) << ((2 - self.spi_params) * 8);
-                            } else {
-                                let idx = (self.spi_addr & (self.save_size as u32 - 1)) as usize;
-                                self.spi_data = self.spi_save[idx];
-                                self.spi_addr += 1;
-                            }
-                        }
-
-                        2 => {
-                            if self.spi_params < 4 {
-                                self.spi_addr <<= 8;
-                                self.spi_addr |= value as u32;
-                            } else {
-                                let idx = (self.spi_addr & (self.save_size as u32 - 1)) as usize;
-                                self.spi_data = self.spi_save[idx];
-                                self.spi_addr += 1;
-                            }
-                        }
-
-                        _ => {}
-                    }
-
-                    // #[cfg(feature = "tracing")]
-                    // tracing::trace!("READ_MEM {}", value);
-                }
-
-                AuxSpiCommand::PageWrite => {
-                    if self.save_type == 2 {
-                        if self.spi_params < 4 {
-                            self.spi_addr <<= 8;
-                            self.spi_addr |= value as u32;
-                        } else if self.spi_write_enabled {
-                            // #[cfg(feature = "tracing")]
-                            // tracing::trace!("Page write {:08X}", self.spi_addr);
-
-                            self.dirty_save = true;
-                            let idx = (self.spi_addr & (self.save_size as u32 - 1)) as usize;
-                            self.spi_save[idx] = value;
-                            self.spi_addr += 1;
-                        }
-                    }
-                }
-
-                AuxSpiCommand::WriteHi => {
-                    if self.spi_params < 2 {
-                        self.spi_addr = 0x100 | value as u32;
-                    } else if self.spi_write_enabled {
-                        self.dirty_save = true;
-                        let idx = (self.spi_addr & 0x1FF) as usize;
-                        self.spi_save[idx] = value;
-                        self.spi_addr += 1;
-
-                        if self.spi_addr == 0x200 {
-                            self.spi_addr = 0x100;
-                        }
-                    }
-                }
-
-                AuxSpiCommand::ReadHi => {
-                    if self.spi_params < 2 {
-                        self.spi_addr = 0x100 | value as u32;
-                    } else {
-                        let idx = (self.spi_addr & 0x1FF) as usize;
-                        self.spi_data = self.spi_save[idx];
-                        self.spi_addr += 1;
-
-                        if self.spi_addr == 0x200 {
-                            self.spi_addr = 0x100;
-                        }
-                    }
-                }
-
-                AuxSpiCommand::Empty => {}
-            }
+        // Slot enabled and in SPI (backup) mode.
+        if self.auxspicnt & 0xA000 != 0xA000 {
+            return;
         }
 
-        self.spi_params += 1;
-
-        if !self.auxspicnt.hold_chipselect {
-            // #[cfg(feature = "tracing")]
-            // tracing::trace!("Deselected AUXSPI");
-
-            self.spi_params = 0;
-            self.spi_addr = 0;
-            self.spi_cmd = AuxSpiCommand::Empty;
+        if !self.spi_selected {
+            self.backup.select();
         }
+        self.spi_data = self.backup.transfer(value);
+        #[cfg(feature = "tracing")]
+        tracing::trace!(target: "auxspi", "sel={} in={value:02X} out={:02X} hold={}", self.spi_selected, self.spi_data, self.auxspicnt & (1 << 6) != 0);
+
+        let hold = self.auxspicnt & (1 << 6) != 0;
+        if !hold {
+            self.backup.release();
+        }
+        self.spi_selected = hold;
+    }
+
+    /// Whether a ROM transfer should raise the cartridge IRQ (AUXSPICNT bit 14).
+    pub const fn transfer_irq_enabled(&self) -> bool {
+        self.auxspicnt & (1 << 14) != 0
     }
 
     /// Updates ROMCTRL register and may trigger a new cartridge transfer.
@@ -799,7 +514,7 @@ impl NDSCart {
         self.romctrl.key1_gap_clocks = ((value >> 28) & 1) != 0;
         self.romctrl.block_busy = ((value >> 31) & 1) != 0;
 
-        if !old_transfer_busy && self.romctrl.block_busy && self.auxspicnt.enabled {
+        if !old_transfer_busy && self.romctrl.block_busy && self.auxspicnt & (1 << 15) != 0 {
             self.romctrl.word_ready = false;
 
             self.bytes_left = match self.romctrl.block_size {

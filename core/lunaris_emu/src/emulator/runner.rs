@@ -86,6 +86,13 @@ impl Emulator {
         let thumb_on = self.get_cpu_mut(cpu_type).cpsr.thumb_on;
         let pc = self.get_cpu(cpu_type).get_pc();
 
+        if let Some((mask, at)) = self.config.trace_trigger
+            && mask & (1 << cpu_id) != 0
+            && pc.wrapping_sub(if thumb_on { 2 } else { 4 }) == at
+        {
+            self.config.trace_cpus = mask;
+            self.config.trace_trigger = None;
+        }
         if self.config.trace_cpus & (1 << cpu_id) != 0 {
             self.trace_instruction(cpu_type, thumb_on, pc);
         }
@@ -135,18 +142,11 @@ impl Emulator {
         let cpu = self.get_cpu(cpu_type);
         let r = &cpu.regs;
         eprintln!(
-            "{}{} {addr:08X} {op:08X} cpsr={:08X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r4={:08X} r12={:08X} sp={:08X} lr={:08X}",
+            "{}{} {addr:08X} {op:08X} cpsr={:08X} r={:08X?}",
             if cpu.cpu_id == 0 { 9 } else { 7 },
             if thumb_on { 'T' } else { 'A' },
             cpu.cpsr.get(),
-            r[0],
-            r[1],
-            r[2],
-            r[3],
-            r[4],
-            r[12],
-            r[13],
-            r[14]
+            &r[..15],
         );
     }
 }

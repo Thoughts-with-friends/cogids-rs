@@ -80,10 +80,16 @@ impl Emulator {
                 }
             }
             0x04000188 => {
+                #[cfg(feature = "tracing")]
+                tracing::debug!(target: "ipc", "Arm7 send {word:08X}");
                 let irq = self.ipc.send(Side::Arm7, word);
                 self.raise_ipc(irq);
             }
 
+            0x040001A0 => {
+                self.cart.set_auxspicnt(word as u16);
+                self.cart.set_auxspidata((word >> 16) as u8);
+            }
             0x040001A4 => self.cart.set_romctrl(word),
             0x040001B0 => self.cart.set_lo_key2_seed0(word),
             0x040001B4 => self.cart.set_lo_key2_seed1(word),
@@ -291,7 +297,9 @@ impl Emulator {
             // IO register byte writes
             0x04000138 => self.rtc.write(byte as u16, true),
 
+            0x040001A0 => self.cart.set_lo_auxspicnt(byte),
             0x040001A1 => self.cart.set_hi_auxspicnt(byte),
+            0x040001A2 => self.cart.set_auxspidata(byte),
 
             // Cart command sequence
             0x040001A8..=0x040001AF => self

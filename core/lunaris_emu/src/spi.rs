@@ -78,6 +78,63 @@ impl Default for RegSpiCnt {
     }
 }
 
+/// Power management chip on SPI device 0 (melonDS `PowerMan`).
+///
+/// The first byte selects a register (bit 7 = read), the second byte is the
+/// data. Registers: 0 control, 1 battery (0 = OK), 2 amplifier, 3 mic gain,
+/// 4 backlight.
+#[derive(Debug, Clone)]
+struct PowerMan {
+    selected: bool,
+    pos: u8,
+    index: u8,
+    registers: [u8; 8],
+}
+
+impl Default for PowerMan {
+    fn default() -> Self {
+        let mut registers = [0; 8];
+        registers[4] = 0x40;
+        Self {
+            selected: false,
+            pos: 0,
+            index: 0,
+            registers,
+        }
+    }
+}
+
+impl PowerMan {
+    const MASKS: [u8; 8] = [0x7F, 0x00, 0x01, 0x03, 0x0F, 0, 0, 0];
+
+    fn transfer(&mut self, value: u8) -> u8 {
+        if !self.selected {
+            self.selected = true;
+            self.index = value;
+            self.pos = 1;
+            return 0;
+        }
+        let out = if self.pos == 1 {
+            let reg = (self.index & 0x07) as usize;
+            if self.index & 0x80 != 0 {
+                self.registers[reg]
+            } else {
+                let mask = Self::MASKS[reg];
+                self.registers[reg] = (self.registers[reg] & !mask) | (value & mask);
+                0
+            }
+        } else {
+            0
+        };
+        self.pos = self.pos.saturating_add(1);
+        out
+    }
+
+    const fn release(&mut self) {
+        self.selected = false;
+    }
+}
+
 /// SPI Bus controller
 /// Manages communication with multiple SPI-attached devices
 #[derive(Debug, Default)]
@@ -86,6 +143,7 @@ pub struct SPIBus {
     // pub(crate) emulator: EmulatorRef,
     pub(crate) firmware: Firmware,
     touchscreen: TouchScreen,
+    powerman: PowerMan,
 
     /// SPI control register
     spicnt: RegSpiCnt,
@@ -100,6 +158,7 @@ impl SPIBus {
         Self {
             firmware: Firmware::new(),
             touchscreen: TouchScreen::new(),
+            powerman: PowerMan::default(),
             spicnt: RegSpiCnt::new(),
             output: 0,
         }
@@ -146,6 +205,8 @@ impl SPIBus {
         self.spicnt.busy = false;
 
         let hold = self.spicnt.chipselect_hold;
+        #[cfg(feature = "tracing")]
+        tracing::trace!(target: "spi", "dev{} hold={hold} in={data:02X}", self.spicnt.device);
         self.output = match self.spicnt.device {
             1 => {
                 let out = self.firmware.transfer_data(data);
@@ -161,7 +222,14 @@ impl SPIBus {
                 }
                 out
             }
-            _ => 0, // power management: not emulated
+            0 => {
+                let out = self.powerman.transfer(data);
+                if !hold {
+                    self.powerman.release();
+                }
+                out
+            }
+            _ => 0,
         };
 
         self.spicnt.irq_after_transfer

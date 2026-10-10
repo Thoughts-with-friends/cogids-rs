@@ -200,6 +200,11 @@ impl App {
             return;
         };
 
+        // Flush the running game first so a restart reloads its latest save.
+        if let Some(mut old) = self.emu.take() {
+            Self::flush_save(&mut old);
+        }
+
         let mut emu = Emulator::new();
         // emu.config.test = true; // enable disassemble
 
@@ -218,7 +223,17 @@ impl App {
 
     fn stop_emulator(&mut self) {
         self.is_running = false;
-        self.emu = None;
+        if let Some(mut emu) = self.emu.take() {
+            Self::flush_save(&mut emu);
+        }
+    }
+
+    /// Writes pending save data to `<rom>.sav` (also done on drop, but this
+    /// reports failures).
+    fn flush_save(emu: &mut Emulator) {
+        if let Err(e) = emu.flush_save() {
+            tracing::error!("Failed to write save file: {e}");
+        }
     }
 
     // ===== rendering =====
@@ -353,6 +368,9 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(emu) = self.emu.as_mut() {
+            Self::flush_save(emu);
+        }
         save_config(&self.config);
     }
 }

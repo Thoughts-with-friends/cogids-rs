@@ -236,6 +236,15 @@ impl Firmware {
             self.command = input;
             self.data_pos = 1;
             self.address = 0;
+            // WREN / WRDI are single-byte commands: they take effect on the
+            // command byte itself (melonDS `FirmwareMem::Write`). Handling
+            // them only on a following byte left the write enable latch
+            // clear, so the SDK's NVRAM writes retried forever.
+            match input {
+                0x06 => self.status_reg |= 0x02,
+                0x04 => self.status_reg &= !0x02,
+                _ => {}
+            }
             return 0;
         }
 

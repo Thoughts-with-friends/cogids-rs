@@ -33,6 +33,10 @@ impl Emulator {
             0x04000120 | 0x04000400..0x04000500 => 0,
             0x04000180 => self.ipc.read_sync(Side::Arm7).into(),
             0x04000184 => self.ipc.read_cnt(Side::Arm7).into(),
+            0x040001A0 => {
+                (u32::from(self.cart.get_auxspicnt()))
+                    | (u32::from(self.cart.read_auxspidata()) << 16)
+            }
             0x040001A4 => self.cart.get_romctrl(),
             0x040001C0 => (self.spi.get_spicnt() as u32) | (self.spi.read_spidata() as u32) << 16,
             0x04000208 => self.int7_reg.ime,
@@ -40,6 +44,8 @@ impl Emulator {
             0x04000214 => self.int7_reg.irq_flags,
             0x04100000 => {
                 let (word, irq) = self.ipc.receive(Side::Arm7);
+                #[cfg(feature = "tracing")]
+                tracing::debug!(target: "ipc", "Arm7 recv {word:08X}");
                 self.raise_ipc(irq);
                 word
             }
@@ -196,6 +202,9 @@ impl Emulator {
 
             // Direct IO byte reads
             0x04000138 => self.rtc.read() as u8,
+            0x040001A0 => self.cart.get_auxspicnt() as u8,
+            0x040001A1 => (self.cart.get_auxspicnt() >> 8) as u8,
+            0x040001A2 => self.cart.read_auxspidata(),
             0x040001C2 => self.spi.read_spidata(),
             0x04000218 | 0x0400021C => 0, // DSi IE2 | DSi IF2
             0x04000241 => self.wram_cnt & 0x3,

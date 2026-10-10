@@ -35,7 +35,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [features]
 default = ["tracing"]
-tracing = ["dep:tracing"]
+tracing = ["dep:tracing", "lunaris_ds_cartridge/tracing", "lunaris_ds_rtc/tracing"]
 
 # TODO:
 [lints]

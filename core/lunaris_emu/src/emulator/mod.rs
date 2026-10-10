@@ -69,6 +69,10 @@ pub struct Emulator {
     pub gpu_event: SchedulerEvent,
     pub dma_event: SchedulerEvent,
 
+    /// Raw 2D engine registers (A, B) as last written by the ARM9; see
+    /// [`gpu::io_2d`].
+    pub io_2d: [[u8; gpu::io_2d::IO_2D_SIZE]; 2],
+
     /// IPCSYNC / IPCFIFO registers and queues for both CPUs
     pub ipc: Ipc,
     pub aux_spi_cnt: u16,
@@ -132,6 +136,15 @@ pub struct Emulator {
     pub last_arm7_timestamp: u64,
 }
 
+impl Drop for Emulator {
+    fn drop(&mut self) {
+        if let Err(_err) = self.cart.flush_save() {
+            #[cfg(feature = "tracing")]
+            tracing::error!("{_err}");
+        }
+    }
+}
+
 impl Default for Emulator {
     fn default() -> Self {
         Self::new()
@@ -164,6 +177,7 @@ impl Emulator {
             next_event_time: Default::default(),
             gpu_event: Default::default(),
             dma_event: Default::default(),
+            io_2d: [[0; gpu::io_2d::IO_2D_SIZE]; 2],
             ipc: Default::default(),
             aux_spi_cnt: Default::default(),
             int7_reg: Default::default(),
@@ -333,6 +347,7 @@ impl Emulator {
         self.arm7.power_on();
         self.arm9_cp15.power_on();
         self.dma.power_on();
+        self.cart.power_on();
 
         self.gpu.power_on();
         self.add_gpu_event(0, 256 * 6);
@@ -379,6 +394,7 @@ impl Emulator {
         self.ext_key_in.hinge_closed = false;
 
         self.ipc.reset();
+        self.io_2d = [[0; gpu::io_2d::IO_2D_SIZE]; 2];
 
         // self.main_ram.clear();
         // self.shared_wram.clear();
@@ -396,21 +412,28 @@ impl Emulator {
         }
     }
 
+    /// Writes any pending save data to the `.sav` file right away.
+    ///
+    /// Saves are also flushed automatically a moment after the game stops
+    /// writing, and when the emulator is dropped.
+    ///
+    /// # Errors
+    pub fn flush_save(&mut self) -> Result<(), lunaris_ds_cartridge::CartridgeError> {
+        self.cart.flush_save()
+    }
+
     /// Perform a direct boot sequence.
     pub fn direct_boot(&mut self) {
         let mut boot_info = [0_u32; 8];
-        for address in 0..0x200 {
-            let value = self.cart.direct_read(address);
-
-            #[cfg(feature = "tracing")]
-            tracing::trace!("Read boot header byte {address}: 0x{value:08X} {}", {
-                if value.is_ascii_alphabetic() {
-                    value as char
-                } else {
-                    '.'
-                }
-            });
-            self.cart_write_header(address, value as u16);
+        // Only the first 0x170 header bytes are copied, like the firmware and
+        // melonDS `NDS::SetupDirectBoot`. 0x027FFF70..0x027FFFFF holds the
+        // SDK's shared lock words (e.g. the cartridge lock at 0x027FFFE8);
+        // filling it with the DSi header extension of hybrid ROMs leaves
+        // those locks permanently "held".
+        for address in (0..0x170).step_by(4) {
+            let word = self.cart.direct_read_word(address);
+            let offset = ((0x027F_FE00 + address) & MAIN_RAM_MASK) as usize;
+            self.main_ram[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
         }
 
         // msh
@@ -459,6 +482,9 @@ impl Emulator {
         self.postflg7 = 1;
         self.postflg9 = 1;
         self.r_cnt = 0x8000;
+        // Post-boot EXMEMCNT and AUXSPICNT (melonDS `NDS::SetupDirectBoot`).
+        self.ex_mem_cnt = 0xE880;
+        self.cart.set_auxspicnt(0x8000);
 
         self.bios_prot = 0x1204;
         self.wram_cnt = 3;

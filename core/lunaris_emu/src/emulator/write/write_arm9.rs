@@ -15,6 +15,9 @@ impl Emulator {
     /// - IPC, FIFO
     /// - Cartridge AUX SPI registers
     pub fn arm9_write_word(&mut self, address: u32, word: u32) {
+        if crate::emulator::gpu::io_2d::is_2d_reg(address) {
+            return self.write_io_2d_u32(address, word);
+        }
         // GPU / DMA / IPC / cartridge / I/O registers
         match address {
             MAIN_RAM_START..SHARED_WRAM_START => {
@@ -87,6 +90,8 @@ impl Emulator {
                 }
             }
             0x0400_0188 => {
+                #[cfg(feature = "tracing")]
+                tracing::debug!(target: "ipc", "Arm9 send {word:08X}");
                 let irq = self.ipc.send(Side::Arm9, word);
                 self.raise_ipc(irq);
             }
@@ -180,6 +185,9 @@ impl Emulator {
     /// - `halfword`: 16-bit value to write.
     #[expect(clippy::match_same_arms)]
     pub fn arm9_write_halfword(&mut self, address: u32, halfword: u16) {
+        if crate::emulator::gpu::io_2d::is_2d_reg(address) {
+            return self.write_io_2d_u16(address, halfword);
+        }
         // IO registers
         match address {
             // Main RAM
@@ -311,6 +319,7 @@ impl Emulator {
                 }
             }
             0x040001A0 => self.cart.set_auxspicnt(halfword),
+            0x040001A2 => self.cart.set_auxspidata(halfword as u8),
             0x04000204 => self.ex_mem_cnt = halfword,
             0x04000208 => self.int9_reg.ime = (halfword & 0x1) as u32,
             0x04000248 => {
@@ -411,6 +420,9 @@ impl Emulator {
     /// - `address`: 32-bit ARM9 memory address to write to.
     /// - `byte`: 8-bit value to write.
     pub fn arm9_write_byte(&mut self, address: u32, byte: u8) {
+        if crate::emulator::gpu::io_2d::is_2d_reg(address) {
+            return self.write_io_2d_u8(address, byte);
+        }
         // IO registers / special addresses
         match address {
             0x04000181 => {
@@ -426,6 +438,7 @@ impl Emulator {
                 self.main_ram[idx] = byte;
             }
             0x0400004C => self.gpu.set_mosaic_a(byte as u16),
+            0x040001A0 => self.cart.set_lo_auxspicnt(byte),
             0x040001A1 => self.cart.set_hi_auxspicnt(byte),
             0x040001A2 => {
                 // #[cfg(feature = "tracing")]

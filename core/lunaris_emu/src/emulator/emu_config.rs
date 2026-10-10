@@ -10,6 +10,9 @@ pub struct Config {
     pub arm9_bios_path: String,
     pub firmware_path: String,
     pub savelist_path: String,
+    /// Directory for `.sav` files. `None` keeps each save next to its ROM
+    /// (`<rom>.sav`).
+    pub save_dir: Option<std::path::PathBuf>,
 
     /// Enable direct boot
     pub direct_boot_enabled: bool,
@@ -41,6 +44,14 @@ pub struct Config {
     /// Debugging aid: print every executed instruction of the selected CPU
     /// (bit 0 = ARM9, bit 1 = ARM7) to stderr.
     pub trace_cpus: u8,
+
+    /// Debugging aid: `(cpu mask, pc)` — once that CPU is about to execute
+    /// the instruction at `pc`, `trace_cpus` is set to the mask.
+    pub trace_trigger: Option<(u8, u32)>,
+
+    /// Debugging aid: print every CPU write to this word (main RAM mirrors
+    /// are matched) to stderr.
+    pub watch_addr: Option<u32>,
 }
 
 impl Default for Config {
@@ -57,6 +68,7 @@ impl Config {
             arm9_bios_path: Default::default(),
             firmware_path: Default::default(),
             savelist_path: Default::default(),
+            save_dir: None,
             direct_boot_enabled: true,
             pause_when_unfocused: Default::default(),
             bg_enable: Default::default(),
@@ -65,6 +77,8 @@ impl Config {
             hle_bios: true,
             test: Default::default(),
             trace_cpus: 0,
+            trace_trigger: None,
+            watch_addr: None,
         }
     }
 }

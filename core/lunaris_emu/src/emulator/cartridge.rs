@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::Emulator;
-use lunaris_ds_cartridge::{CartCommand, CartridgeError};
+use lunaris_ds_cartridge::{BackupMemory, CartCommand, CartridgeError, SaveMemType, rom_list};
 
 impl Emulator {
     /// Loads ROM image and optional save data.
@@ -12,6 +12,12 @@ impl Emulator {
 
         // #[cfg(feature = "tracing")]
         // tracing::info!("Loading ROM {}", rom_file.display());
+
+        // Persist the previous game's save before it is replaced.
+        if let Err(_err) = self.cart.flush_save() {
+            #[cfg(feature = "tracing")]
+            tracing::error!("{_err}");
+        }
 
         let mut file = File::open(rom_file).map_err(|source| {
             // #[cfg(feature = "tracing")]
@@ -51,86 +57,7 @@ impl Emulator {
             self.cart.rom_name = stem.to_string_lossy().to_string();
         }
 
-        // Try load save
-        let save_path = rom_file.with_extension("sav");
-
-        if let Ok(mut save_file) = File::open(&save_path) {
-            let meta =
-                std::fs::metadata(&save_path).map_err(|source| CartridgeError::ReadSave {
-                    path: save_path.clone(),
-                    source,
-                })?;
-
-            let file_size = meta.len() as usize;
-
-            if file_size > 0 {
-                save_file
-                    .read_exact(&mut self.cart.spi_save[..file_size])
-                    .map_err(|source| CartridgeError::ReadSave {
-                        path: save_path.clone(),
-                        source,
-                    })?;
-
-                self.cart.save_size = file_size;
-
-                // #[cfg(feature = "tracing")]
-                // tracing::info!(
-                //     "Loaded save {} size {}",
-                //     save_path.display(),
-                //     self.cart.save_size
-                // );
-            }
-        } else {
-            // Database fallback
-            if !self.cart.save_database.is_empty() {
-                let entries = self.cart.database_size as usize / 19;
-
-                for index in 0..entries {
-                    let base = index * 19;
-
-                    let mut match_ok = true;
-
-                    for c in 0..16 {
-                        if self.cart.rom[c] != self.cart.save_database[base + c] {
-                            match_ok = false;
-                            break;
-                        }
-                    }
-
-                    if match_ok {
-                        // #[cfg(feature = "tracing")]
-                        // tracing::info!("Found ROM entry in database");
-
-                        let size_index = self.cart.save_database[base + 18];
-
-                        self.cart.save_size = match size_index {
-                            0x02 => 512,
-                            0x03 => 1024 * 8,
-                            0x04 => 1024 * 64,
-                            0x05 => 1024 * 256,
-                            0x06 => 1024 * 512,
-                            0x07 => 1024 * 1024,
-                            _ => {
-                                #[cfg(feature = "tracing")]
-                                tracing::error!("Unrecognized save format {}", size_index);
-                                0
-                            }
-                        };
-
-                        // #[cfg(feature = "tracing")]
-                        // tracing::info!("Save size {}", self.cart.save_size);
-                    }
-                }
-            }
-        }
-
-        if self.cart.save_size == 512 {
-            self.cart.save_type = 0;
-        } else if (1024 * 8..=1024 * 64).contains(&self.cart.save_size) {
-            self.cart.save_type = 1;
-        } else if self.cart.save_size > 1024 * 64 {
-            self.cart.save_type = 2;
-        }
+        self.cartridge_setup_backup(rom_file)?;
 
         // Only re-encrypt the ROM if this is not a direct boot
         if self.config.direct_boot_enabled {
@@ -189,6 +116,107 @@ impl Emulator {
         self.cartridge_init_keycode(game_code, 2, 2);
 
         Ok(())
+    }
+
+    /// Picks the save chip for the loaded ROM and loads its `.sav` file.
+    ///
+    /// The chip type comes from, in order: the melonDS game database
+    /// ([`lunaris_ds_cartridge::rom_list`]), a CorgiDS save database loaded
+    /// with [`Self::load_save_database`], the size of an existing `.sav` file,
+    /// and finally melonDS' default (none for homebrew, 64 KiB EEPROM
+    /// otherwise). An existing save shorter or longer than the chip is padded
+    /// with `0xFF` or truncated.
+    ///
+    /// The save lives next to the ROM (`<rom>.sav`) unless
+    /// [`crate::emulator::emu_config::Config::save_dir`] is set.
+    fn cartridge_setup_backup(&mut self, rom_file: &Path) -> Result<(), CartridgeError> {
+        let save_path = match &self.config.save_dir {
+            Some(dir) => dir.join(
+                rom_file
+                    .with_extension("sav")
+                    .file_name()
+                    .unwrap_or_default(),
+            ),
+            None => rom_file.with_extension("sav"),
+        };
+
+        let existing = match std::fs::read(&save_path) {
+            Ok(data) => Some(data),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(CartridgeError::ReadSave {
+                    path: save_path,
+                    source,
+                });
+            }
+        };
+
+        let header = |offset: usize| {
+            self.cart
+                .rom
+                .get(offset..offset + 4)
+                .map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let game_code = header(0x0C);
+        // Same test as melonDS `NDSHeader::IsHomebrew`.
+        let homebrew = header(0x20) < 0x4000 || game_code == 0x2323_2323;
+
+        let mem_type: SaveMemType = rom_list::lookup(game_code)
+            .map(|(_, t)| t)
+            .filter(|&t| t != 0xFF)
+            .or_else(|| self.corgids_database_type())
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|d| BackupMemory::type_from_size(d.len()))
+            })
+            .unwrap_or(if homebrew { 0 } else { 3 });
+
+        self.cart.backup = BackupMemory::new(mem_type);
+        // Game codes starting with 'I' are carts with an infrared port
+        // (melonDS `NDSCartSlot::ParseROM`).
+        self.cart
+            .backup
+            .set_infrared(game_code & 0xFF == u32::from(b'I'));
+        if let Some(data) = &existing {
+            self.cart.backup.load_contents(data);
+        }
+        self.cart.backup.set_path(Some(save_path));
+
+        #[cfg(feature = "tracing")]
+        tracing::info!(
+            "Save memory: game code {game_code:08X}, type {mem_type} ({:?}, {} bytes), file {}",
+            self.cart.backup.chip(),
+            self.cart.backup.size(),
+            self.cart
+                .backup
+                .path()
+                .map_or_else(String::new, |p| p.display().to_string()),
+        );
+        Ok(())
+    }
+
+    /// Looks the ROM up in a CorgiDS save database (19-byte entries: 16 header
+    /// bytes, then the save size code at offset 18).
+    fn corgids_database_type(&self) -> Option<SaveMemType> {
+        let header = self.cart.rom.get(..16)?;
+        let entry = self
+            .cart
+            .save_database
+            .as_chunks::<19>()
+            .0
+            .iter()
+            .find(|entry| &entry[..16] == header)?;
+        // CorgiDS codes: 2 = 512 B, 3 = 8K, 4 = 64K, 5 = 256K, 6 = 512K, 7 = 1M.
+        match entry[18] {
+            0x02 => Some(1),
+            0x03 => Some(2),
+            0x04 => Some(3),
+            0x05 => Some(5),
+            0x06 => Some(6),
+            0x07 => Some(7),
+            _ => None,
+        }
     }
 
     /// Initializes keycode from chip ID and level.
@@ -296,7 +324,7 @@ impl Emulator {
             if self.cart.bytes_left <= 0 {
                 self.cart.romctrl.block_busy = false;
 
-                if self.cart.auxspicnt.irq_after_transfer {
+                if self.cart.transfer_irq_enabled() {
                     if self.arm7_has_cart_rights() {
                         self.request_interrupt7(lunaris_ds_interrupts::Interrupt::CartTransfer);
                     } else {

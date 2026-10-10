@@ -145,6 +145,8 @@ impl RealTimeClock {
 
     /// Process input data from serial protocol
     pub fn interpret_input(&mut self) {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(target: "rtc", "byte {} = {:02X}", self.input_index, self.input);
         if self.input_index == 0 {
             self.command = (self.input & 0x70) >> 4;
 
