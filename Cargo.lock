@@ -1539,22 +1539,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ds_egui"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "ds_common",
- "ds_emu",
- "ds_mem_addr",
- "eframe",
- "egui",
- "log",
- "serde",
- "serde_json",
- "winres",
-]
-
-[[package]]
 name = "ds_emu"
 version = "0.1.0"
 dependencies = [
@@ -3441,6 +3425,22 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+]
+
+[[package]]
+name = "lunaris_ds_egui"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "ds_common",
+ "ds_emu",
+ "ds_mem_addr",
+ "eframe",
+ "egui",
+ "log",
+ "serde",
+ "serde_json",
+ "winres",
 ]
 
 [[package]]
