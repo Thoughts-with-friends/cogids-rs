@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
-use ds_common::memory_map::*;
 use ds_gpu::engine_3d::state::Gpu3D;
+use ds_mem_addr::*;
 use ds_peripherals::ipc::Side;
 
 impl Emulator {

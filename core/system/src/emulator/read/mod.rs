@@ -2,7 +2,7 @@
 mod read_arm7;
 mod read_arm9;
 
-use ds_common::memory_map::{ARM7_WRAM_MASK, ARM7_WRAM_START};
+use ds_mem_addr::{ARM7_WRAM_MASK, ARM7_WRAM_START};
 
 use crate::cpu::arm_cpu::CpuType;
 use crate::emulator::Emulator;

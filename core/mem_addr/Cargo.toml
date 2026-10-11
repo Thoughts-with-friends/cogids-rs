@@ -1,5 +1,5 @@
 [package]
-name = "ds_common"
+name = "ds_mem_addr"
 description = "Definitions shared by every DS component: memory map and interrupt sources"
 authors.workspace = true
 categories.workspace = true

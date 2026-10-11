@@ -1,6 +1,6 @@
 //! Drives the SPU from the ARM7 clock and hands its output to the frontend.
 use crate::emulator::Emulator;
-use ds_common::memory_map::{ARM7_WRAM_MASK, ARM7_WRAM_START, MAIN_RAM_MASK};
+use ds_mem_addr::{ARM7_WRAM_MASK, ARM7_WRAM_START, MAIN_RAM_MASK};
 use ds_spu::{CYCLES_PER_SAMPLE, SoundBus};
 
 /// The memory the SPU reaches (sound DMA / capture): main RAM, shared WRAM

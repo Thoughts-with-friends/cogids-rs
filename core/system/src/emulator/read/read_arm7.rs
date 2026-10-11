@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::Emulator;
-use ds_common::memory_map::*;
+use ds_mem_addr::*;
 use ds_peripherals::ipc::Side;
 
 impl Emulator {

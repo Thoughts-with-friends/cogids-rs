@@ -14,7 +14,7 @@
 //! See GBATEK "DS Video BG Modes / Control", "DS Video OBJs" and "LCD I/O
 //! Color Special Effects".
 use crate::Gpu;
-use ds_common::memory_map::{PIXELS_PER_LINE, SCANLINES};
+use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 
 pub(super) const W: usize = PIXELS_PER_LINE;
 

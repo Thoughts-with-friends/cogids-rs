@@ -9,7 +9,7 @@ mod window;
 
 pub use regs::{BldCnt, DispCapCnt, DispCnt, WinIn, WinOut};
 
-use ds_common::memory_map::*;
+use ds_mem_addr::*;
 
 #[derive(Debug, Default)]
 pub struct Gpu2DEngine {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! emulator.hpp
 //!
-use ds_common::memory_map::*;
+use ds_mem_addr::*;
 
 #[derive(Debug)]
 pub struct Config {

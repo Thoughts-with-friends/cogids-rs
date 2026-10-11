@@ -3,7 +3,7 @@
 //! gpu.hpp
 //!
 use crate::Gpu;
-use ds_common::memory_map::*;
+use ds_mem_addr::*;
 
 impl Gpu {
     /// Draws the current scanline for every powered-on 2D engine.

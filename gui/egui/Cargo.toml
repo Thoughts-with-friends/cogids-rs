@@ -28,7 +28,9 @@ tracing_rotation = { git = "https://github.com/SARDONYX-sard/dar-to-oar", tag = 
 
 # workspace dependencies
 ds_emu = { workspace = true, features = ["tracing"] }
-ds_common = { workspace = true }
+ds_mem_addr = { workspace = true }
+
+
 ds_frontend = { workspace = true }
 
 

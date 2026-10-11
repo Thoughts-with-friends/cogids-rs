@@ -15,7 +15,9 @@ version.workspace = true
 chrono = { version = "0.4.44" }
 tracing = { workspace = true, optional = true }
 
-ds_common = { workspace = true }
+# workspace members
+ds_interrupt = { workspace = true }
+ds_mem_addr = { workspace = true }
 
 [features]
 tracing = ["dep:tracing"]

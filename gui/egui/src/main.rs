@@ -6,9 +6,9 @@ mod input;
 
 use self::config::{Config, ScreenLayout, load_config, save_config, set_config_path};
 use self::input::Touch;
-use ds_common::memory_map::{PIXELS_PER_LINE, SCANLINES};
 use ds_emu::Emulator;
 use ds_frontend::{AudioOutput, DS_FPS, Gamepads, Instance, Settings};
+use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use eframe::egui;
 use std::{path::PathBuf, time::Instant};
 

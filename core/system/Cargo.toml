@@ -18,7 +18,8 @@ snafu = { workspace = true }
 # workspace members
 ds_bios = { workspace = true }
 ds_cartridge = { workspace = true }
-ds_common = { workspace = true }
+ds_interrupt = { workspace = true }
+ds_mem_addr = { workspace = true }
 ds_gpu = { workspace = true }
 ds_peripherals = { workspace = true }
 ds_spu = { workspace = true }

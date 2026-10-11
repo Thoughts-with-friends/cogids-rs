@@ -3,7 +3,7 @@
 //! emulator.hpp
 //!
 use crate::emulator::Emulator;
-use ds_common::interrupt::Interrupt;
+use ds_interrupt::Interrupt;
 use ds_peripherals::ipc::{IpcIrq, IrqRequest, Side};
 
 impl Emulator {

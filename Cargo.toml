@@ -12,13 +12,7 @@ version = "0.1.0"
 
 [workspace]
 members = [
-  "core/bios",
-  "core/cartridge",
-  "core/common",
-  "core/gpu",
-  "core/peripherals",
-  "core/spu",
-  "core/system",
+  "core/*", #
   "gui/common",
   "gui/egui",
   "gui/tauri/src-tauri"
@@ -33,12 +27,13 @@ snafu = "0.9.0"
 # workspace members
 ds_bios = { path = "./core/bios" }
 ds_cartridge = { path = "./core/cartridge" }
-ds_common = { path = "./core/common" }
 ds_emu = { path = "./core/system" }
+ds_frontend = { path = "./gui/common" }
 ds_gpu = { path = "./core/gpu" }
+ds_interrupt = { path = "./core/interrupt" }
+ds_mem_addr = { path = "./core/mem_addr" }
 ds_peripherals = { path = "./core/peripherals" }
 ds_spu = { path = "./core/spu" }
-ds_frontend = { path = "./gui/common" }
 
 
 [workspace.lints.clippy]

@@ -5,7 +5,7 @@
 //! Direct Memory Access (DMA) controller for Nintendo DS
 //! Manages high-speed memory transfers between memory regions
 use crate::emulator::Emulator;
-use ds_common::interrupt::Interrupt;
+use ds_interrupt::Interrupt;
 
 impl Emulator {
     /// Handle scheduler event

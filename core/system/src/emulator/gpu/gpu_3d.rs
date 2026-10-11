@@ -4,10 +4,10 @@
 //! gpu3d.hpp
 
 use crate::Emulator;
-use ds_common::interrupt::Interrupt;
-use ds_common::memory_map::SCANLINES;
 use ds_gpu::engine_3d::gxfifo::CMD_PARAM_AMOUNTS;
 use ds_gpu::engine_3d::state::GxCommand;
+use ds_interrupt::Interrupt;
+use ds_mem_addr::SCANLINES;
 
 impl Emulator {
     /// Re-evaluates the GXFIFO interrupt (GXSTAT bits 30-31).

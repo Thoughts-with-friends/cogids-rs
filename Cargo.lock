@@ -1525,17 +1525,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "ds_common"
-version = "0.1.0"
-
-[[package]]
 name = "ds_egui"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "ds_common",
  "ds_emu",
  "ds_frontend",
+ "ds_mem_addr",
  "eframe",
  "egui",
  "serde",
@@ -1551,8 +1547,9 @@ version = "0.1.0"
 dependencies = [
  "ds_bios",
  "ds_cartridge",
- "ds_common",
  "ds_gpu",
+ "ds_interrupt",
+ "ds_mem_addr",
  "ds_peripherals",
  "ds_spu",
  "image",
@@ -1560,6 +1557,13 @@ dependencies = [
  "snafu",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ds_example"
+version = "0.1.0"
+dependencies = [
+ "tracing",
 ]
 
 [[package]]
@@ -1579,16 +1583,26 @@ dependencies = [
 name = "ds_gpu"
 version = "0.1.0"
 dependencies = [
- "ds_common",
+ "ds_interrupt",
+ "ds_mem_addr",
  "tracing",
 ]
+
+[[package]]
+name = "ds_interrupt"
+version = "0.1.0"
+
+[[package]]
+name = "ds_mem_addr"
+version = "0.1.0"
 
 [[package]]
 name = "ds_peripherals"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "ds_common",
+ "ds_interrupt",
+ "ds_mem_addr",
  "tracing",
 ]
 
@@ -3414,9 +3428,9 @@ dependencies = [
 name = "lunaris"
 version = "0.1.0"
 dependencies = [
- "ds_common",
  "ds_emu",
  "ds_frontend",
+ "ds_mem_addr",
  "serde",
  "serde_json",
  "tauri",

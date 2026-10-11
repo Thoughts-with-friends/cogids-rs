@@ -19,14 +19,14 @@ mod write;
 
 use crate::cpu::arm_cpu::ArmCpu;
 use crate::cpu::coprocessor_15::Cp15;
-use ds_common::memory_map::*;
 use ds_gpu::{Gpu, display::regs::SchedulerEvent};
+use ds_mem_addr::*;
 use ds_spu::SPU;
 
 use crate::cpu::arm_cpu::CpuType;
 use crate::dma::NDSDma;
 use ds_cartridge::NDSCart;
-use ds_common::interrupt::InterruptRegs;
+use ds_interrupt::InterruptRegs;
 use ds_peripherals::ipc::Ipc;
 use ds_peripherals::rtc::RealTimeClock;
 use ds_peripherals::spi::SPIBus;

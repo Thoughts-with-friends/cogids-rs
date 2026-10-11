@@ -1,5 +1,5 @@
 use crate::emulator::Emulator;
-use ds_common::interrupt::Interrupt;
+use ds_interrupt::Interrupt;
 
 impl Emulator {
     /// Handle timer overflow

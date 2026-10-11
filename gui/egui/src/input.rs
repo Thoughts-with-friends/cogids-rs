@@ -1,6 +1,6 @@
 //! Host input: keyboard and the touch screen (gamepads: `ds_frontend`).
-use ds_common::memory_map::{PIXELS_PER_LINE, SCANLINES};
 use ds_emu::Emulator;
+use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use eframe::egui;
 
 /// Frames a touch is kept down after the pointer is released, so that a

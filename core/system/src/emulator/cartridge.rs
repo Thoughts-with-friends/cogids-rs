@@ -326,9 +326,9 @@ impl Emulator {
 
                 if self.cart.transfer_irq_enabled() {
                     if self.arm7_has_cart_rights() {
-                        self.request_interrupt7(ds_common::interrupt::Interrupt::CartTransfer);
+                        self.request_interrupt7(ds_interrupt::Interrupt::CartTransfer);
                     } else {
-                        self.request_interrupt9(ds_common::interrupt::Interrupt::CartTransfer);
+                        self.request_interrupt9(ds_interrupt::Interrupt::CartTransfer);
                     }
                 }
             }
