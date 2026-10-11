@@ -204,16 +204,4 @@ impl Gpu {
     pub fn get_powcnt1(&self) -> u16 {
         self.power_control_reg.get()
     }
-
-    pub fn get_gxstat(&self) -> u32 {
-        self.engine_3d.get_gxstat()
-    }
-
-    pub fn get_vert_count(&self) -> u16 {
-        self.engine_3d.get_vert_count()
-    }
-
-    pub fn get_poly_count(&self) -> u16 {
-        self.engine_3d.get_poly_count()
-    }
 }

@@ -4,10 +4,14 @@ use super::Emulator;
 use lunaris_ds_ipc::Side;
 use lunaris_ds_mem_const::*;
 
+use lunaris_ds_gpu::gpu_3d::structs::Gpu3D;
 impl Emulator {
     /// # Panics
     #[expect(clippy::unwrap_used)]
     pub fn arm9_read_word(&mut self, address: u32) -> u32 {
+        if Gpu3D::is_3d_reg(address) {
+            return self.gpu.engine_3d.read_reg(address);
+        }
         if crate::emulator::gpu::io_2d::is_2d_reg(address) {
             return self.read_io_2d_u32(address);
         }
@@ -83,10 +87,7 @@ impl Emulator {
             0x040002B4 => self.sqrt_result,
             0x040002B8 => (self.sqrt_param & 0xFFFF_FFFF) as u32,
             0x040002BC => (self.sqrt_param >> 32) as u32,
-            0x04000600 => self.gpu.get_gxstat(),
-            0x04000604 => {
-                self.gpu.get_poly_count() as u32 | ((self.gpu.get_vert_count() as u32) << 16)
-            }
+            0x04000600 => self.gpu.engine_3d.get_gxstat(),
             0x04001000 => self.gpu.get_dispcnt_b(),
             0x04001010 => {
                 self.gpu.get_bghofs_b(0) as u32 | ((self.gpu.get_bgvofs_b(0) as u32) << 16)
@@ -120,8 +121,6 @@ impl Emulator {
                     lo | (hi << 16)
                 }
             }
-            0x04000640..0x04000680 => self.gpu.read_clip_mtx(address),
-            0x04000680..0x040006A4 => self.gpu.read_vec_mtx(address),
 
             VRAM_BGA_START..OAM_START => u32::from_le_bytes(self.gpu.read_vram_arm9(address & !3)),
             OAM_START..GBA_ROM_START => self.gpu.read_oam_u32(address),
@@ -152,6 +151,9 @@ impl Emulator {
     /// # Panics
     #[expect(clippy::unwrap_used)]
     pub fn arm9_read_halfword(&self, address: u32) -> u16 {
+        if Gpu3D::is_3d_reg(address) {
+            return (self.gpu.engine_3d.read_reg(address) >> ((address & 2) * 8)) as u16;
+        }
         if crate::emulator::gpu::io_2d::is_2d_reg(address) {
             return self.read_io_2d_u16(address);
         }
@@ -226,10 +228,8 @@ impl Emulator {
             0x0400_02B0 => self.sqrtcnt,
             0x0400_0300 => self.postflg9.into(),
             0x0400_0304 => self.gpu.get_powcnt1(),
-            0x0400_0600 => self.gpu.get_gxstat() as u16,
-            0x0400_0602 => (self.gpu.get_gxstat() >> 16) as u16,
-            0x0400_0604 => self.gpu.get_poly_count(),
-            0x0400_0606 => self.gpu.get_vert_count(),
+            0x0400_0600 => self.gpu.engine_3d.get_gxstat() as u16,
+            0x0400_0602 => (self.gpu.engine_3d.get_gxstat() >> 16) as u16,
             0x0400_1000 => (self.gpu.get_dispcnt_b() & 0xffff) as u16,
             0x0400_1008 => self.gpu.get_bgcnt_b(0),
             0x0400_100a => self.gpu.get_bgcnt_b(1),
@@ -242,7 +242,6 @@ impl Emulator {
             0x0400_1050 => self.gpu.get_bldcnt_b(),
             0x0400_1052 => self.gpu.get_bldalpha_b(),
             0x0400_106c => self.gpu.get_master_bright_b(),
-            0x0400_0630..0x0400_0636 => self.gpu.read_vec_test(address),
             _ => {
                 if address >= GBA_ROM_START {
                     0xFFFF
@@ -265,6 +264,9 @@ impl Emulator {
     /// - Cartridge SPI registers
     /// - Some I/O registers
     pub fn arm9_read_byte(&self, address: u32) -> u8 {
+        if Gpu3D::is_3d_reg(address) {
+            return (self.gpu.engine_3d.read_reg(address) >> ((address & 3) * 8)) as u8;
+        }
         if crate::emulator::gpu::io_2d::is_2d_reg(address) {
             return self.read_io_2d_u8(address);
         }
@@ -272,7 +274,9 @@ impl Emulator {
         match address {
             0x04000180 => self.ipc.read_sync(Side::Arm9) as u8,
             0x04000181 => (self.ipc.read_sync(Side::Arm9) >> 8) as u8,
-            0x04000600..=0x04000603 => (self.gpu.get_gxstat() >> ((address & 3) * 8)) as u8,
+            0x04000600..=0x04000603 => {
+                (self.gpu.engine_3d.get_gxstat() >> ((address & 3) * 8)) as u8
+            }
             0x04000184 => self.ipc.read_cnt(Side::Arm9) as u8,
             0x04000185 => (self.ipc.read_cnt(Side::Arm9) >> 8) as u8,
             MAIN_RAM_START..SHARED_WRAM_START => self.main_ram[(address & MAIN_RAM_MASK) as usize], // Main RAM

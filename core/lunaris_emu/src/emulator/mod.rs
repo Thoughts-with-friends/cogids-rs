@@ -688,6 +688,16 @@ impl Emulator {
         }
     }
 
+    /// Schedules the next GPU (scanline) event `relative_time` cycles after
+    /// the one being handled. Basing it on the due time rather than the
+    /// current time keeps handling latency from accumulating: frames used
+    /// to run ~2% long (572k instead of 560190 cycles), which made the SPU
+    /// produce ~33.4 kHz instead of ~32.7 kHz of audio per real second.
+    pub fn reschedule_gpu_event(&mut self, event_id: i32, relative_time: u64) {
+        self.gpu_event.id = event_id;
+        self.gpu_event.activation_time += relative_time;
+    }
+
     /// Add a DMA event.
     pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
         #[cfg(feature = "tracing")]
@@ -713,6 +723,13 @@ impl Emulator {
         // iterations = faster emulation (CorgiDS used 20).
         // const SLICE_CYCLES: i32 = 64;
         const SLICE_CYCLES: i32 = 64;
+        // Next pending event (`next_event_time` alone only ever decreased,
+        // so it stayed in the past after the first event).
+        let mut next = self.gpu_event.activation_time;
+        if self.dma_event.processing {
+            next = next.min(self.dma_event.activation_time);
+        }
+        self.next_event_time = next;
         let cycles = self.next_event_time.wrapping_sub(self.system_timestamp) as i32;
         self.system_timestamp += match cycles {
             1..=SLICE_CYCLES => cycles as u64,

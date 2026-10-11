@@ -7,10 +7,8 @@
 pub(crate) mod arm_rw;
 pub(crate) mod compose;
 pub(crate) mod draw_scanline;
-pub(crate) mod draw_scanline_3d;
 pub(crate) mod draw_sprite;
 pub(crate) mod getter;
-pub(crate) mod matrix;
 pub(crate) mod reader;
 pub mod register;
 pub(crate) mod render_2d;
@@ -235,18 +233,4 @@ impl Gpu {
     // moved arm_rw.rs
     // pub fn read_arm7(&self, address: u32)
     // pub fn write_arm7<T>(&mut self, address: u32, value: T);
-
-    // ===== Helpers =====
-
-    pub fn read_vec_test(&self, address: u32) -> u16 {
-        self.engine_3d.read_vec_test(address)
-    }
-
-    pub fn read_clip_mtx(&mut self, address: u32) -> u32 {
-        self.engine_3d.read_clip_mtx(address)
-    }
-
-    pub fn read_vec_mtx(&self, address: u32) -> u32 {
-        self.engine_3d.read_vec_mtx(address)
-    }
 }

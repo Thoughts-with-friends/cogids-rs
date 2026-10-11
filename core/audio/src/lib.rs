@@ -9,11 +9,15 @@
 //! The SPU accesses memory through a caller-provided [`SoundBus`], so it
 //! does not own memory: see [`Spu::mix`].
 
-/// Output sample rate in Hz.
+/// Nominal output sample rate in Hz.
 pub const SAMPLE_RATE: u32 = 32768;
 
 /// ARM7 bus cycles (33.51 MHz) per output sample.
 pub const CYCLES_PER_SAMPLE: u32 = 1024;
+
+/// Exact output rate: the ARM7 clock (33.513982 MHz) / 1024, about
+/// 32728 Hz (slightly below the nominal [`SAMPLE_RATE`]).
+pub const OUTPUT_RATE_HZ: f64 = 33_513_982.0 / CYCLES_PER_SAMPLE as f64;
 
 const ADPCM_INDEX_TABLE: [i8; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
 

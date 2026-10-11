@@ -23,7 +23,7 @@ impl Emulator {
     /// interrupt storm), which froze 3D scenes such as the HeartGold intro.
     pub fn check_fifo_irq(&mut self) {
         let len = self.gpu.engine_3d.gxfifo.len();
-        let raised = match self.gpu.engine_3d.gxstat.gxfifo_irq_stat {
+        let raised = match self.gpu.engine_3d.gxfifo_irq_mode() {
             1 => len < 128,
             2 => len == 0,
             _ => false,
@@ -67,21 +67,6 @@ impl Emulator {
             self.check_fifo_irq();
         }
 
-        // Check if the next command is a BOX/POS/VEC test or matrix stack operation
-        // And update relevant flags
-        if !self.gpu.engine_3d.gxpipe.is_empty() {
-            if let Some(next_cmd) = self.gpu.engine_3d.gxpipe.front() {
-                self.gpu.engine_3d.gxstat.mtx_stack_busy =
-                    next_cmd.command == 0x11 || next_cmd.command == 0x12;
-                self.gpu.engine_3d.gxstat.box_pos_vec_busy = next_cmd.command == 0x70
-                    || next_cmd.command == 0x71
-                    || next_cmd.command == 0x72;
-            };
-        } else {
-            self.gpu.engine_3d.gxstat.mtx_stack_busy = false;
-            self.gpu.engine_3d.gxstat.box_pos_vec_busy = false;
-        }
-
         cmd
     }
 
@@ -102,8 +87,9 @@ impl Emulator {
         }
     }
 
-    pub fn set_gxstat(&mut self, word: u32) {
-        self.gpu.engine_3d.gxstat.gxfifo_irq_stat = ((word >> 30) & 0x3) as i32;
+    /// GXSTAT write (`mask` selects the written bytes).
+    pub fn set_gxstat(&mut self, word: u32, mask: u32) {
+        self.gpu.engine_3d.write_gxstat(word, mask);
         self.check_fifo_irq();
     }
 
@@ -195,7 +181,7 @@ impl Emulator {
                 #[cfg(feature = "tracing")]
                 tracing::trace!("Add_gpu_event: 1");
 
-                self.add_gpu_event(1, 99 * 6);
+                self.reschedule_gpu_event(1, 99 * 6);
             }
             1 => {
                 // End HBLANK
@@ -225,6 +211,14 @@ impl Emulator {
                 // VBLANK Counter
                 #[cfg(feature = "tracing")]
                 tracing::trace!("VBLANK Count: {}/{}", self.gpu.vertical_count, SCANLINES);
+
+                // 3D rendering starts at line 215 (melonDS), after the
+                // VBlank texture uploads, and is shown in the next frame.
+                if self.gpu.vertical_count == 215
+                    && self.gpu.frames_skipped >= self.config.frameskip
+                {
+                    self.gpu.render_3d_frame();
+                }
 
                 if self.gpu.vertical_count as usize == SCANLINES {
                     // VBLANK
@@ -256,7 +250,7 @@ impl Emulator {
                     }
                 }
 
-                self.add_gpu_event(0, 256 * 6);
+                self.reschedule_gpu_event(0, 256 * 6);
             }
             unknown_id => {
                 #[cfg(feature = "tracing")]

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
+use lunaris_ds_gpu::gpu_3d::structs::Gpu3D;
 use lunaris_ds_ipc::Side;
 use lunaris_ds_mem_const::*;
 
@@ -15,6 +16,9 @@ impl Emulator {
     /// - IPC, FIFO
     /// - Cartridge AUX SPI registers
     pub fn arm9_write_word(&mut self, address: u32, word: u32) {
+        if Gpu3D::is_3d_reg(address) {
+            return self.gpu.engine_3d.write_reg(address, word, u32::MAX);
+        }
         if crate::emulator::gpu::io_2d::is_2d_reg(address) {
             return self.write_io_2d_u32(address, word);
         }
@@ -135,16 +139,8 @@ impl Emulator {
             }
             0x0400_02B8..=0x0400_02BC => self.write_sqrt_param(address, word),
             0x0400_0304 => self.gpu.set_powcnt1((word & 0xFFFF) as u16),
-            0x0400_0350 => self.gpu.set_clear_color(word),
-            0x0400_0600 => self.set_gxstat(word), // self.gpu.set_gxstat(word) for Gpu3D
+            0x0400_0600 => self.set_gxstat(word, u32::MAX),
             0x0400_1000 => self.gpu.set_dispcnt_b(word),
-            0x0400_0330..0x0400_0340 | 0x0400_0360..0x0400_0380 => {} // FOG_TABLE / EDGE_COLOR (TODO)
-            0x0400_0380..0x0400_03C0 => {
-                self.gpu
-                    .set_toon_table((address & 0x3F) >> 1, (word & 0xFFFF) as u16);
-                self.gpu
-                    .set_toon_table(((address + 2) & 0x3F) >> 1, (word >> 16) as u16);
-            }
             0x0400_0400..0x0400_0440 => self.write_gxfifo(word),
             0x0400_0440..0x0400_05CC => self.write_fifo_direct(address, word),
             PALETTE_START..VRAM_BGA_START => {
@@ -183,8 +179,18 @@ impl Emulator {
     /// # Parameters
     /// - `address`: 32-bit ARM9 memory address to write to.
     /// - `halfword`: 16-bit value to write.
-    #[expect(clippy::match_same_arms)]
     pub fn arm9_write_halfword(&mut self, address: u32, halfword: u16) {
+        let shift = (address & 2) * 8;
+        if Gpu3D::is_3d_reg(address) {
+            return self.gpu.engine_3d.write_reg(
+                address,
+                u32::from(halfword) << shift,
+                0xFFFF << shift,
+            );
+        }
+        if (0x0400_0600..0x0400_0604).contains(&address) {
+            return self.set_gxstat(u32::from(halfword) << shift, 0xFFFF << shift);
+        }
         if crate::emulator::gpu::io_2d::is_2d_reg(address) {
             return self.write_io_2d_u16(address, halfword);
         }
@@ -351,10 +357,6 @@ impl Emulator {
             }
             0x04000300 => self.postflg9 = (halfword & 0x1) as u8,
             0x04000304 => self.gpu.set_powcnt1(halfword),
-            0x04000340 => {} // TODO: ALPHA_TEST_REF
-            0x04000354 => self.gpu.set_clear_depth(halfword as u32),
-            0x04000356 => {} // TODO: CLRIMAGE_OFFSET
-            0x0400035C => {} // TODO: FOG_OFFSET
             0x04001000 => self.gpu.set_dispcnt_b(halfword as u32),
             0x04001008 => self.gpu.set_bgcnt_b(halfword, 0),
             0x0400100A => self.gpu.set_bgcnt_b(halfword, 1),
@@ -391,11 +393,6 @@ impl Emulator {
                 self.gpu.set_bldy_b(halfword as u8);
             }
             0x0400106C => self.gpu.set_master_bright_b(halfword),
-            0x04000330..0x04000340 => {} // EDGE_COLOR region (0x04000330 - 0x04000340)
-            0x04000380..0x040003C0 => {
-                // TOON table
-                self.gpu.set_toon_table((address & 0x3F) >> 1, halfword);
-            }
             GBA_ROM_START.. => {} // GBA ROM
             _ => {
                 #[cfg(feature = "tracing")]
@@ -420,6 +417,16 @@ impl Emulator {
     /// - `address`: 32-bit ARM9 memory address to write to.
     /// - `byte`: 8-bit value to write.
     pub fn arm9_write_byte(&mut self, address: u32, byte: u8) {
+        let shift = (address & 3) * 8;
+        if Gpu3D::is_3d_reg(address) {
+            return self
+                .gpu
+                .engine_3d
+                .write_reg(address, u32::from(byte) << shift, 0xFF << shift);
+        }
+        if (0x0400_0600..0x0400_0604).contains(&address) {
+            return self.set_gxstat(u32::from(byte) << shift, 0xFF << shift);
+        }
         if crate::emulator::gpu::io_2d::is_2d_reg(address) {
             return self.write_io_2d_u8(address, byte);
         }

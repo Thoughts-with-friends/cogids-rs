@@ -264,16 +264,4 @@ impl Gpu {
     pub fn set_powcnt1(&mut self, value: u16) {
         self.power_control_reg.set(value);
     }
-
-    pub fn set_clear_color(&mut self, word: u32) {
-        self.engine_3d.set_clear_color(word);
-    }
-
-    pub fn set_clear_depth(&mut self, word: u32) {
-        self.engine_3d.set_clear_depth(word);
-    }
-
-    pub fn set_mtx_mode(&mut self, word: u32) {
-        self.engine_3d.set_mtx_mode(word);
-    }
 }

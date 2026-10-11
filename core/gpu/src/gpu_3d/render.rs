@@ -1,785 +1,211 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! gpu3d.hpp
+//! 3D engine registers (0x04000060, 0x04000320-0x040003BF,
+//! 0x04000600-0x040006A3) and the VBlank buffer swap.
 //!
-use crate::gpu_3d::structs::{Gpu3D, Matrix, Vertex};
+//! Follows melonDS `GPU3D::Read32/Write*` and `GPU3D::VBlank`.
+
+use crate::gpu_3d::structs::Gpu3D;
 
 impl Gpu3D {
-    // ============= private method =============
-    // moved geometry.rs
-    // ============= private method =============
-
-    pub fn power_on(&mut self) {
-        // Clear GXPIPE and GXFIFO
-        self.gxpipe.clear();
-        self.gxfifo.clear();
-
-        self.set_disp3dcnt(0);
-        self.mult_params.set_identity();
-        self.projection_mtx.set_identity();
-        self.vector_mtx.set_identity();
-        self.modelview_mtx.set_identity();
-        self.texture_mtx.set_identity();
-
-        self.mult_params_index = 0;
-        self.geo_vert_count = 0;
-        self.geo_poly_count = 0;
-        self.rend_vert_count = 0;
-        self.rend_poly_count = 0;
-        self.vtx_16_index = 0;
-        self.model_view_sp = 0;
-        self.vertex_list_count = 0;
-        self.clip_dirty = true;
-
-        self.cycles = 0;
-        self.param_count = 0;
-        self.cmd_param_count = 0;
-        self.cmd_count = 0;
-        self.swap_buffers = false;
-        self.gxstat.boxtest_result = false;
-        self.gxstat.box_pos_vec_busy = false;
-        self.gxstat.mtx_stack_busy = false;
-        self.gxstat.mtx_overflow = false;
-        self.gxstat.geo_busy = false;
-        self.gxstat.gxfifo_irq_stat = 0;
-        self.teximage_param.format = 0;
-
-        self.current_color = 0x7FFF;
-        self.clear_depth = 0x7FFF;
-
-        self.last_poly_strip = None;
+    /// Whether `address` is a 3D register handled by [`Self::write_reg`] /
+    /// [`Self::read_reg`]. (GXSTAT, GXFIFO and the command ports are
+    /// handled by the emulator, which drives the FIFO.)
+    pub const fn is_3d_reg(address: u32) -> bool {
+        matches!(address,
+            0x0400_0320..=0x0400_03BF
+            | 0x0400_0604..=0x0400_0607
+            | 0x0400_0610..=0x0400_0611
+            | 0x0400_0620..=0x0400_06A3)
     }
 
-    // Moved to struct Emulator method (Because use emulator method)
-    // pub fn run_3d(&mut self, cycles: u64)
-    // pub fn render_scanline;
-
-    // Moved to struct Emulator method (Because use emulator method)
-    // pub fn run(&mut self, cycles_to_run: u64)
-    // pub fn check_fifo_dma(&mut self);
-
-    pub fn end_of_frame(&mut self) {
-        // #[cfg(feature = "tracing")]
-        // tracing::info!("SWAP_BUFFERS");
-
-        if self.swap_buffers {
-            let geo_vert_count = self.geo_vert_count as usize;
-            let geo_poly_count = self.geo_poly_count as usize;
-
-            // The geometry lists become the render lists. Swapping keeps both
-            // buffers at full capacity (the geometry side is refilled from
-            // index 0 next frame).
-            core::mem::swap(&mut self.rend_vert, &mut self.geo_vert);
-            core::mem::swap(&mut self.rend_poly, &mut self.geo_poly);
-
-            // #[cfg(feature = "tracing")]
-            // tracing::info!("Geo_vert_count: {}", geo_vert_count);
-            // tracing::info!("Geo_poly_count: {}", geo_poly_count);
-
-            self.rend_vert_count = geo_vert_count as i32;
-            self.rend_poly_count = geo_poly_count as i32;
-            self.geo_vert_count = 0;
-            self.geo_poly_count = 0;
-
-            for i in 0..self.rend_poly_count as usize {
-                let vert_index = self.rend_poly[i].vert_index as usize;
-                self.rend_poly[i].top_y = 256;
-                self.rend_poly[i].bottom_y = 0;
-
-                for j in 0..self.rend_poly[i].vertices as usize {
-                    // #[cfg(feature = "tracing")]
-                    // tracing::info!(
-                    //     "Color: (R, G, B) = ({}, {}, {})",
-                    //     self.rend_vert[vert_index + j].colors[0] & 0xFFFF,
-                    //     self.rend_vert[vert_index + j].colors[1] & 0xFFFF,
-                    //     self.rend_vert[vert_index + j].colors[2] & 0xFFFF
-                    // );
-
-                    let xx = self.rend_vert[vert_index + j].coords[0];
-                    let yy = self.rend_vert[vert_index + j].coords[1];
-                    let ww = self.rend_vert[vert_index + j].coords[3];
-
-                    // #[cfg(feature = "tracing")]
-                    // tracing::info!("Coords: (x, y, w) = ({}, {}, {})", xx, yy, ww);
-
-                    let final_x: i32;
-                    let final_y: i32;
-
-                    if ww == 0 {
-                        // #[cfg(feature = "tracing")]
-                        // tracing::info!("Poly {} ww == 0?", i);
-                    } else {
-                        // In i32: x2 = 255 (full-screen viewport) overflowed u8,
-                        // giving width 0 in release and a panic in debug builds.
-                        let width = i32::from(self.viewport.x2) - i32::from(self.viewport.x1) + 1;
-                        let height = i32::from(self.viewport.y1) - i32::from(self.viewport.y2) + 1;
-                        // let width = (self.viewport.x2 as u16 - self.viewport.x1 as u16 + 1) & 0x1FF;
-                        // let height = (self.viewport.y1 - self.viewport.y2 + 1) & 0xFF;
-
-                        // NOTE: (x2 - x1, y2 - y1)?
-                        // let width = (self.viewport.x2 - self.viewport.x1 + 1) & 0x1FF;
-                        // let height = self.viewport.y2 - self.viewport.y1 + 1;
-
-                        let screen_x = ((((i64::from(xx) + i64::from(ww)) * i64::from(width))
-                            / (i64::from(ww) << 1)) as i32)
-                            .wrapping_add(i32::from(self.viewport.x1));
-                        let screen_y = ((((i64::from(ww) - i64::from(yy)) * i64::from(height))
-                            / (i64::from(ww) << 1)) as i32)
-                            .wrapping_add(i32::from(self.viewport.y2));
-
-                        final_x = screen_x & 0x1FF;
-                        final_y = screen_y & 0xFF;
-
-                        // #[cfg(feature = "tracing")]
-                        // tracing::info!("Screen shit: ({}, {})", final_x, final_y);
-
-                        if final_y < self.rend_poly[i].top_y as i32 {
-                            self.rend_poly[i].top_y = final_y as u16;
-                        }
-                        if final_y > self.rend_poly[i].bottom_y as i32 {
-                            self.rend_poly[i].bottom_y = final_y as u16;
-                        }
-
-                        self.rend_vert[vert_index + j].coords[0] = final_x;
-                        self.rend_vert[vert_index + j].coords[1] = final_y;
-                        if (self.flush_mode & 0x2) != 0 {
-                            self.rend_vert[vert_index + j].coords[2] = ww;
-                        }
-                    }
+    /// Writes the bytes of `value` selected by `mask` to the word at
+    /// `address & !3`.
+    pub fn write_reg(&mut self, address: u32, value: u32, mask: u32) {
+        let word = address & !3;
+        let merge = |old: u32| (old & !mask) | (value & mask);
+        match word {
+            0x0400_0330..=0x0400_033F => {
+                let i = ((word - 0x0400_0330) >> 1) as usize;
+                let old = u32::from(self.edge_table[i]) | (u32::from(self.edge_table[i + 1]) << 16);
+                let v = merge(old);
+                self.edge_table[i] = v as u16;
+                self.edge_table[i + 1] = (v >> 16) as u16;
+            }
+            0x0400_0340 => self.alpha_ref_val = merge(self.alpha_ref_val) & 0x1F,
+            0x0400_0350 => self.clear_attr1 = merge(self.clear_attr1),
+            0x0400_0354 => self.clear_attr2 = merge(self.clear_attr2),
+            0x0400_0358 => self.fog_color = merge(self.fog_color),
+            0x0400_035C => self.fog_offset = merge(self.fog_offset) & 0x7FFF,
+            0x0400_0360..=0x0400_037F => {
+                let i = (word - 0x0400_0360) as usize;
+                let old =
+                    u32::from_le_bytes(self.fog_density[i..i + 4].try_into().unwrap_or_default());
+                let v = merge(old).to_le_bytes();
+                for (d, b) in self.fog_density[i..i + 4].iter_mut().zip(v) {
+                    *d = b & 0x7F;
                 }
             }
-
-            // Sort polygons by translucency: opaque first, then translucent
-            // (stable, so submission order is kept within each group).
-            let count = self.rend_poly_count as usize;
-            let opaque_count = self.rend_poly[..count]
-                .iter()
-                .filter(|p| !p.translucent)
-                .count();
-            self.rend_poly[..count].sort_by_key(|p| p.translucent);
-
-            // y-sorting: opaque = false -> translucent = true
-            if (self.flush_mode & 0x1) != 0 {
-                self.rend_poly[..opaque_count].sort_by(|a, b| {
-                    a.translucent
-                        .cmp(&b.translucent)
-                        .then(a.bottom_y.cmp(&b.bottom_y))
-                        .then(a.top_y.cmp(&b.top_y))
-                });
-            } else {
-                let index = self.rend_poly_count as usize;
-                self.rend_poly[..index].sort_by(|a, b| {
-                    a.translucent
-                        .cmp(&b.translucent)
-                        .then(a.bottom_y.cmp(&b.bottom_y))
-                        .then(a.top_y.cmp(&b.top_y))
-                });
+            0x0400_0380..=0x0400_03BF => {
+                let i = ((word - 0x0400_0380) >> 1) as usize;
+                let old = u32::from(self.toon_table[i]) | (u32::from(self.toon_table[i + 1]) << 16);
+                let v = merge(old);
+                self.toon_table[i] = v as u16;
+                self.toon_table[i + 1] = (v >> 16) as u16;
             }
+            0x0400_0610 if mask & 0xFFFF != 0 => {
+                let v = merge(0) & 0x7FFF;
+                self.zero_dot_w_limit = (v * 0x200 + 0x1FF) as i32;
+            }
+            _ => {}
         }
-        self.swap_buffers = false;
     }
 
-    // Moved to struct Emulator method (Because use emulator method)
-    // pub fn check_fifo_irq(&mut self);
-    // pub fn write_gxfifo(&mut self, word: u32, cmd_param_amounts: &[u8; 256]);
-    // pub fn write_fifo_direct(&mut self, address: u32, word: u32);
+    /// 32-bit read of the 3D register word at `address & !3` (0 if
+    /// unmapped / write-only).
+    pub fn read_reg(&self, address: u32) -> u32 {
+        let word = address & !3;
+        match word {
+            // RDLINES_COUNT: the renderer never runs out of time.
+            0x0400_0320 => 46,
+            0x0400_0604 => self.num_polygons as u32 | ((self.num_vertices as u32) << 16),
+            0x0400_0620..=0x0400_062F => self.pos_test_result[((word >> 2) & 3) as usize] as u32,
+            0x0400_0630..=0x0400_0637 => {
+                let i = ((word - 0x0400_0630) >> 1) as usize;
+                let lo = self.vec_test_result[i] as u16;
+                let hi = self.vec_test_result.get(i + 1).map_or(0, |&v| v as u16);
+                u32::from(lo) | (u32::from(hi) << 16)
+            }
+            0x0400_0640..=0x0400_067F => {
+                self.current_clip_matrix()[((word >> 2) & 0xF) as usize] as u32
+            }
+            0x0400_0680..=0x0400_06A3 => {
+                let i = ((word - 0x0400_0680) >> 2) as usize;
+                self.vec_matrix[(i / 3) * 4 + i % 3] as u32
+            }
+            _ => 0,
+        }
+    }
+
+    // ===== DISP3DCNT / GXSTAT =====
 
     pub fn get_disp3dcnt(&self) -> u16 {
-        self.disp3dcnt.get()
+        self.disp_cnt as u16
     }
 
-    pub fn get_gxstat(&self) -> u32 {
-        let mut reg: u32 = 0;
+    pub fn set_disp3dcnt(&mut self, value: u16) {
+        let v = u32::from(value);
+        self.disp_cnt = (v & 0x4FFF) | (self.disp_cnt & 0x3000);
+        // Bits 12/13 are acknowledged by writing 1.
+        self.disp_cnt &= !(v & 0x3000);
+    }
 
-        reg |= self.gxstat.box_pos_vec_busy as u32;
-        reg |= (self.gxstat.boxtest_result as u32) << 1;
-        reg |= ((self.model_view_sp & 0x1F) as u32) << 8;
-        reg |= (self.gxstat.mtx_stack_busy as u32) << 14;
-        reg |= (self.gxfifo.len() << 16) as u32;
-        reg |= ((self.gxfifo.len() < 128) as u32) << 25;
-        reg |= ((self.gxfifo.is_empty()) as u32) << 26;
-        // Busy while anything is queued, a command is still executing or a
-        // SWAP_BUFFERS waits for VBlank. Computed live: the cached flag was
-        // only refreshed when a command executed, so it could stay set and
-        // leave games polling GXSTAT forever.
+    /// GXSTAT without the FIFO bits, which the emulator adds.
+    pub fn get_gxstat(&self) -> u32 {
+        let fifo = self.gxfifo.len() as u32;
         let busy = !self.gxfifo.is_empty()
             || !self.gxpipe.is_empty()
             || self.swap_buffers
             || self.cycles > 0;
-        reg |= u32::from(busy) << 27;
-        reg |= (self.gxstat.gxfifo_irq_stat as u32) << 30;
+        let test_busy = self
+            .gxpipe
+            .front()
+            .is_some_and(|c| (0x70..=0x72).contains(&c.command));
+        let stack_busy = self
+            .gxpipe
+            .front()
+            .is_some_and(|c| c.command == 0x11 || c.command == 0x12);
+        (self.gxstat & 0xC000_8002)
+            | u32::from(test_busy)
+            | ((self.pos_stack_ptr & 0x1F) << 8)
+            | ((self.proj_stack_ptr & 1) << 13)
+            | (u32::from(stack_busy) << 14)
+            | (fifo.min(256) << 16)
+            | (u32::from(fifo < 128) << 25)
+            | (u32::from(fifo == 0) << 26)
+            | (u32::from(busy) << 27)
+    }
 
-        reg
+    /// GXSTAT write: bit 15 acknowledges a matrix stack error, bits 30-31
+    /// select the FIFO IRQ mode.
+    pub fn write_gxstat(&mut self, value: u32, mask: u32) {
+        let value = value & mask;
+        if value & 0x8000 != 0 {
+            self.gxstat &= !0x8000;
+            self.proj_stack_ptr = 0;
+            self.tex_stack_ptr = 0;
+        }
+        if mask & 0xC000_0000 != 0 {
+            self.gxstat = (self.gxstat & 0x3FFF_FFFF) | (value & 0xC000_0000);
+        }
+    }
+
+    /// FIFO IRQ mode (GXSTAT bits 30-31).
+    pub const fn gxfifo_irq_mode(&self) -> u32 {
+        self.gxstat >> 30
     }
 
     pub fn get_vert_count(&self) -> u16 {
-        self.geo_vert_count as u16
+        self.num_vertices as u16
     }
 
     pub fn get_poly_count(&self) -> u16 {
-        self.geo_poly_count as u16
+        self.num_polygons as u16
     }
 
-    pub fn read_clip_mtx(&mut self, address: u32) -> u32 {
-        self.update_clip_matrix();
-        // 16 words, row-major 4x4 (CLIPMTX_RESULT, 0x04000640..0x0400067F).
-        let index = (((address - 0x0400_0640) / 4) & 0xF) as usize;
-        self.clip_mtx.m[index / 4][index % 4] as u32
-    }
+    /// VBlank (melonDS `GPU3D::VBlank`): on a pending SWAP_BUFFERS the
+    /// polygon list becomes the render list; the rendering registers are
+    /// latched every frame.
+    pub fn end_of_frame(&mut self) {
+        if self.swap_buffers {
+            let bank = self.cur_bank;
+            let polys = &self.polygon_ram[bank][..self.num_polygons];
+            self.render_polygons.clear();
+            self.render_polygons
+                .extend((0..polys.len()).filter(|&i| !polys[i].translucent));
+            self.render_polygons
+                .extend((0..polys.len()).filter(|&i| polys[i].translucent));
+            // Y-sorting (stable): all polygons, or only the opaque ones
+            // when SWAP_BUFFERS bit 0 (manual translucent sort) is set.
+            let sorted = if self.flush_attributes & 1 != 0 {
+                self.num_opaque_polygons
+            } else {
+                polys.len()
+            };
+            self.render_polygons[..sorted].sort_by_key(|&i| polys[i].sort_key);
+            self.render_bank = bank;
+            self.rend_poly_count = self.num_polygons as i32;
+            self.rend_vert_count = self.num_vertices as i32;
 
-    pub fn read_vec_mtx(&self, address: u32) -> u32 {
-        // 9 words, row-major 3x3 (VECMTX_RESULT, 0x04000680..0x040006A3).
-        let index = (((address - 0x0400_0680) / 4) % 9) as usize;
-        self.vector_mtx.m[index / 3][index % 3] as u32
-    }
-
-    pub fn read_vec_test(&self, address: u32) -> u16 {
-        self.vec_test_result[((address - 0x04000630) / 2) as usize] as u16
-    }
-
-    pub fn set_disp3dcnt(&mut self, halfword: u16) {
-        self.disp3dcnt.texture_mapping = (halfword & 1) != 0;
-        self.disp3dcnt.highlight_shading = (halfword & (1 << 1)) != 0;
-        self.disp3dcnt.alpha_test = (halfword & (1 << 2)) != 0;
-        self.disp3dcnt.alpha_blending = (halfword & (1 << 3)) != 0;
-        self.disp3dcnt.anti_aliasing = (halfword & (1 << 4)) != 0;
-        self.disp3dcnt.edge_marking = (halfword & (1 << 5)) != 0;
-        self.disp3dcnt.fog_color_mode = (halfword & (1 << 6)) != 0;
-        self.disp3dcnt.fog_enable = (halfword & (1 << 7)) != 0;
-        self.disp3dcnt.fog_depth_shift = ((halfword >> 8) & 0xF) as i32;
-
-        //TODO: Underflow/overflow: check me
-        self.disp3dcnt.color_buffer_underflow = (halfword & (1 << 12)) == 0;
-        self.disp3dcnt.ram_overflow = (halfword & (1 << 13)) == 0;
-        self.disp3dcnt.rear_plane_mode = (halfword & (1 << 14)) != 0;
-    }
-
-    pub fn set_clear_color(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("Set clear_color: {word:08X}");
-        self.clear_color = word;
-    }
-
-    pub fn set_clear_depth(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("Set clear_depth: {word:08X}");
-        self.clear_depth = word & 0x7FFF;
-    }
-
-    pub fn set_mtx_mode(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("Set mtx_mode: {word:08X}");
-        self.mtx_mode = (word & 0x3) as u8;
-    }
-
-    pub fn mtx_push(&mut self) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("MTX_PUSH");
-
-        match self.mtx_mode {
-            0 => {
-                self.projection_stack.set(&self.projection_mtx);
-            }
-            1 | 2 => {
-                // #[cfg(feature = "tracing")]
-                let model_view_sp = self.model_view_sp as usize;
-                // tracing::debug!("self.model_view SP: {model_view_sp:02X}");
-
-                if model_view_sp < 0x1F {
-                    self.modelview_stack[model_view_sp].set(&self.modelview_mtx);
-                    self.vector_stack[model_view_sp].set(&self.vector_mtx);
-                } else {
-                    #[cfg(feature = "tracing")]
-                    tracing::error!("MTX_PUSH overflow!");
-                    self.gxstat.mtx_overflow = true;
-                }
-                self.model_view_sp = (self.model_view_sp + 1) & 0x1F;
-            }
-            3 => {
-                self.texture_stack.set(&self.texture_mtx);
-            }
-            unknown => {
-                #[cfg(feature = "tracing")]
-                tracing::error!("Unrecognized MTX_MODE {unknown}  for self.mtx_pop.");
-            }
-        }
-    }
-
-    pub fn mtx_pop(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::trace!("self.mtx_pop: {word:08X}");
-
-        let offset = ((word & 0x3F) << 2) >> 2;
-        match self.mtx_mode {
-            2 => {
-                self.model_view_sp -= offset as u8;
-                self.modelview_mtx
-                    .set(&self.modelview_stack[(self.model_view_sp & 0x1F) as usize]);
-            }
-            unknown => {
-                #[cfg(feature = "tracing")]
-                tracing::error!("Unrecognized MTX_MODE {unknown}  for self.mtx_pop.");
-            }
-        }
-    }
-
-    pub fn mtx_identity(&mut self) {
-        // #[cfg(feature = "tracing")]
-        // tracing::trace!("mtx_identity");
-
-        match self.mtx_mode {
-            0 => self.projection_mtx.set_identity(),
-            1 => self.modelview_mtx.set_identity(),
-            2 => {
-                self.modelview_mtx.set_identity();
-                self.vector_mtx.set_identity();
-            }
-            3 => self.texture_mtx.set_identity(),
-            unknown => {
-                #[cfg(feature = "tracing")]
-                tracing::error!("Unrecognized MTX_MODE {unknown} in mtx_identity.");
-            }
-        }
-    }
-
-    pub fn mtx_mult_4x4(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("MTX_MULT_4x4: {word:08X}");
-
-        self.add_mult_param(word);
-
-        if self.mult_params_index >= 16 {
-            self.mtx_mult(false);
-        }
-    }
-
-    pub fn mtx_mult_4x3(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("MTX_MULT_4x3: {word:08X}");
-
-        self.add_mult_param(word);
-
-        if (self.mult_params_index & 0x3) == 0x3 {
-            self.mult_params_index += 1;
+            self.cur_bank ^= 1;
+            self.num_vertices = 0;
+            self.num_polygons = 0;
+            self.num_opaque_polygons = 0;
+            self.last_strip_polygon = None;
+            self.swap_buffers = false;
+            self.render_dirty = true;
         }
 
-        if self.mult_params_index >= 16 {
-            self.mtx_mult(true);
+        let old = self.render.clone();
+        let r = &mut self.render;
+        r.disp_cnt = self.disp_cnt;
+        r.alpha_ref = if self.disp_cnt & (1 << 2) != 0 {
+            self.alpha_ref_val
+        } else {
+            0
+        };
+        r.clear_attr1 = self.clear_attr1;
+        r.clear_attr2 = self.clear_attr2;
+        r.fog_color = self.fog_color;
+        r.fog_offset = self.fog_offset * 0x200;
+        r.fog_shift = (self.disp_cnt >> 8) & 0xF;
+        r.fog_density[0] = self.fog_density[0];
+        r.fog_density[1..33].copy_from_slice(&self.fog_density);
+        r.fog_density[33] = self.fog_density[31];
+        r.edge_table = self.edge_table;
+        r.toon_table = self.toon_table;
+        if *r != old {
+            self.render_dirty = true;
         }
-    }
-
-    pub fn mtx_mult_3x3(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("MTX_MULT_3x3: {word:08X}");
-
-        self.add_mult_param(word);
-
-        if (self.mult_params_index & 0x3) == 0x3 {
-            self.mult_params_index += 1;
-        }
-
-        if self.mult_params_index >= 11 {
-            self.mtx_mult(true);
-        }
-    }
-
-    pub fn mtx_trans(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("MTX_TRANS: {word:08X}");
-
-        if self.mult_params_index == 0 {
-            self.mult_params_index = 12;
-        }
-
-        self.add_mult_param(word);
-
-        if self.mult_params_index >= 15 {
-            self.mtx_mult(true);
-        }
-    }
-
-    pub fn color(&mut self, word: u32) {
-        let _ = word;
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("COLOR: {word:08X}");
-    }
-
-    // moved execute.rs: pub fn normal(&mut self)
-
-    pub fn set_polygon_attr(&mut self, word: u32) {
-        self.polygon_attr.set(word);
-    }
-
-    pub fn set_teximage_param(&mut self, word: u32) {
-        self.teximage_param.set(word);
-    }
-
-    /// # Panics
-    /// address : 0..32
-    pub fn set_toon_table(&mut self, address: u32, color: u16) {
-        self.toon_table[address as usize] = color;
-    }
-
-    pub fn begin_vtxs(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("BEGIN_VTXS: {word:08X}");
-
-        self.polygon_type = word & 0x3;
-    }
-
-    pub fn swap_buffers(&mut self, word: u32) {
-        self.swap_buffers = true;
-        self.flush_mode = (word & 0x3) as i32;
-    }
-
-    pub fn viewport(&mut self, word: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("VIEWPORT: {word:08X}");
-
-        //viewport y-coords are upside down
-        self.viewport.x1 = (word & 0xFF) as u8;
-        self.viewport.y1 = 191_u32.wrapping_sub((word >> 8) & 0xFF) as u8;
-        self.viewport.x2 = ((word >> 16) & 0xFF) as u8;
-        self.viewport.y2 = 191_u32.wrapping_sub((word >> 24) & 0xFF) as u8;
-    }
-
-    pub fn box_test(&mut self) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("BOX_TEST");
-        self.gxstat.boxtest_result = true;
-
-        let mut cube: [Vertex; 8] = core::array::from_fn(|_| Vertex::default());
-        let mut face: [Vertex; 10] = core::array::from_fn(|_| Vertex::default());
-        let mut coords0 = [0_i16; 3];
-        let mut coords1 = [0_i16; 3];
-
-        coords0[0] = (self.cmd_params[0] & 0xFFFF) as i16;
-        coords0[1] = (self.cmd_params[0] >> 16) as i16;
-        coords0[2] = (self.cmd_params[1] & 0xFFFF) as i16;
-        coords1[0] = (self.cmd_params[1] >> 16) as i16;
-        coords1[1] = (self.cmd_params[2] & 0xFFFF) as i16;
-        coords1[2] = (self.cmd_params[2] >> 16) as i16;
-
-        cube[0].coords[0] = coords0[0] as i32;
-        cube[0].coords[1] = coords0[1] as i32;
-        cube[0].coords[2] = coords0[2] as i32;
-        cube[1].coords[0] = coords1[0] as i32;
-        cube[1].coords[1] = coords0[1] as i32;
-        cube[1].coords[2] = coords0[2] as i32;
-        cube[2].coords[0] = coords1[0] as i32;
-        cube[2].coords[1] = coords1[1] as i32;
-        cube[2].coords[2] = coords0[2] as i32;
-        cube[3].coords[0] = coords0[0] as i32;
-        cube[3].coords[1] = coords1[1] as i32;
-        cube[3].coords[2] = coords0[2] as i32;
-        cube[4].coords[0] = coords0[0] as i32;
-        cube[4].coords[1] = coords1[1] as i32;
-        cube[4].coords[2] = coords1[2] as i32;
-        cube[5].coords[0] = coords0[0] as i32;
-        cube[5].coords[1] = coords0[1] as i32;
-        cube[5].coords[2] = coords1[2] as i32;
-        cube[6].coords[0] = coords1[0] as i32;
-        cube[6].coords[1] = coords0[1] as i32;
-        cube[6].coords[2] = coords1[2] as i32;
-        cube[7].coords[0] = coords1[0] as i32;
-        cube[7].coords[1] = coords1[1] as i32;
-        cube[7].coords[2] = coords1[2] as i32;
-
-        self.update_clip_matrix();
-
-        for c in &mut cube {
-            let x = c.coords[0];
-            let y = c.coords[1];
-            let z = c.coords[2];
-
-            c.coords[0] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][0])
-                + i64::from(y) * i64::from(self.clip_mtx.m[1][0])
-                + i64::from(z) * i64::from(self.clip_mtx.m[2][0])
-                + 0x1000 * i64::from(self.clip_mtx.m[3][0]))
-                >> 12) as i32;
-            c.coords[1] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][1])
-                + i64::from(y) * i64::from(self.clip_mtx.m[1][1])
-                + i64::from(z) * i64::from(self.clip_mtx.m[2][1])
-                + 0x1000 * i64::from(self.clip_mtx.m[3][1]))
-                >> 12) as i32;
-            c.coords[2] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][2])
-                + i64::from(y) * i64::from(self.clip_mtx.m[1][2])
-                + i64::from(z) * i64::from(self.clip_mtx.m[2][2])
-                + 0x1000 * i64::from(self.clip_mtx.m[3][2]))
-                >> 12) as i32;
-            c.coords[3] = ((i64::from(x) * i64::from(self.clip_mtx.m[0][3])
-                + i64::from(y) * i64::from(self.clip_mtx.m[1][3])
-                + i64::from(z) * i64::from(self.clip_mtx.m[2][3])
-                + 0x1000 * i64::from(self.clip_mtx.m[3][3]))
-                >> 12) as i32;
-        }
-
-        let mut vertices;
-
-        // Front face
-        face[0] = cube[0].clone();
-        face[1] = cube[1].clone();
-        face[2] = cube[2].clone();
-        face[3] = cube[3].clone();
-        vertices = self.clip(&mut face, 4, 0, false);
-        if vertices > 0 {
-            self.gxstat.boxtest_result = true;
-            return;
-        }
-
-        // Back face
-        face[0] = cube[4].clone();
-        face[1] = cube[5].clone();
-        face[2] = cube[6].clone();
-        face[3] = cube[7].clone();
-        vertices = self.clip(&mut face, 4, 0, false);
-        if vertices > 0 {
-            self.gxstat.boxtest_result = true;
-            return;
-        }
-
-        // Left face
-        face[0] = cube[0].clone();
-        face[1] = cube[3].clone();
-        face[2] = cube[4].clone();
-        face[3] = cube[5].clone();
-        vertices = self.clip(&mut face, 4, 0, false);
-        if vertices > 0 {
-            self.gxstat.boxtest_result = true;
-            return;
-        }
-
-        // Right face
-        face[0] = cube[1].clone();
-        face[1] = cube[2].clone();
-        face[2] = cube[7].clone();
-        face[3] = cube[6].clone();
-        vertices = self.clip(&mut face, 4, 0, false);
-        if vertices > 0 {
-            self.gxstat.boxtest_result = true;
-            return;
-        }
-
-        // Bottom face
-        face[0] = cube[0].clone();
-        face[1] = cube[1].clone();
-        face[2] = cube[6].clone();
-        face[3] = cube[5].clone();
-        vertices = self.clip(&mut face, 4, 0, false);
-        if vertices > 0 {
-            self.gxstat.boxtest_result = true;
-            return;
-        }
-
-        // Top face
-        face[0] = cube[2].clone();
-        face[1] = cube[3].clone();
-        face[2] = cube[4].clone();
-        face[3] = cube[7].clone();
-        vertices = self.clip(&mut face, 4, 0, false);
-        if vertices > 0 {
-            self.gxstat.boxtest_result = true;
-        }
-    }
-
-    /// Runs the `VEC_TEST` GX command (0x72).
-    ///
-    /// Transforms a packed 3x10-bit signed direction vector by the current
-    /// vector (directional) matrix and stores the result for later readback
-    /// via `read_vec_test`. See GBATEK "DS 3D Tests" and CorgiDS
-    /// `GPU_3D::VEC_TEST()`.
-    pub fn vec_test(&mut self) {
-        let params0 = self.cmd_params[0];
-
-        // Each component is a 10-bit signed fixed-point value; sign-extend by
-        // shifting into the top bits of an i16 and back.
-        let bark: [i32; 3] = [0, 9, 18].map(|shift| {
-            let raw = (((params0 >> shift) & 0x3FF) << 6) as u16 as i16;
-            (raw >> 6) as i32
-        });
-
-        for col in 0..3 {
-            let mut result = ((0..3)
-                .map(|k| i64::from(bark[k]) * i64::from(self.vector_mtx.m[k][col]))
-                .sum::<i64>()
-                >> 9) as i32;
-            result |= (result & 0x1000) * 0xF;
-            self.vec_test_result[col] = result as i16;
-        }
-    }
-
-    // Moved to struct Emulator method (Because use emulator method)
-    // pub fn set_gxstat(&mut self, word: u32)
-}
-
-// to run exec_command
-impl Gpu3D {
-    pub fn mtx_mult(&mut self, update_vector: bool) {
-        let mut temp = Matrix::zeros();
-        let mut target = &mut Matrix::zeros();
-
-        if self.mtx_mode != 3 {
-            self.clip_dirty = true;
-        }
-
-        match self.mtx_mode {
-            0 => target = &mut self.projection_mtx,
-            1 => target = &mut self.modelview_mtx,
-            2 => {
-                target = &mut self.modelview_mtx;
-
-                // Only multiply vector if command is not MTX_SCALE
-                if update_vector {
-                    temp.set(&self.vector_mtx);
-
-                    // vec-matrix setting
-                    for i in 0..4 {
-                        for j in 0..4 {
-                            let mut temp_calc = 0_i64;
-                            for k in 0..4 {
-                                temp_calc +=
-                                    i64::from(self.mult_params.m[i][k]) * i64::from(temp.m[k][j]);
-                            }
-                            self.vector_mtx.m[i][j] = (temp_calc >> 12) as i32;
-                        }
-                    }
-                }
-            }
-            3 => self.texture_mtx.set(&self.texture_stack),
-            _ => {
-                #[cfg(feature = "tracing")]
-                tracing::error!("Unrecognized MTX_MODE {} for MTX_POP", self.mtx_mode);
-            }
-        }
-
-        temp.set(target);
-
-        // target setting
-        for i in 0..4 {
-            for j in 0..4 {
-                let mut temp_calc = 0_i64;
-                for k in 0..4 {
-                    temp_calc += i64::from(self.mult_params.m[i][k]) * i64::from(temp.m[k][j]);
-                }
-                target.m[i][j] = (temp_calc >> 12) as i32;
-            }
-        }
-
-        // Reset the mult matrix for further use
-        self.mult_params.set_identity();
-        self.mult_params_index = 0;
-    }
-
-    pub fn normal(&mut self) {
-        // Let's calculate some lighting!
-        // Signed 10-bit components (the shifts were done on u32 and never
-        // sign-extended).
-        let sext10 = |v: u32| (((v & 0x3FF) << 6) as u16 as i16) >> 6;
-        self.normal_vector[0] = sext10(self.cmd_params[0]);
-        self.normal_vector[1] = sext10(self.cmd_params[0] >> 10);
-        self.normal_vector[2] = sext10(self.cmd_params[0] >> 20);
-        let normal_vector_i32 = self.normal_vector.map(|x| x as i32);
-
-        if self.teximage_param.transformation_mode == 2 {
-            self.current_texcoords[0] = self.current_texcoords[0].wrapping_add(
-                ((0..3)
-                    .map(|k| i64::from(normal_vector_i32[k]) * i64::from(self.texture_mtx.m[k][0]))
-                    .sum::<i64>()
-                    >> 21) as i16,
-            );
-            self.current_texcoords[1] = self.current_texcoords[1].wrapping_add(
-                ((0..3)
-                    .map(|k| i64::from(normal_vector_i32[k]) * i64::from(self.texture_mtx.m[k][1]))
-                    .sum::<i64>()
-                    >> 21) as i16,
-            );
-        }
-
-        let mut normal_vec = [0, 0, 0];
-        for (i, normal) in normal_vec.iter_mut().enumerate() {
-            *normal = ((0..3)
-                .map(|k| i64::from(normal_vector_i32[k]) * i64::from(self.vector_mtx.m[k][i]))
-                .sum::<i64>()
-                >> 12) as i32;
-        }
-
-        let mut r = (self.emission_color & 0x1F) as u32;
-        let mut g = ((self.emission_color >> 5) & 0x1F) as u32;
-        let mut b = ((self.emission_color >> 10) & 0x1F) as u32;
-
-        for light in 0..4 {
-            // if !(self.polygon_attr.light_enable >= 0 & (1 << light)) {
-            //     continue;
-            // }
-
-            let lr = (self.light_color[light] & 0x1F) as u32;
-            let lg = ((self.light_color[light] >> 5) & 0x1F) as u32;
-            let lb = ((self.light_color[light] >> 10) & 0x1F) as u32;
-
-            let light_direction_i32 = self.light_direction.map(|vec| vec.map(|x| x as i32));
-
-            // 64-bit dot products: normals and light vectors are up to
-            // 16 bits each.
-            let ld = light_direction_i32[light].map(i64::from);
-            let nv = normal_vec.map(i64::from);
-            let mut diffuse_level =
-                ((-(ld[0] * nv[0] + ld[1] * nv[1] + ld[2] * nv[2])) >> 10) as i32;
-
-            // Overflow handling taken from melonDS (same goes for specular)
-            diffuse_level = diffuse_level.clamp(0, 0xFF);
-
-            let mut shine_level =
-                (-(((ld[0] >> 1) * nv[0] + (ld[1] >> 1) * nv[1] + ((ld[2] - 0x200) >> 1) * nv[2])
-                    >> 10)) as i32;
-
-            if shine_level < 0 {
-                shine_level = 0;
-            } else if shine_level > 0xFF {
-                shine_level = (0x100 - shine_level) & 0xFF;
-            }
-
-            // 2*shine_level^2 - 1.0
-            shine_level = ((shine_level * shine_level) >> 7) - 0x100;
-
-            if shine_level < 0 {
-                shine_level = 0;
-            }
-
-            if self.using_shine_table {
-                shine_level >>= 1;
-                shine_level = self
-                    .shine_table
-                    .get(shine_level as usize)
-                    .map_or(0, |&v| v as i32);
-            }
-
-            r += ((lr as i32 * (self.specular_color & 0x1F) as i32 * shine_level) >> 13) as u32;
-            g += ((lg as i32 * ((self.specular_color >> 5) & 0x1F) as i32 * shine_level) >> 13)
-                as u32;
-            b += ((lb as i32 * ((self.specular_color >> 10) & 0x1F) as i32 * shine_level) >> 13)
-                as u32;
-
-            r += ((lr as i32 * (self.diffuse_color & 0x1F) as i32 * diffuse_level) >> 13) as u32;
-            g += ((lg as i32 * ((self.diffuse_color >> 5) & 0x1F) as i32 * diffuse_level) >> 13)
-                as u32;
-            b += ((lb as i32 * ((self.diffuse_color >> 10) & 0x1F) as i32 * diffuse_level) >> 13)
-                as u32;
-
-            r += (lr * (self.ambient_color & 0x1F) as u32) >> 5;
-            g += (lg * ((self.ambient_color >> 5) & 0x1F) as u32) >> 5;
-            b += (lb * ((self.ambient_color >> 10) & 0x1F) as u32) >> 5;
-
-            if r > 0x1F {
-                r = 0x1F;
-            }
-            if g > 0x1F {
-                g = 0x1F;
-            }
-            if b > 0x1F {
-                b = 0x1F;
-            }
-        }
-
-        self.current_color = r + (g << 5) + (b << 10);
     }
 }

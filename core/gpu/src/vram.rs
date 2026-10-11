@@ -282,6 +282,28 @@ impl Vram {
         }
     }
 
+    /// Copies a whole region (as seen by its user, e.g. the 3D engine's
+    /// texture slots) into `out`, which must be the region's size.
+    /// Unmapped pages read as 0.
+    pub fn copy_region(&self, region: Region, out: &mut [u8]) {
+        out.fill(0);
+        for (page, chunk) in out.chunks_mut(PAGE_SIZE as usize).enumerate() {
+            let offset = page << PAGE_SHIFT;
+            let mut mask = self.maps[region as usize][page];
+            while mask != 0 {
+                let bank = mask.trailing_zeros() as usize;
+                mask &= mask - 1;
+                let mem = &self.banks[bank];
+                let start = offset & (mem.len() - 1);
+                if let Some(src) = mem.get(start..start + chunk.len()) {
+                    for (o, s) in chunk.iter_mut().zip(src) {
+                        *o |= *s;
+                    }
+                }
+            }
+        }
+    }
+
     #[inline]
     pub fn read_u8(&self, region: Region, offset: u32) -> u8 {
         self.read::<1>(region, offset)[0]

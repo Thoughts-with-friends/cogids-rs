@@ -70,6 +70,17 @@ fn blend(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
     ch(0) | ch(5) | ch(10)
 }
 
+/// Blend with 5-bit weights (`eva + evb == 32`), used by 3D pixels.
+#[inline]
+fn blend32(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
+    let ch = |shift: u16| -> u16 {
+        let ca = u32::from((a >> shift) & 0x1F);
+        let cb = u32::from((b >> shift) & 0x1F);
+        (((ca * eva + cb * evb) >> 5).min(31) as u16) << shift
+    };
+    ch(0) | ch(5) | ch(10)
+}
+
 #[inline]
 fn brighten(c: u16, evy: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
@@ -195,21 +206,49 @@ impl Gpu {
         e.bg3y_internal = e.bg3y_internal.wrapping_add(i32::from(e.bg3p[3] as i16));
     }
 
-    /// BG0 as the 3D layer: lets the 3D rasterizer draw into a cleared row
-    /// and takes every pixel it touched.
-    fn render_bg_3d(&mut self, out: &mut [u32; W], line: usize) {
-        let start = line * W;
-        self.engine_upper.framebuffer[start..start + W].fill(0);
-        let priority = (self.engine_upper.bgcnt[0] & 3) as u8;
-        self.render_scanline(true, priority);
+    /// Renders the 3D frame swapped in at the last VBlank. It is shown on
+    /// engine A's BG0 during the next frame.
+    pub fn render_3d_frame(&mut self) {
+        let e = &mut self.engine_3d;
+        if !self.engine_upper.dispcnt.bg_3d {
+            // Not displayed: skip, and render once 3D is shown again.
+            e.render_dirty = true;
+            return;
+        }
+        let bank = e.render_bank;
+        e.raster.render(
+            &e.render,
+            &e.polygon_ram[bank],
+            &e.render_polygons,
+            &e.vertex_ram[bank],
+            &self.vram,
+            e.render_dirty,
+        );
+        e.render_dirty = false;
+    }
+
+    /// BG0 as the 3D layer: one line of the rendered 3D frame, scrolled by
+    /// BG0HOFS. Pixels keep their 5-bit alpha in bits 16-20.
+    fn render_bg_3d(&self, out: &mut [u32; W], line: usize) {
+        let src = self.engine_3d.raster.line(line);
+        let xpos = usize::from(self.engine_upper.bghofs[0] & 0x1FF);
         for (x, px) in out.iter_mut().enumerate() {
-            let c = self.engine_upper.framebuffer[start + x];
-            if c & 0xFF00_0000 != 0 {
-                let r = (c >> 19) & 0x1F;
-                let g = (c >> 11) & 0x1F;
-                let b = (c >> 3) & 0x1F;
-                *px = OPAQUE | BG_3D | (b << 10) | (g << 5) | r;
+            // Scrolling shifts the image left; uncovered pixels are empty.
+            let sx = x + xpos;
+            let sx = if xpos & 0x100 != 0 {
+                sx.wrapping_sub(512)
+            } else {
+                sx
+            };
+            let Some(&c) = src.get(sx) else { continue };
+            let alpha = (c >> 24) & 0x1F;
+            if alpha == 0 {
+                continue;
             }
+            let r = (c >> 1) & 0x1F;
+            let g = (c >> 9) & 0x1F;
+            let b = (c >> 17) & 0x1F;
+            *px = OPAQUE | BG_3D | (alpha << 16) | (b << 10) | (g << 5) | r;
         }
     }
 
@@ -774,7 +813,12 @@ impl Gpu {
                     blend(top_color, second_color, eva, evb)
                 }
             } else if top_layer == 0 && top & BG_3D != 0 && second_target(second_layer) {
-                // 3D pixels carry their own alpha; they are opaque here.
+                // 3D pixels blend with their own alpha regardless of the
+                // BLDCNT mode (GBATEK "3D BG0 Blending").
+                let eva = ((top >> 16) & 0x1F) + 1;
+                blend32(top_color, second_color, eva, 32 - eva)
+            } else if top_layer == 0 && top & BG_3D != 0 && bld.effect == 1 {
+                // Alpha blending without a second target leaves 3D as is.
                 top_color
             } else if !first_target(top_layer) {
                 top_color

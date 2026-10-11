@@ -6,10 +6,6 @@ use crate::gpu_root::Gpu;
 use lunaris_ds_mem_const::*;
 
 impl Gpu {
-    pub fn draw_3d_scanline(&mut self, is_engine_a: bool, bg_priority: u8) {
-        self.render_scanline(is_engine_a, bg_priority);
-    }
-
     /// Draws the current scanline for every powered-on 2D engine.
     ///
     /// Matches CorgiDS `GPU::draw_scanline()`, which calls

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! gpu3d.hpp
 //!
-use crate::gpu_3d::structs::Matrix;
 
 // Constants to define
 pub const SCANLINES: usize = 256;
@@ -47,11 +46,3 @@ pub static CMD_CYCLE_AMOUNTS: [u16; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 ];
-
-#[rustfmt::skip]
-pub static IDENTITY_MATRIX: Matrix = Matrix::new([
-    [1 << 12, 0, 0, 0],
-    [0, 1 << 12, 0, 0],
-    [0, 0, 1 << 12, 0],
-    [0, 0, 0, 1 << 12],
-]);
