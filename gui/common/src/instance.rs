@@ -24,15 +24,25 @@ pub struct Instance {
 }
 
 impl Instance {
-    /// Opens (and creates, if needed) the instance folder and its sub folders.
+    /// Opens (and creates, if needed) `instances/instance1` below the
+    /// working directory.
     pub fn open() -> Self {
-        let root = PathBuf::from(INSTANCE_DIR);
+        Self::open_in(Path::new("."))
+    }
+
+    /// Opens (and creates, if needed) `instances/instance1` below `base`.
+    pub fn open_in(base: &Path) -> Self {
+        let root = base.join(INSTANCE_DIR);
         for dir in SUB_DIRS {
             if let Err(e) = std::fs::create_dir_all(root.join(dir)) {
                 eprintln!("Failed to create {}: {e}", root.join(dir).display());
             }
         }
         Self { root }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     pub fn config_path(&self) -> PathBuf {

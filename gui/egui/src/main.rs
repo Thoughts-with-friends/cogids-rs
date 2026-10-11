@@ -1,20 +1,14 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-mod audio;
 mod config;
 mod font;
 mod input;
-mod instance;
 
-use self::audio::AudioOutput;
 use self::config::{Config, ScreenLayout, load_config, save_config, set_config_path};
-use self::input::{Gamepads, Touch};
-
-/// Native DS refresh rate (33.513982 MHz / (355 * 263 * 6)).
-const DS_FPS: f64 = 59.826_098;
-use self::instance::{Instance, Settings};
+use self::input::Touch;
 use eframe::egui;
 use lunaris_ds_emu::Emulator;
+use lunaris_ds_frontend::{AudioOutput, DS_FPS, Gamepads, Instance, Settings};
 use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
 use std::{path::PathBuf, time::Instant};
 

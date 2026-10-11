@@ -1,3 +1,4 @@
+use crate::bios_tables;
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::cpu::arm_cpu::CpuType;
@@ -134,6 +135,18 @@ impl Emulator {
             0x06 => self.arm7.halt(),
             0x0B => self.cpu_set(CpuType::Arm7),
             0x0E => self.get_crc16(CpuType::Arm7),
+            // Sound helpers used by the SDK sound driver to turn notes and
+            // decibels into timer / volume values. Out-of-range indexes
+            // return garbage on hardware; 0 here.
+            0x1A..=0x1C => {
+                let index = self.arm7.get_register(0) as usize;
+                let value = match opcode {
+                    0x1A => bios_tables::SINE_TABLE.get(index).map(|&v| u32::from(v)),
+                    0x1B => bios_tables::PITCH_TABLE.get(index).map(|&v| u32::from(v)),
+                    _ => bios_tables::VOLUME_TABLE.get(index).map(|&v| u32::from(v)),
+                };
+                self.arm7.set_register(0, value.unwrap_or(0));
+            }
             _ => {
                 #[cfg(feature = "tracing")]
                 tracing::error!("Unrecognized HLE SWI7 ${opcode:02X}");

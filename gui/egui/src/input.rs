@@ -1,11 +1,7 @@
-//! Host input: keyboard, gamepads (auto-detected) and the touch screen.
+//! Host input: keyboard and the touch screen (gamepads: `lunaris_ds_frontend`).
 use eframe::egui;
-use gilrs::{Axis, Button, Gilrs};
 use lunaris_ds_emu::Emulator;
 use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
-
-/// Analog stick deflection treated as a D-pad press.
-const STICK_THRESHOLD: f32 = 0.5;
 
 /// Frames a touch is kept down after the pointer is released, so that a
 /// quick tap (press and release within one host frame) still reaches the
@@ -31,84 +27,6 @@ pub fn apply_keyboard(ctx: &egui::Context, emu: &mut Emulator) {
         emu.ext_key_in.button_x = i.key_down(Key::S);
         emu.ext_key_in.button_y = i.key_down(Key::A);
     });
-}
-
-/// Connected gamepads. Controllers are picked up automatically when they are
-/// plugged in (and dropped when unplugged) through `gilrs`.
-pub struct Gamepads {
-    gilrs: Option<Gilrs>,
-}
-
-impl Gamepads {
-    pub fn new() -> Self {
-        let gilrs = match Gilrs::new() {
-            Ok(gilrs) => Some(gilrs),
-            Err(e) => {
-                tracing::error!("Gamepad support unavailable: {e}");
-                None
-            }
-        };
-        Self { gilrs }
-    }
-
-    /// Drains pending events; this also refreshes the cached button states.
-    pub fn poll(&mut self) {
-        let Some(gilrs) = &mut self.gilrs else {
-            return;
-        };
-        while let Some(event) = gilrs.next_event() {
-            match event.event {
-                gilrs::EventType::Connected => {
-                    tracing::info!("Gamepad connected: {}", gilrs.gamepad(event.id).name());
-                }
-                gilrs::EventType::Disconnected => {
-                    tracing::info!("Gamepad disconnected: {}", gilrs.gamepad(event.id).name());
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Names of the connected gamepads.
-    pub fn names(&self) -> Vec<String> {
-        self.gilrs.as_ref().map_or_else(Vec::new, |gilrs| {
-            gilrs
-                .gamepads()
-                .map(|(_, pad)| pad.name().to_owned())
-                .collect()
-        })
-    }
-
-    /// ORs every connected gamepad into the DS buttons (call after the
-    /// keyboard so either device works).
-    ///
-    /// Face buttons are mapped by position like on the DS: right = A,
-    /// bottom = B, top = X, left = Y. L/R accept both shoulder buttons and
-    /// triggers; the left stick doubles as the D-pad.
-    pub fn apply(&self, emu: &mut Emulator) {
-        let Some(gilrs) = &self.gilrs else {
-            return;
-        };
-        for (_, pad) in gilrs.gamepads() {
-            let down = |b: Button| pad.is_pressed(b);
-            let x = pad.value(Axis::LeftStickX);
-            let y = pad.value(Axis::LeftStickY);
-
-            let k = &mut emu.key_input;
-            k.button_a |= down(Button::East);
-            k.button_b |= down(Button::South);
-            k.button_l |= down(Button::LeftTrigger) || down(Button::LeftTrigger2);
-            k.button_r |= down(Button::RightTrigger) || down(Button::RightTrigger2);
-            k.start |= down(Button::Start);
-            k.select |= down(Button::Select);
-            k.up |= down(Button::DPadUp) || y > STICK_THRESHOLD;
-            k.down |= down(Button::DPadDown) || y < -STICK_THRESHOLD;
-            k.left |= down(Button::DPadLeft) || x < -STICK_THRESHOLD;
-            k.right |= down(Button::DPadRight) || x > STICK_THRESHOLD;
-            emu.ext_key_in.button_x |= down(Button::North);
-            emu.ext_key_in.button_y |= down(Button::West);
-        }
-    }
 }
 
 /// Stylus state for the lower screen.

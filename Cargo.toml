@@ -24,6 +24,7 @@ members = [
   "core/timers",
   "core/touchscreen",
   "core/wifi",
+  "gui/common",
   "gui/egui",
   "gui/tauri/src-tauri"
 ]
@@ -47,6 +48,7 @@ lunaris_ds_rtc = { path = "./core/rtc" }
 lunaris_ds_timers = { path = "./core/timers" }
 lunaris_ds_touchscreen = { path = "./core/touchscreen" }
 lunaris_ds_wifi = { path = "./core/wifi" }
+lunaris_ds_frontend = { path = "./gui/common" }
 
 
 [workspace.lints.clippy]

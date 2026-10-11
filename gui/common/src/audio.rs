@@ -18,6 +18,8 @@ struct Queue {
     last: [f32; 2],
 }
 
+/// Cheap to clone: clones share the same output stream and queue.
+#[derive(Clone)]
 pub struct AudioOutput {
     queue: Arc<Mutex<Queue>>,
     /// Volume 0.0..=1.0 as `f32` bits.

@@ -2,7 +2,7 @@
 
 import { Box, type SxProps, type Theme } from "@mui/material";
 import { useInjectJs } from "@/components/hooks/useInjectJs";
-import { WelcomePage } from "./WelcomePage/WelcomePage";
+import { EmulatorView } from "@/components/organisms/EmulatorView";
 import { showWindow } from "@/services/api/window";
 
 export const Top = () => {
@@ -11,16 +11,19 @@ export const Top = () => {
 
   return (
     <Box component="main" sx={pageSx}>
-      <WelcomePage />
+      <EmulatorView />
     </Box>
   );
 };
 
 const pageSx: SxProps<Theme> = {
-  display: "grid",
+  display: "flex",
+  justifyContent: "center",
+  overflowX: "hidden",
   minHeight: "calc(100vh - 56px)",
-  placeItems: "center",
-  pt: 8,
+  pt: 2,
+  pb: 10,
   px: 2,
   width: "100%",
+  boxSizing: "border-box",
 };

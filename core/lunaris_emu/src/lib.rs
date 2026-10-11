@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![allow(clippy::missing_const_for_fn)]
 mod bios;
+mod bios_tables;
 mod cpu;
 mod dma;
 mod emulator;
