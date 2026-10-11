@@ -185,8 +185,8 @@ impl Gpu {
                             )
                         }
                         _ => {
-                            #[cfg(feature = "tracing")]
-                            tracing::error!(
+                            #[cfg(feature = "log")]
+                            log::error!(
                                 "Unrecognized capture source {}",
                                 engine.dispcapcnt.capture_source
                             );

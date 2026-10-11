@@ -83,16 +83,17 @@ impl DmaCnt {
         self.irq_after_transfer = (value & (1 << 14)) != 0;
         self.enabled = (value & (1 << 15)) != 0;
 
-        tracing::debug!(
-            value = value,
-            dest_control = self.dest_control,
-            source_control = self.source_control,
-            repeat = self.repeat,
-            word_transfer = self.word_transfer,
-            timing = self.timing,
-            irq_after_transfer = self.irq_after_transfer,
-            enabled = self.enabled,
-            "DMA control register updated"
+        #[cfg(feature = "log")]
+        log::debug!(
+            "DMA control register updated: value={:#010X}, dest_control={}, source_control={}, repeat={}, word_transfer={}, timing={}, irq_after_transfer={}, enabled={}",
+            value,
+            self.dest_control,
+            self.source_control,
+            self.repeat,
+            self.word_transfer,
+            self.timing,
+            self.irq_after_transfer,
+            self.enabled,
         );
     }
 }

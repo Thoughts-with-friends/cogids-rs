@@ -142,12 +142,12 @@ impl NDSCart {
         self.save_database.clear();
         self.database_size = 0;
 
-        // #[cfg(feature = "tracing")]
-        // tracing::info!("Loading save database: {}", file_name.display());
+        // #[cfg(feature = "log")]
+        // log::info!("Loading save database: {}", file_name.display());
 
         let mut file = File::open(file_name).map_err(|source| {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Failed to open save database: {}", file_name.display());
+            #[cfg(feature = "log")]
+            log::error!("Failed to open save database: {}", file_name.display());
 
             CartridgeError::OpenSaveDatabase {
                 path: file_name.to_path_buf(),
@@ -156,8 +156,8 @@ impl NDSCart {
         })?;
 
         let metadata = std::fs::metadata(file_name).map_err(|source| {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Failed to read metadata: {}", file_name.display());
+            #[cfg(feature = "log")]
+            log::error!("Failed to read metadata: {}", file_name.display());
 
             CartridgeError::MetadataSaveDatabase {
                 path: file_name.to_path_buf(),
@@ -169,8 +169,8 @@ impl NDSCart {
         self.database_size = size;
 
         if size % 19 != 0 {
-            #[cfg(feature = "tracing")]
-            tracing::error!(
+            #[cfg(feature = "log")]
+            log::error!(
                 "Invalid save database format: {} size={size}",
                 file_name.display(),
             );
@@ -184,8 +184,8 @@ impl NDSCart {
         self.save_database.resize(size as usize, 0);
 
         file.read_exact(&mut self.save_database).map_err(|source| {
-            #[cfg(feature = "tracing")]
-            tracing::error!(
+            #[cfg(feature = "log")]
+            log::error!(
                 "Failed to read save database contents: {}",
                 file_name.display()
             );
@@ -196,8 +196,8 @@ impl NDSCart {
             }
         })?;
 
-        // #[cfg(feature = "tracing")]
-        // tracing::info!("Save database successfully loaded: {}", file_name.display());
+        // #[cfg(feature = "log")]
+        // log::info!("Save database successfully loaded: {}", file_name.display());
 
         Ok(())
     }

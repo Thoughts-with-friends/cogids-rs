@@ -18,8 +18,8 @@ impl Emulator {
             return;
         }
 
-        #[cfg(feature = "tracing")]
-        tracing::trace!(target: "gx", "cmd {index:02X} {:08X}", e.cmd_params[0]);
+        #[cfg(feature = "log")]
+        log::trace!(target: "gx", "cmd {index:02X} {:08X}", e.cmd_params[0]);
         e.cycles += i64::from(CMD_CYCLE_AMOUNTS[index]);
         let polygons_before = e.num_consecutive_polygons;
         e.execute_command(cmd.command);

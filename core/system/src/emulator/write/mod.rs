@@ -1,8 +1,8 @@
 mod write_arm7;
 mod write_arm9;
 
-use crate::cpu::arm_cpu::CpuType;
 use crate::emulator::Emulator;
+use ds_cpu::arm_cpu::CpuType;
 
 /// Folds main RAM mirrors together so a watchpoint matches any of them.
 const fn watch_key(address: u32) -> u32 {

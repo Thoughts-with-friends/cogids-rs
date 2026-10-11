@@ -34,7 +34,7 @@ fn __setup_custom_fonts(ctx: &Context, font_path: &Path) {
         }
         Err(_err) => {
             #[cfg(target_os = "windows")]
-            tracing::error!("Failed to load font from {}: {_err}", font_path.display());
+            log::error!("Failed to load font from {}: {_err}", font_path.display());
         }
     }
 

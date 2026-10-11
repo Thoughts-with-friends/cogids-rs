@@ -1,6 +1,6 @@
-use crate::cpu::arm_cpu::CpuType;
 use crate::cpu::interpreter::arm_interpret;
 use crate::cpu::interpreter::thumb_instruction::thumb_interpret;
+use ds_cpu::arm_cpu::CpuType;
 
 use crate::emulator::Emulator;
 
@@ -40,8 +40,8 @@ impl Emulator {
         }
 
         if let Err(err) = self.cart.save_check() {
-            #[cfg(feature = "tracing")]
-            tracing::error!("{err}");
+            #[cfg(feature = "log")]
+            log::error!("{err}");
         };
     }
 
@@ -58,8 +58,8 @@ impl Emulator {
             let halted = self.get_cpu_mut(cpu_type).halted;
             let is_dma_active = self.dma_active();
 
-            // #[cfg(feature = "tracing")]
-            // tracing::info!(%halted, %is_dma_active);
+            // #[cfg(feature = "log")]
+            // log::info!(%halted, %is_dma_active);
 
             if halted || is_dma_active {
                 let timestamp = self.get_timestamp() << (1 - cpu_id);

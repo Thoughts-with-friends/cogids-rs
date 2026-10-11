@@ -2,10 +2,9 @@
 mod read_arm7;
 mod read_arm9;
 
-use ds_mem_addr::{ARM7_WRAM_MASK, ARM7_WRAM_START};
-
-use crate::cpu::arm_cpu::CpuType;
 use crate::emulator::Emulator;
+use ds_cpu::arm_cpu::CpuType;
+use ds_mem_addr::{ARM7_WRAM_MASK, ARM7_WRAM_START};
 
 impl Emulator {
     /// Resolves an ARM7 access in `0x03000000..0x04000000` to

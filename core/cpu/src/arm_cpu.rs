@@ -91,7 +91,7 @@ pub struct PsrFlags {
 
 impl PsrFlags {
     /// Serialize flags into a 32-bit CPSR/SPSR value
-    pub fn get(&self) -> u32 {
+    pub const fn get(&self) -> u32 {
         let mut reg = 0;
         reg |= (self.negative as u32) << 31;
         reg |= (self.zero as u32) << 30;
@@ -109,7 +109,7 @@ impl PsrFlags {
     }
 
     /// Load flags from a 32-bit CPSR/SPSR value
-    pub fn set(&mut self, value: u32) {
+    pub const fn set(&mut self, value: u32) {
         // 1610612829
         self.negative = (value & (1 << 31)) != 0;
         self.zero = (value & (1 << 30)) != 0;
@@ -124,8 +124,8 @@ impl PsrFlags {
         if let Some(mode) = PsrMode::from_u32(value & 0x1F) {
             self.mode = mode;
         } else {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("invalid PsrMode: {value}");
+            #[cfg(feature = "log")]
+            log::warn!("invalid PsrMode: {value}");
         }
     }
 }
@@ -360,7 +360,7 @@ impl ArmCpu {
     // pub fn set_cp15(&mut self, cp15: ()) {}
 
     /// Reset CPU state
-    pub fn power_on(&mut self) {
+    pub const fn power_on(&mut self) {
         self.halted = false;
         self.timestamp = 0;
         self.cpsr.thumb_on = false;
@@ -372,7 +372,7 @@ impl ArmCpu {
     ///
     /// Register values match what the DS BIOS leaves behind before jumping to
     /// the cartridge (melonDS `NDS::SetupDirectBoot`).
-    pub fn direct_boot(&mut self, entry_point: u32) {
+    pub const fn direct_boot(&mut self, entry_point: u32) {
         self.jp(entry_point, true);
         self.regs[12] = entry_point;
         self.regs[14] = entry_point;
@@ -391,9 +391,9 @@ impl ArmCpu {
     // pub fn execute(&mut self)
 
     /// Jump to address, optionally changing Thumb state
-    pub fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {
-        // #[cfg(feature = "tracing")]
-        // tracing::trace!(%new_addr, %change_thumb_state);
+    pub const fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {
+        // #[cfg(feature = "log")]
+        // log::trace!(%new_addr, %change_thumb_state);
         self.regs[15] = new_addr;
 
         self.add_n32_code(new_addr, 1);
@@ -606,7 +606,7 @@ impl ArmCpu {
         }
     }
 
-    pub fn print_condition(condition: u32) -> Option<&'static str> {
+    pub const fn print_condition(condition: u32) -> Option<&'static str> {
         Some(match condition {
             0x0 => "EQ",
             0x1 => "NE",
@@ -832,7 +832,7 @@ impl ArmCpu {
         }
     }
 
-    pub fn mrs(&mut self, instruction: u32) {
+    pub const fn mrs(&mut self, instruction: u32) {
         let using_cpsr = (instruction & (1 << 22)) == 0;
         let dst = (instruction >> 12) & 0xF;
 
@@ -887,8 +887,8 @@ impl ArmCpu {
             if let Some(mode) = PsrMode::from_u32(value & 0x1F) {
                 self.update_reg_mode(mode);
             } else {
-                #[cfg(feature = "tracing")]
-                tracing::warn!("Invalid PsrMode: new_cpsr = {using_cpsr}");
+                #[cfg(feature = "log")]
+                log::warn!("Invalid PsrMode: new_cpsr = {using_cpsr}");
             }
         }
 
@@ -931,8 +931,8 @@ impl ArmCpu {
             self.update_reg_mode(mode);
             self.cpsr.set(new_cpsr);
         } else {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("Invalid PsrMode: new_cpsr = {new_cpsr}");
+            #[cfg(feature = "log")]
+            log::warn!("Invalid PsrMode: new_cpsr = {new_cpsr}");
         }
     }
 

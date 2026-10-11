@@ -342,7 +342,7 @@ impl Gpu2DEngine {
         self.dispcnt.bg_extended_palette = (word & (1 << 30)) != 0;
         self.dispcnt.obj_extended_palette = (word & (1 << 31)) != 0;
 
-        tracing::trace!(
+        log::trace!(
             target: "gpu_2d",
             "DISPCNT updated: 0x{:08X}\n\
             - display_mode: {}\n\
@@ -377,7 +377,7 @@ impl Gpu2DEngine {
         let screen_base = (halfword >> 8) & 0x1F;
         let screen_size = (halfword >> 14) & 0x3;
 
-        tracing::trace!(
+        log::trace!(
             target: "gpu_bg",
             "[GPU BackGround] BG{}CNT Update: 0x{:04X} | Prio:{} CharBase:{} Mosaic: {} ScreenBase:{} 256Color:{} Size:{}",
             index, halfword, priority, char_base, mosaic, screen_base, color_mode_256, screen_size

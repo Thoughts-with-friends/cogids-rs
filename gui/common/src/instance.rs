@@ -74,8 +74,8 @@ impl Instance {
             return;
         }
         match std::fs::copy(&legacy, &target) {
-            Ok(_) => tracing::info!("Imported save {} -> {}", legacy.display(), target.display()),
-            Err(e) => tracing::error!("Failed to import save {}: {e}", legacy.display()),
+            Ok(_) => log::info!("Imported save {} -> {}", legacy.display(), target.display()),
+            Err(e) => log::error!("Failed to import save {}: {e}", legacy.display()),
         }
     }
 }
@@ -140,7 +140,7 @@ impl Settings {
         let read = |path: &Option<PathBuf>| {
             let path = path.as_ref()?;
             std::fs::read(path)
-                .inspect_err(|e| tracing::error!("Failed to read {}: {e}", path.display()))
+                .inspect_err(|e| log::error!("Failed to read {}: {e}", path.display()))
                 .ok()
         };
         if let Some(bin) = read(&self.arm9_bios_path) {

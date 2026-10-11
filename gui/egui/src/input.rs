@@ -1,4 +1,4 @@
-//! Host input: keyboard and the touch screen (gamepads: `ds_frontend`).
+//! Host input: keyboard and the touch screen (gamepads: `ds_common`).
 use ds_emu::Emulator;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use eframe::egui;

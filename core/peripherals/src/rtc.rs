@@ -158,8 +158,8 @@ impl RealTimeClock {
 
     /// Process input data from serial protocol
     pub fn interpret_input(&mut self) {
-        #[cfg(feature = "tracing")]
-        tracing::trace!(target: "rtc", "byte {} = {:02X}", self.input_index, self.input);
+        #[cfg(feature = "log")]
+        log::trace!(target: "rtc", "byte {} = {:02X}", self.input_index, self.input);
         if self.input_index == 0 {
             self.command = (self.input & 0x70) >> 4;
 
@@ -224,8 +224,8 @@ impl RealTimeClock {
                     }
 
                     _ => {
-                        #[cfg(feature = "tracing")]
-                        tracing::error!("Unrecognized read from RTC command {}", self.command);
+                        #[cfg(feature = "log")]
+                        log::error!("Unrecognized read from RTC command {}", self.command);
                     }
                 }
             }
@@ -263,8 +263,8 @@ impl RealTimeClock {
                     _ => {}
                 },
                 _ => {
-                    #[cfg(feature = "tracing")]
-                    tracing::error!(
+                    #[cfg(feature = "log")]
+                    log::error!(
                         "Unrecognized write ${:02X} to RTC command {}",
                         self.input,
                         self.command

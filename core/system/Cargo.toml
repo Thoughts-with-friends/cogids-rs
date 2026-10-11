@@ -12,26 +12,25 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-tracing = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 snafu = { workspace = true }
 
 # workspace members
 ds_bios = { workspace = true }
 ds_cartridge = { workspace = true }
+ds_cpu = { workspace = true }
+ds_gpu = { workspace = true }
 ds_interrupt = { workspace = true }
 ds_mem_addr = { workspace = true }
-ds_gpu = { workspace = true }
 ds_peripherals = { workspace = true }
 ds_spu = { workspace = true }
 
 [dev-dependencies]
-quick_tracing = { version = "0.1.5", features = ["derive"] }
 image = { version = "0.25.9" }
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [features]
-default = ["tracing"]
-tracing = ["dep:tracing", "ds_bios/tracing", "ds_cartridge/tracing", "ds_peripherals/tracing"]
+default = []
+log = ["dep:log", "ds_bios/log", "ds_cartridge/log", "ds_peripherals/log"]
 
 # TODO:
 [lints]

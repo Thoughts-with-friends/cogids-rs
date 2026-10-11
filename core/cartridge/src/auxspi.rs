@@ -25,9 +25,10 @@ impl NDSCart {
     /// Clearing bit 13 (SPI mode) while the chip is selected releases the
     /// chip select line, setting it again re-asserts it (melonDS
     /// `NDSCartSlot::Interface::WriteSPICnt`).
+    #[allow(clippy::missing_const_for_fn)]
     pub fn write_auxspicnt(&mut self, value: u16, mask: u16) {
-        #[cfg(feature = "tracing")]
-        tracing::trace!(target: "auxspi", "cnt {:04X} -> {value:04X}/{mask:04X} sel={}", self.auxspicnt, self.spi_selected);
+        #[cfg(feature = "log")]
+        log::trace!(target: "auxspi", "cnt {:04X} -> {value:04X}/{mask:04X} sel={}", self.auxspicnt, self.spi_selected);
         let value = value & mask;
         if self.spi_selected {
             if self.auxspicnt & !value & (1 << 13) != 0 {
@@ -69,8 +70,8 @@ impl NDSCart {
             self.backup.select();
         }
         self.spi_data = self.backup.transfer(value);
-        #[cfg(feature = "tracing")]
-        tracing::trace!(target: "auxspi", "sel={} in={value:02X} out={:02X} hold={}", self.spi_selected, self.spi_data, self.auxspicnt & (1 << 6) != 0);
+        #[cfg(feature = "log")]
+        log::trace!(target: "auxspi", "sel={} in={value:02X} out={:02X} hold={}", self.spi_selected, self.spi_data, self.auxspicnt & (1 << 6) != 0);
 
         let hold = self.auxspicnt & (1 << 6) != 0;
         if !hold {

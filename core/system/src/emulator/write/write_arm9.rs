@@ -94,8 +94,8 @@ impl Emulator {
                 }
             }
             0x0400_0188 => {
-                #[cfg(feature = "tracing")]
-                tracing::debug!(target: "ipc", "Arm9 send {word:08X}");
+                #[cfg(feature = "log")]
+                log::debug!(target: "ipc", "Arm9 send {word:08X}");
                 let irq = self.ipc.send(Side::Arm9, word);
                 self.raise_ipc(irq);
             }
@@ -161,8 +161,8 @@ impl Emulator {
                 self.gpu.write_oam(address + 2, (word >> 16) as u16);
             }
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!("(9) Unrecognized word write of ${word:08X} to ${address:08X}");
+                #[cfg(feature = "log")]
+                log::warn!("(9) Unrecognized word write of ${word:08X} to ${address:08X}");
             }
         }
     }
@@ -395,8 +395,8 @@ impl Emulator {
             0x0400106C => self.gpu.set_master_bright_b(halfword),
             GBA_ROM_START.. => {} // GBA ROM
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!(
+                #[cfg(feature = "log")]
+                log::warn!(
                     "\n(9) Unrecognized halfword write of ${halfword:04X} to ${address:08X}"
                 );
             }
@@ -448,8 +448,8 @@ impl Emulator {
             0x040001A0 => self.cart.set_lo_auxspicnt(byte),
             0x040001A1 => self.cart.set_hi_auxspicnt(byte),
             0x040001A2 => {
-                // #[cfg(feature = "tracing")]
-                // tracing::trace!("AUXSPIDATA: {byte:02X}");
+                // #[cfg(feature = "log")]
+                // log::trace!("AUXSPIDATA: {byte:02X}");
                 self.cart.set_auxspidata(byte);
             }
             0x040001A8..=0x040001AF => {
@@ -472,8 +472,8 @@ impl Emulator {
 
             // 0x0500_0000..0x0600_0000
             PALETTE_START..VRAM_BGA_START => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!("\nPalette memory (ignored for byte writes) ${address:08X}");
+                #[cfg(feature = "log")]
+                log::warn!("\nPalette memory (ignored for byte writes) ${address:08X}");
             }
             // 0x0500_0000..0x0800_0000
             // PALETTE_START..GBA_ROM_START => {
@@ -482,8 +482,8 @@ impl Emulator {
             OAM_START..GBA_ROM_START => {}
             _ => {
                 // Unrecognized byte write
-                #[cfg(feature = "tracing")]
-                tracing::warn!("\n(9) Unrecognized byte write of ${byte:02X} to ${address:08X}");
+                #[cfg(feature = "log")]
+                log::warn!("\n(9) Unrecognized byte write of ${byte:02X} to ${address:08X}");
             }
         }
     }

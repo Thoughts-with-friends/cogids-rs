@@ -163,8 +163,8 @@ impl NDSCart {
     /// Reads raw byte from ROM without timing effects.
     pub fn direct_read(&self, address: u32) -> u8 {
         self.rom.get(address as usize).copied().unwrap_or_else(|| {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("Direct read out of bounds: {address:08X}");
+            #[cfg(feature = "log")]
+            log::warn!("Direct read out of bounds: {address:08X}");
             0
         })
     }
@@ -202,8 +202,8 @@ impl NDSCart {
     ///
     /// # Panics
     pub fn set_romctrl(&mut self, value: u32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("Setting ROMCTRL: {value:08X}");
+        // #[cfg(feature = "log")]
+        // log::debug!("Setting ROMCTRL: {value:08X}");
 
         let old_transfer_busy = self.romctrl.block_busy;
 
@@ -246,8 +246,8 @@ impl NDSCart {
                 ];
                 self.key1_decrypt(&mut data);
 
-                // #[cfg(feature = "tracing")]
-                // tracing::trace!(
+                // #[cfg(feature = "log")]
+                // log::trace!(
                 //     "Data sent {:02X?} decrypted {data:02X?}",
                 //     self.command_buffer,
                 // );
@@ -282,8 +282,8 @@ impl NDSCart {
                         as usize;
 
                     if self.bytes_left > 0x1000 {
-                        #[cfg(feature = "tracing")]
-                        tracing::error!("ROM read bytes_left > 0x1000");
+                        #[cfg(feature = "log")]
+                        log::error!("ROM read bytes_left > 0x1000");
                     }
                 }
 

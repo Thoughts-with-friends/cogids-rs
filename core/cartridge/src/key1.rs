@@ -27,10 +27,9 @@ impl NDSCart {
 
     /// Performs KEY1 encryption on data buffer.
     #[must_use]
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
     pub fn key1_encrypt(&mut self, mut y: u32, mut x: u32) -> [u32; 2] {
-        // #[cfg(feature = "tracing")]
-        // tracing::info!(?y, ?x);
+        // #[cfg(feature = "log")]
+        // log::info!(?y, ?x);
 
         for i in 0..=0xF {
             let z = (self.read_keybuf_u32(i) ^ x) as usize;

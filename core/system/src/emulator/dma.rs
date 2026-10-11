@@ -10,8 +10,8 @@ use ds_interrupt::Interrupt;
 impl Emulator {
     /// Handle scheduler event
     pub fn dma_handle_event(&mut self) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Emulator::dma_handle_event has called.");
+        #[cfg(feature = "log")]
+        log::debug!("Emulator::dma_handle_event has called.");
 
         self.dma_event.processing = false;
         let event_id = self.dma_event.id;
@@ -48,8 +48,8 @@ impl Emulator {
             };
 
             if internal_len > length {
-                #[cfg(feature = "tracing")]
-                tracing::debug!(
+                #[cfg(feature = "log")]
+                log::debug!(
                     target: "dma",
                     "dma{event_id} done len={length} src={:08X} dst={:08X} irq={irq_after_transfer} gxfifo={} pipe={} IF9={:08X}",
                     self.dma.dmas[event_id as usize].internal_source,
@@ -63,14 +63,14 @@ impl Emulator {
                         if let Some(interrupt) = Interrupt::from_usize(interrupt9) {
                             self.request_interrupt9(interrupt);
                         } else {
-                            #[cfg(feature = "tracing")]
-                            tracing::error!("Out of index {interrupt9}");
+                            #[cfg(feature = "log")]
+                            log::error!("Out of index {interrupt9}");
                         }
                     } else if let Some(interrupt) = Interrupt::from_usize(interrupt7) {
                         self.request_interrupt7(interrupt);
                     } else {
-                        #[cfg(feature = "tracing")]
-                        tracing::error!("Out of index {interrupt7}");
+                        #[cfg(feature = "log")]
+                        log::error!("Out of index {interrupt7}");
                     }
                 }
 
@@ -118,8 +118,8 @@ impl Emulator {
             let (_value, offset) = if word_transfer {
                 let value = if is_arm9 {
                     let v = self.arm9_read_word(internal_source);
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!(
+                    // #[cfg(feature = "log")]
+                    // log::debug!(
                     //     "DMA Access [ARM9_READ] Addr: 0x{internal_dest:08X} Word: 0x{v:08X}",
                     // );
                     self.arm9_write_word(internal_dest, v);
@@ -153,8 +153,8 @@ impl Emulator {
                     1 => active_dma.internal_dest = active_dma.internal_dest.wrapping_sub(offset),
                     2 => {}
                     v => {
-                        #[cfg(feature = "tracing")]
-                        tracing::error!("Unrecognized DMA dest control {v}");
+                        #[cfg(feature = "log")]
+                        log::error!("Unrecognized DMA dest control {v}");
                     }
                 }
             }
@@ -173,8 +173,8 @@ impl Emulator {
                     }
                     2 => {}
                     v => {
-                        #[cfg(feature = "tracing")]
-                        tracing::error!("Unrecognized DMA source control {v}");
+                        #[cfg(feature = "log")]
+                        log::error!("Unrecognized DMA source control {v}");
                     }
                 }
             }
@@ -209,8 +209,8 @@ impl Emulator {
 
     /// Write control register to DMA channel
     pub fn dma_write_cnt(&mut self, index: usize, cnt: u16) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("call dma_write_cnt: index: {index}, cnt: {cnt}");
+        #[cfg(feature = "log")]
+        log::debug!("call dma_write_cnt: index: {index}, cnt: {cnt}");
 
         let dma = &mut self.dma.dmas[index];
         let old_enabled = dma.cnt.enabled;
@@ -218,8 +218,8 @@ impl Emulator {
 
         dma.cnt.set(cnt, is_arm9);
 
-        #[cfg(feature = "tracing")]
-        tracing::debug!(
+        #[cfg(feature = "log")]
+        log::debug!(
             target: "dma",
             "dma{index} cnt={cnt:04X} (was {}) src={:08X} dst={:08X} len={}",
             if old_enabled { "on" } else { "off" },

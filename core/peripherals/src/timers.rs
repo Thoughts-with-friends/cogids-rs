@@ -147,25 +147,25 @@ impl NDSTiming {
     }
 
     /// Read timer counter low byte (0x4000100 + index*4)
-    #[cfg_attr(not(feature = "tracing"), expect(clippy::missing_const_for_fn))]
+    #[cfg_attr(not(feature = "log"), expect(clippy::missing_const_for_fn))]
     pub fn read_lo(&self, index: usize) -> u16 {
         if index < 8 {
             self.timers[index].counter
         } else {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("fn read_lo: out-of bounds {index}");
+            #[cfg(feature = "log")]
+            log::warn!("fn read_lo: out-of bounds {index}");
             0 // to prevent out-of bounds
         }
     }
 
     /// Read timer control high byte
-    #[cfg_attr(not(feature = "tracing"), expect(clippy::missing_const_for_fn))]
+    #[cfg_attr(not(feature = "log"), expect(clippy::missing_const_for_fn))]
     pub fn read_hi(&self, index: usize) -> u16 {
         if index < 8 {
             self.timers[index].get_control()
         } else {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("fn read_hi: out-of bounds {index}");
+            #[cfg(feature = "log")]
+            log::warn!("fn read_hi: out-of bounds {index}");
             0
         }
     }

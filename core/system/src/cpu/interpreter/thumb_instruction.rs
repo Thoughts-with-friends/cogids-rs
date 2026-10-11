@@ -3,30 +3,31 @@
 //! instrthumb.cpp
 //!
 
-use crate::cpu::arm_cpu::{CpuType, REG_LR, REG_PC, REG_SP};
-use crate::cpu::instruction_table::ThumbInstr;
+use ds_cpu::arm_cpu::{CpuType, REG_LR, REG_PC, REG_SP};
+use ds_cpu::instruction_table::ThumbInstr;
+
 use crate::emulator::Emulator;
 
 /// Interprets a Thumb instruction
 pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
-    // NOTE: tracing output is gated behind the `tracing` feature
+    // NOTE: log output is gated behind the `log` feature
     let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF;
     let cpu_id = emu.get_cpu(cpu_type).get_id();
 
     if cpu_id > 0 && emu.config.test {
-        #[cfg(feature = "tracing")]
+        #[cfg(feature = "log")]
         {
             if !cpu_id > 0 {
-                tracing::error!("(9T)");
+                log::error!("(9T)");
             } else {
-                tracing::error!("(7T)");
+                log::error!("(7T)");
             }
 
-            tracing::error!(
+            log::error!(
                 " ${:08X} - ",
                 emu.get_cpu(cpu_type).get_pc().wrapping_sub(4)
             );
-            tracing::error!("(${:#06X}) ", instruction);
+            log::error!("(${:#06X}) ", instruction);
         }
     }
 
@@ -66,8 +67,8 @@ pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
         ThumbInstr::LongBlx => thumb_long_blx(emu, cpu_type),
 
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!(
+            #[cfg(feature = "log")]
+            log::error!(
                 "Unrecognized Thumb opcode ${:04X}",
                 emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF
             );
@@ -76,8 +77,8 @@ pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     }
 
     if cpu_id > 0 && emu.config.test {
-        #[cfg(feature = "tracing")]
-        tracing::error!("");
+        #[cfg(feature = "log")]
+        log::error!("");
     }
 }
 
@@ -200,8 +201,8 @@ pub fn thumb_mov_shift(emu: &mut Emulator, cpu_type: CpuType) {
             // }
         }
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Unrecognized opcode {opcode} in thumb_mov_shift");
+            #[cfg(feature = "log")]
+            log::error!("Unrecognized opcode {opcode} in thumb_mov_shift");
         }
     }
 
@@ -493,8 +494,8 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             emu.get_cpu_mut(cpu_type).mvn(destination, operand, true);
         }
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Invalid thumb alu op {opcode}");
+            #[cfg(feature = "log")]
+            log::error!("Invalid thumb alu op {opcode}");
         }
     }
 }
@@ -570,8 +571,8 @@ pub fn thumb_hi_reg_op(emu: &mut Emulator, cpu_type: CpuType) {
             emu.get_cpu_mut(cpu_type).jp(new_addr, true);
         }
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("High-reg Thumb opcode ${opcode:02X} not recognized");
+            #[cfg(feature = "log")]
+            log::error!("High-reg Thumb opcode ${opcode:02X} not recognized");
         }
     }
 }
@@ -755,9 +756,9 @@ pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
     if is_byte {
         address = address.wrapping_add(offset);
 
-        #[cfg(feature = "tracing")]
+        #[cfg(feature = "log")]
         if emu.get_cpu(cpu_type).get_id() > 0 {
-            tracing::trace!("LDRB {{{}}}, [{{{}}}, ${:02X}]", destination, base, offset);
+            log::trace!("LDRB {{{}}}, [{{{}}}, ${:02X}]", destination, base, offset);
         }
 
         emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
@@ -846,8 +847,8 @@ pub fn thumb_load_store_sign_halfword(emu: &mut Emulator, cpu_type: CpuType) {
         }
 
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Sign extended opcode {opcode} not recognized");
+            #[cfg(feature = "log")]
+            log::error!("Sign extended opcode {opcode} not recognized");
         }
     }
 }

@@ -69,13 +69,13 @@ impl Emulator {
             match read_firmware_image(&self.config.firmware_path) {
                 Ok(image) => self.spi.init(&image),
                 Err(_err) => {
-                    #[cfg(feature = "tracing")]
-                    tracing::error!("Failed to load firmware: {_err}");
+                    #[cfg(feature = "log")]
+                    log::error!("Failed to load firmware: {_err}");
                 }
             }
         }
-        #[cfg(feature = "tracing")]
-        tracing::error!("self.cart.rom bytes: {:08X}", self.cart.rom.len());
+        #[cfg(feature = "log")]
+        log::error!("self.cart.rom bytes: {:08X}", self.cart.rom.len());
         self.power_on();
         Ok(())
     }

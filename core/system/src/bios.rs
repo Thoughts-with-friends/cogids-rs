@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Connects the high-level BIOS ([`ds_bios::swi`]) to the CPU that executed
 //! `SWI`.
-use crate::cpu::arm_cpu::CpuType;
 use crate::emulator::Emulator;
 use ds_bios::swi::{self, SwiContext};
+use ds_cpu::arm_cpu::CpuType;
 
 /// The calling CPU and the bus it sees.
 struct Caller<'a> {

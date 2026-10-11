@@ -1,7 +1,7 @@
 //! Tauri commands used by the frontend (`gui/tauri/src/services/api/emulator.ts`).
 use crate::emu_thread::{EmuThread, Shared};
+use ds_common::{AudioOutput, Instance, Settings};
 use ds_emu::Emulator;
-use ds_frontend::{AudioOutput, Instance, Settings};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -63,7 +63,7 @@ impl AppState {
         if let Ok(text) = serde_json::to_string_pretty(config)
             && let Err(e) = std::fs::write(self.instance.config_path(), text)
         {
-            tracing::error!("Failed to write config: {e}");
+            log::error!("Failed to write config: {e}");
         }
     }
 
@@ -124,10 +124,10 @@ pub fn start_emulator(state: State<'_, AppState>, path: String) -> Result<(), St
     emu.config.save_dir = Some(state.instance.saves_dir());
     state.instance.import_legacy_save(&rom);
     emu.load_rom(&rom).map_err(|e| {
-        tracing::error!("Failed to load ROM {path}: {e:?}");
+        log::error!("Failed to load ROM {path}: {e:?}");
         format!("{e}")
     })?;
-    tracing::info!("Started {path}");
+    log::info!("Started {path}");
 
     let thread = EmuThread::start(emu, Arc::clone(&state.shared), state.audio.clone());
     *state.emu.lock().map_err(err)? = Some(thread);

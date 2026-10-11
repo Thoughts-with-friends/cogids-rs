@@ -105,7 +105,7 @@ cargo run -p lunaris_ds_egui --release
 
 - rust stable = "1.91"
 - Backend: ./core
-  - tracing = "0.1.44"
+  - log = "0.1.44"
   - snafu = "0.8.9"
 
 - Frontend: ./gui/tauri

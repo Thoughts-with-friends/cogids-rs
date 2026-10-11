@@ -14,16 +14,16 @@ impl Emulator {
                 if let Some(id) = Interrupt::from_usize(id) {
                     self.request_interrupt7(id);
                 } else {
-                    #[cfg(feature = "tracing")]
-                    tracing::warn!("Invalid Interrupt value: {id}");
+                    #[cfg(feature = "log")]
+                    log::warn!("Invalid Interrupt value: {id}");
                 }
             } else {
                 let id = (Interrupt::Timer0 as usize) + index - 4;
                 if let Some(id) = Interrupt::from_usize(id) {
                     self.request_interrupt9(id as Interrupt);
                 } else {
-                    #[cfg(feature = "tracing")]
-                    tracing::warn!("Invalid Interrupt value: {id}");
+                    #[cfg(feature = "log")]
+                    log::warn!("Invalid Interrupt value: {id}");
                 }
             }
         }

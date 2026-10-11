@@ -1,6 +1,7 @@
 #![allow(clippy::missing_const_for_fn)]
-use crate::cpu::arm_cpu::{CpuType, PsrMode, REG_LR, REG_PC, add_overflow, sub_overflow};
-use crate::cpu::coprocessor_15::Cp15Effect;
+use ds_cpu::arm_cpu::{CpuType, PsrMode, REG_LR, REG_PC, add_overflow, sub_overflow};
+use ds_cpu::coprocessor_15::Cp15Effect;
+
 use crate::emulator::Emulator;
 
 /// Loads or stores a value using a shifted register addressing mode.
@@ -102,8 +103,8 @@ pub fn load_store_shift_reg(emu: &mut Emulator, cpu_type: CpuType, instruction: 
             }
         }
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("Invalid load/store shift: {shift_type}");
+            #[cfg(feature = "log")]
+            log::warn!("Invalid load/store shift: {shift_type}");
             return 0;
         }
     }
@@ -114,8 +115,8 @@ pub fn load_store_shift_reg(emu: &mut Emulator, cpu_type: CpuType, instruction: 
 /// Undefined instruction handler
 pub fn undefined(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let _ = instruction;
-    #[cfg(feature = "tracing")]
-    tracing::warn!("Unrecognized ARM opcode {instruction:08X}");
+    #[cfg(feature = "log")]
+    log::warn!("Unrecognized ARM opcode {instruction:08X}");
 
     emu.get_cpu_mut(cpu_type).handle_undefined();
 }
@@ -188,8 +189,8 @@ pub fn data_processing(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) 
                 }
             }
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::error!(
+                #[cfg(feature = "log")]
+                log::error!(
                     "Invalid data processing shift type: {shift_type} (instr={instruction:#010X})",
                 );
                 value
@@ -300,8 +301,8 @@ pub fn data_processing(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) 
             .mvn(destination, second_operand, set_condition_codes),
 
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!(
+            #[cfg(feature = "log")]
+            log::error!(
                 "Unrecognized data processing opcode: {:#X} (instr={:#010X})",
                 opcode,
                 instruction
@@ -314,8 +315,8 @@ pub fn data_processing(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) 
 pub fn count_leading_zeros(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     // CLZ is ARMv5TE only: undefined on the ARM7 (id 1)
     if emu.get_cpu(cpu_type).get_id() != 0 {
-        #[cfg(feature = "tracing")]
-        tracing::error!("CLZ executed while ID flag set (instr={instruction:#010X})");
+        #[cfg(feature = "log")]
+        log::error!("CLZ executed while ID flag set (instr={instruction:#010X})");
 
         emu.get_cpu_mut(cpu_type).handle_undefined();
         return;
@@ -350,8 +351,8 @@ pub fn count_leading_zeros(emu: &mut Emulator, cpu_type: CpuType, instruction: u
 pub fn saturated_op(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     // QADD/QSUB/QDADD/QDSUB are ARMv5TE only: undefined on the ARM7 (id 1)
     if emu.get_cpu(cpu_type).get_id() != 0 {
-        #[cfg(feature = "tracing")]
-        tracing::error!("Saturated op executed while ID flag set (instr={instruction:#010X})");
+        #[cfg(feature = "log")]
+        log::error!("Saturated op executed while ID flag set (instr={instruction:#010X})");
 
         emu.get_cpu_mut(cpu_type).handle_undefined();
         return;
@@ -406,8 +407,8 @@ pub fn saturated_op(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
 
         // QDADD / QDSUB intentionally unimplemented (same as C++)
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Unrecognized saturated opcode {opcode} (instr={instruction:#010X})");
+            #[cfg(feature = "log")]
+            log::error!("Unrecognized saturated opcode {opcode} (instr={instruction:#010X})");
         }
     }
 }
@@ -591,8 +592,8 @@ pub fn signed_halfword_multiply(emu: &mut Emulator, cpu_type: CpuType, instructi
         }
 
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Unrecognized signed halfword multiply opcode {opcode:X}");
+            #[cfg(feature = "log")]
+            log::error!("Unrecognized signed halfword multiply opcode {opcode:X}");
             return;
         }
     }
@@ -1104,8 +1105,8 @@ pub fn store_doubleword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32)
                 .set_register(base_reg as i32, address.wrapping_add(4));
         }
     } else {
-        #[cfg(feature = "tracing")]
-        tracing::error!("store post_indexing not supported");
+        #[cfg(feature = "log")]
+        log::error!("store post_indexing not supported");
     }
 }
 
@@ -1357,8 +1358,8 @@ pub fn coprocessor_reg_transfer(emu: &mut Emulator, cpu_type: CpuType, instructi
             }
             _ => {
                 // mirrors printf + exit(1)
-                #[cfg(feature = "tracing")]
-                tracing::error!("Coprocessor {coprocessor_id} not recognized");
+                #[cfg(feature = "log")]
+                log::error!("Coprocessor {coprocessor_id} not recognized");
             }
         }
     } else {
@@ -1382,8 +1383,8 @@ pub fn coprocessor_reg_transfer(emu: &mut Emulator, cpu_type: CpuType, instructi
             }
             _ => {
                 // mirrors printf + exit(1)
-                #[cfg(feature = "tracing")]
-                tracing::error!("Coprocessor {coprocessor_id} not recognized");
+                #[cfg(feature = "log")]
+                log::error!("Coprocessor {coprocessor_id} not recognized");
             }
         }
     }

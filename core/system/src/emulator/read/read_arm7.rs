@@ -47,8 +47,8 @@ impl Emulator {
             0x04000214 => self.int7_reg.irq_flags,
             0x04100000 => {
                 let (word, irq) = self.ipc.receive(Side::Arm7);
-                #[cfg(feature = "tracing")]
-                tracing::debug!(target: "ipc", "Arm7 recv {word:08X}");
+                #[cfg(feature = "log")]
+                log::debug!(target: "ipc", "Arm7 recv {word:08X}");
                 self.raise_ipc(irq);
                 word
             }
@@ -68,8 +68,8 @@ impl Emulator {
             GBA_ROM_START.. => 0xFFFF_FFFF,
 
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!("ARM7: Unrecognized word read from ${address:08X}");
+                #[cfg(feature = "log")]
+                log::warn!("ARM7: Unrecognized word read from ${address:08X}");
                 0
             }
         }
@@ -172,8 +172,8 @@ impl Emulator {
             0x04000400..0x04000500 => 0,
 
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!("ARM7: Unrecognized halfword read from ${address:08X}");
+                #[cfg(feature = "log")]
+                log::warn!("ARM7: Unrecognized halfword read from ${address:08X}");
                 0
             }
         }
@@ -232,8 +232,8 @@ impl Emulator {
 
             // Default case
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!("ARM7: Unrecognized byte read from ${address:08X}");
+                #[cfg(feature = "log")]
+                log::warn!("ARM7: Unrecognized byte read from ${address:08X}");
                 0
             }
         }

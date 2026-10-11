@@ -10,18 +10,18 @@ impl Emulator {
         use std::fs::File;
         use std::io::Read as _;
 
-        // #[cfg(feature = "tracing")]
-        // tracing::info!("Loading ROM {}", rom_file.display());
+        // #[cfg(feature = "log")]
+        // log::info!("Loading ROM {}", rom_file.display());
 
         // Persist the previous game's save before it is replaced.
         if let Err(_err) = self.cart.flush_save() {
-            #[cfg(feature = "tracing")]
-            tracing::error!("{_err}");
+            #[cfg(feature = "log")]
+            log::error!("{_err}");
         }
 
         let mut file = File::open(rom_file).map_err(|source| {
-            // #[cfg(feature = "tracing")]
-            // tracing::error!("Failed to load {}", rom_file.display());
+            // #[cfg(feature = "log")]
+            // log::error!("Failed to load {}", rom_file.display());
 
             CartridgeError::OpenRom {
                 path: rom_file.to_path_buf(),
@@ -38,13 +38,13 @@ impl Emulator {
         let rom_size = metadata.len();
         self.cart.rom_size = rom_size;
 
-        // #[cfg(feature = "tracing")]
-        // tracing::info!("Allocating {} bytes for ROM", rom_size);
+        // #[cfg(feature = "log")]
+        // log::info!("Allocating {} bytes for ROM", rom_size);
 
         self.cart.rom.resize(rom_size as usize, 0);
 
-        // #[cfg(feature = "tracing")]
-        // tracing::info!("Loading ROM into memory");
+        // #[cfg(feature = "log")]
+        // log::info!("Loading ROM into memory");
 
         file.read_exact(&mut self.cart.rom)
             .map_err(|source| CartridgeError::ReadRom {
@@ -82,8 +82,8 @@ impl Emulator {
             let sig1 = read_u32(&self.cart.rom, arm_rom_base + 0x10);
 
             if sig0 == 0xE7FFDEFF && sig1 != 0xE7FFDEFF {
-                // #[cfg(feature = "tracing")]
-                // tracing::info!("Encrypting secure area");
+                // #[cfg(feature = "log")]
+                // log::info!("Encrypting secure area");
 
                 self.cart.rom[arm_rom_base..arm_rom_base + 8].copy_from_slice(b"encryObj");
 
@@ -183,8 +183,8 @@ impl Emulator {
         }
         self.cart.backup.set_path(Some(save_path));
 
-        #[cfg(feature = "tracing")]
-        tracing::info!(
+        #[cfg(feature = "log")]
+        log::info!(
             "Save memory: game code {game_code:08X}, type {mem_type} ({:?}, {} bytes), file {}",
             self.cart.backup.chip(),
             self.cart.backup.size(),
@@ -224,8 +224,8 @@ impl Emulator {
         if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
             self.cart.key1_buffer[..0x1048].copy_from_slice(bios);
         } else {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("arm7_bios need: 0x30..0x30 + 0x1048");
+            #[cfg(feature = "log")]
+            log::warn!("arm7_bios need: 0x30..0x30 + 0x1048");
         }
 
         self.cart.keycode[0] = idcode;
@@ -246,8 +246,8 @@ impl Emulator {
 
     /// Executes cartridge transfer logic for a given number of cycles.
     pub fn cartridge_run(&mut self, cycles: i32) {
-        // #[cfg(feature = "tracing")]
-        // tracing::trace!(%self.cart.romctrl.block_busy,%self.cart.romctrl.word_ready);
+        // #[cfg(feature = "log")]
+        // log::trace!(%self.cart.romctrl.block_busy,%self.cart.romctrl.word_ready);
 
         if self.cart.romctrl.block_busy && !self.cart.romctrl.word_ready {
             self.cart.cycles_left -= cycles;
@@ -300,8 +300,8 @@ impl Emulator {
                             self.cart.direct_read_word(self.cart.rom_data_index as u32);
                     }
 
-                    // #[cfg(feature = "tracing")]
-                    // tracing::debug!(
+                    // #[cfg(feature = "log")]
+                    // log::debug!(
                     //     "ROM_READ [ROM_CMD] Addr: 0x{:08X} Value: 0x{:08X}",
                     //     self.cart.rom_data_index,
                     //     self.cart.data_output
@@ -312,8 +312,8 @@ impl Emulator {
                 }
 
                 _ => {
-                    #[cfg(feature = "tracing")]
-                    tracing::error!("Unknown cart command: {:02X?}", self.cart.command_buffer);
+                    #[cfg(feature = "log")]
+                    log::error!("Unknown cart command: {:02X?}", self.cart.command_buffer);
                 }
             }
 

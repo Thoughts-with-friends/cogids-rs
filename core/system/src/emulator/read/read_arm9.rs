@@ -104,8 +104,8 @@ impl Emulator {
             0x04004000 | 0x04004008 => 0,
             0x04100000 => {
                 let (word, irq) = self.ipc.receive(Side::Arm9);
-                #[cfg(feature = "tracing")]
-                tracing::debug!(target: "ipc", "Arm9 recv {word:08X}");
+                #[cfg(feature = "log")]
+                log::debug!(target: "ipc", "Arm9 recv {word:08X}");
                 self.raise_ipc(irq);
                 word
             }
@@ -129,8 +129,8 @@ impl Emulator {
                 if address >= GBA_ROM_START {
                     0xFFFF_FFFF
                 } else {
-                    #[cfg(feature = "tracing")]
-                    tracing::warn!("ARM9: Unrecognized word read from ${address:08X}");
+                    #[cfg(feature = "log")]
+                    log::warn!("ARM9: Unrecognized word read from ${address:08X}");
                     0
                 }
             }
@@ -246,8 +246,8 @@ impl Emulator {
                 if address >= GBA_ROM_START {
                     0xFFFF
                 } else {
-                    #[cfg(feature = "tracing")]
-                    tracing::warn!("(9) Unrecognized halfword read from ${:08X}", address);
+                    #[cfg(feature = "log")]
+                    log::warn!("(9) Unrecognized halfword read from ${:08X}", address);
                     0
                 }
             }
@@ -313,8 +313,8 @@ impl Emulator {
             GBA_ROM_START.. => 0xFF,                                   // GBA ROM
             _ => {
                 // Palette memory
-                #[cfg(feature = "tracing")]
-                tracing::warn!("(9) Unrecognized byte read from ${:08X}", address);
+                #[cfg(feature = "log")]
+                log::warn!("(9) Unrecognized byte read from ${:08X}", address);
                 0
             }
         }

@@ -1,6 +1,6 @@
 [package]
 name = "ds_interrupt"
-description = "Definitions shared by every DS component: memory map and interrupt sources"
+description = "Interrupt controller implementation for the Nintendo DS"
 authors.workspace = true
 categories.workspace = true
 edition.workspace = true

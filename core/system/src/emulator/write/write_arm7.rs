@@ -78,8 +78,8 @@ impl Emulator {
                 }
             }
             0x04000188 => {
-                #[cfg(feature = "tracing")]
-                tracing::debug!(target: "ipc", "Arm7 send {word:08X}");
+                #[cfg(feature = "log")]
+                log::debug!(target: "ipc", "Arm7 send {word:08X}");
                 let irq = self.ipc.send(Side::Arm7, word);
                 self.raise_ipc(irq);
             }
@@ -108,8 +108,8 @@ impl Emulator {
 
             // Default
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!(
+                #[cfg(feature = "log")]
+                log::warn!(
                     "(7) Unrecognized word write {:08X} -> {:08X}",
                     word,
                     address
@@ -205,8 +205,8 @@ impl Emulator {
             0x040001A0 => self.cart.set_auxspicnt(halfword),
 
             0x040001A2 => {
-                // #[cfg(feature = "tracing")]
-                // tracing::info!("AUXSPIDATA: {:04X}", halfword);
+                // #[cfg(feature = "log")]
+                // log::info!("AUXSPIDATA: {:04X}", halfword);
                 self.cart.set_auxspidata((halfword & 0xFF) as u8);
             }
 
@@ -248,8 +248,8 @@ impl Emulator {
 
             // Default
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!(
+                #[cfg(feature = "log")]
+                log::warn!(
                     "(7) Unrecognized halfword write {:04X} -> {:08X}",
                     halfword,
                     address
@@ -315,8 +315,8 @@ impl Emulator {
                         self.arm7.halt();
                     }
                     _ => {
-                        #[cfg(feature = "tracing")]
-                        tracing::error!("Unrecognized HALTCNT value {:02X} for ARM7", byte);
+                        #[cfg(feature = "log")]
+                        log::error!("Unrecognized HALTCNT value {:02X} for ARM7", byte);
                         // original code exits, but emulator should not crash
                     }
                 }
@@ -332,8 +332,8 @@ impl Emulator {
 
             // Default
             _ => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!(
+                #[cfg(feature = "log")]
+                log::warn!(
                     "(7) Unrecognized byte write {:02X} -> {:08X}",
                     byte,
                     address

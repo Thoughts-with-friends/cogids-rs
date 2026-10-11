@@ -189,7 +189,7 @@ impl Cp15 {
     }
 
     /// MRC: reads CP15 register `id` (melonDS `ARMv5::CP15Read`).
-    pub fn read(&self, id: u32) -> u32 {
+    pub const fn read(&self, id: u32) -> u32 {
         match id {
             0x000 | 0x003..=0x007 => 0x4105_9461, // main ID
             0x001 => 0x0F0D_2112,                 // cache type

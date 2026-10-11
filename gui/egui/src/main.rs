@@ -6,8 +6,8 @@ mod input;
 
 use self::config::{Config, ScreenLayout, load_config, save_config, set_config_path};
 use self::input::Touch;
+use ds_common::{AudioOutput, DS_FPS, Gamepads, Instance, Settings};
 use ds_emu::Emulator;
-use ds_frontend::{AudioOutput, DS_FPS, Gamepads, Instance, Settings};
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use eframe::egui;
 use std::{path::PathBuf, time::Instant};
@@ -239,7 +239,7 @@ impl App {
     // ===== emulator control =====
     fn run_emulator(&mut self) {
         let Some(path) = &self.config.selected_rom else {
-            tracing::error!("No ROM selected");
+            log::error!("No ROM selected");
             return;
         };
 
@@ -262,7 +262,7 @@ impl App {
                 save_config(&self.config);
             }
             Err(e) => {
-                tracing::error!("Failed to load ROM: {e:?}");
+                log::error!("Failed to load ROM: {e:?}");
                 self.is_running = false;
             }
         }
@@ -280,7 +280,7 @@ impl App {
     /// reports failures).
     fn flush_save(emu: &mut Emulator) {
         if let Err(e) = emu.flush_save() {
-            tracing::error!("Failed to write save file: {e}");
+            log::error!("Failed to write save file: {e}");
         }
     }
 
@@ -427,18 +427,12 @@ fn main() -> eframe::Result<()> {
     set_config_path(instance.config_path());
     let settings = Settings::load(&instance.settings_path());
 
-    match tracing_rotation::init(instance.logs_dir(), "lunaris.log") {
-        Ok(()) => {
-            if let Err(e) = tracing_rotation::change_level(&settings.log_level) {
-                eprintln!("Invalid log level {:?}: {e}", settings.log_level);
-            }
-        }
-        Err(e) => eprintln!("Failed to start logging: {e}"),
+    if let Err(err) = ds_common::log::setup_logging_in(&instance.logs_dir()) {
+        log::error!("Failed to start logging: {err}");
     }
-    tracing::info!("Started (logs, saves and settings in ./instances/instance1)");
+    log::info!("Started (logs, saves and settings in ./instances/instance1)");
 
     let options = eframe::NativeOptions::default();
-
     eframe::run_native(
         "NDS Emulator",
         options,

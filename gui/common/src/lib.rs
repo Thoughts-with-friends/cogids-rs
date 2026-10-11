@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod gamepad;
 pub mod instance;
+pub mod log;
 
 pub use audio::AudioOutput;
 pub use gamepad::Gamepads;

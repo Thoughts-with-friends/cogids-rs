@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! armtable.cpp
 //!
+use ds_cpu::arm_cpu::CpuType;
+
 use super::interpreter::arm_instruction::*;
-use crate::cpu::arm_cpu::CpuType;
 use crate::emulator::Emulator;
 
 /// Function pointer type for ARM/Thumb instruction interpreters

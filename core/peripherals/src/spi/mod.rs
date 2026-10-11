@@ -190,8 +190,8 @@ impl SPIBus {
             _ => 0,
         };
 
-        #[cfg(feature = "tracing")]
-        tracing::trace!(
+        #[cfg(feature = "log")]
+        log::trace!(
             target: "spi",
             "dev{} hold={hold} in={data:02X} out={:02X}",
             self.spicnt.device,

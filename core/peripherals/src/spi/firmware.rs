@@ -103,9 +103,9 @@ impl Firmware {
         self.write_u16(0x2A, header_crc);
 
         // Debug output of CRC verification results
-        #[cfg(feature = "tracing")]
+        #[cfg(feature = "log")]
         {
-            tracing::error!(
+            log::error!(
                 "\nFW: USER0 CRC16 = {}",
                 if self.verify_crc(0xFFFF, 0x3FE00, 0x70, 0x3FE72) {
                     "GOOD"
@@ -113,7 +113,7 @@ impl Firmware {
                     "BAD"
                 },
             );
-            tracing::error!(
+            log::error!(
                 "FW: USER1 CRC16 = {}",
                 if self.verify_crc(0xFFFF, 0x3FF00, 0x70, 0x3FF72) {
                     "GOOD"

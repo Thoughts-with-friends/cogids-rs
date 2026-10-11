@@ -17,21 +17,21 @@ mod sound;
 mod timers;
 mod write;
 
-use crate::cpu::arm_cpu::ArmCpu;
-use crate::cpu::coprocessor_15::Cp15;
-use ds_gpu::{Gpu, display::regs::SchedulerEvent};
-use ds_mem_addr::*;
-use ds_spu::SPU;
-
-use crate::cpu::arm_cpu::CpuType;
 use crate::dma::NDSDma;
+
 use ds_cartridge::NDSCart;
+use ds_cpu::arm_cpu::{ArmCpu, CpuType};
+use ds_cpu::coprocessor_15::Cp15;
+use ds_gpu::{Gpu, display::regs::SchedulerEvent};
 use ds_interrupt::InterruptRegs;
+use ds_mem_addr::*;
 use ds_peripherals::ipc::Ipc;
 use ds_peripherals::rtc::RealTimeClock;
 use ds_peripherals::spi::SPIBus;
 use ds_peripherals::timers::NDSTiming;
 use ds_peripherals::wifi::WiFi;
+use ds_spu::SPU;
+
 use emu_config::{BiosMem, Config, ExtKeyInReg, KeyInputReg, PowCnt2Reg};
 
 /// Core Nintendo DS emulator system
@@ -143,8 +143,8 @@ pub struct Emulator {
 impl Drop for Emulator {
     fn drop(&mut self) {
         if let Err(_err) = self.cart.flush_save() {
-            #[cfg(feature = "tracing")]
-            tracing::error!("{_err}");
+            #[cfg(feature = "log")]
+            log::error!("{_err}");
         }
     }
 }
@@ -444,8 +444,8 @@ impl Emulator {
         // msh
         for (i, info) in boot_info.iter_mut().enumerate() {
             *info = self.arm9_read_word((0x27FFE20 + i * 4) as u32);
-            #[cfg(feature = "tracing")]
-            tracing::trace!("Read boot header word {i}: 0x{info:08X}");
+            #[cfg(feature = "log")]
+            log::trace!("Read boot header word {i}: 0x{info:08X}");
         }
 
         // [BOOT INFO] Examples:
@@ -458,7 +458,9 @@ impl Emulator {
         // boot_info[5] = 0x2380000: ARM7 Entry Point
         // boot_info[6] = 0x2380000: RAM offset for ARM7 code
         // boot_info[7] = 0x002642C: ARM7 code size
-        tracing::trace!("boot_info={boot_info:#08X?}");
+
+        #[cfg(feature = "log")]
+        log::trace!("boot_info={boot_info:#08X?}");
 
         // Initialize CPUs and regs to after-boot values
         self.arm9.direct_boot(boot_info[1]);
@@ -500,15 +502,15 @@ impl Emulator {
             // for (i, _) in (0..boot_info[3]).enumerate().step_by(4) {
             // for i in (0..boot_info[3]).step_by(4) {
             let rom_data: u32 = self.cart.direct_read_word(boot_info[0] + i);
-            #[cfg(feature = "tracing")]
-            tracing::trace!(
+            #[cfg(feature = "log")]
+            log::trace!(
                 "ROM_READ [ARM9_BOOT] Addr: 0x{:08X} Value: 0x{rom_data:08X}",
                 boot_info[0] + i
             );
 
             self.arm9_write_word(boot_info[2] + i, rom_data);
-            #[cfg(feature = "tracing")]
-            tracing::trace!(
+            #[cfg(feature = "log")]
+            log::trace!(
                 "ROM_WRITE [ARM9_BOOT] Addr: 0x{:08X} Word: 0x{rom_data:08X}",
                 boot_info[2] + i
             );
@@ -521,8 +523,8 @@ impl Emulator {
         while i < boot_info[7] {
             let rom_data: u32 = self.cart.direct_read_word(boot_info[4] + i);
 
-            #[cfg(feature = "tracing")]
-            tracing::trace!(
+            #[cfg(feature = "log")]
+            log::trace!(
                 "ROM_READ [ARM7_BOOT] Addr: 0x{:08X} Word: 0x{rom_data:08X}",
                 boot_info[4] + i
             );
@@ -556,17 +558,17 @@ impl Emulator {
 
     /// Run emulator in debug mode.
     pub fn debug(&mut self) {
-        #[cfg(feature = "tracing")]
+        #[cfg(feature = "log")]
         {
             //arm7.set_disassembly(!arm7.can_disassemble());
             //arm9.print_info();
             self.config.test = !self.config.test;
-            tracing::trace!(
+            log::trace!(
                 "IE9: {:08X} IF9: {:08X}",
                 self.int9_reg.irq_enable,
                 self.int9_reg.irq_flags
             );
-            tracing::trace!(
+            log::trace!(
                 "IE7: {:08X} IF7: {:08X}",
                 self.int7_reg.irq_enable,
                 self.int7_reg.irq_flags
@@ -700,8 +702,8 @@ impl Emulator {
 
     /// Add a DMA event.
     pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
-        #[cfg(feature = "tracing")]
-        tracing::trace!("call add_dma_event");
+        #[cfg(feature = "log")]
+        log::trace!("call add_dma_event");
 
         self.dma_event.id = event_id;
         self.dma_event.processing = true;
@@ -753,8 +755,8 @@ impl Emulator {
         if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
             buffer[..0x1048].copy_from_slice(bios);
         } else {
-            #[cfg(feature = "tracing")]
-            tracing::warn!("arm7_bios need: 0x30..0x30 + 0x1048");
+            #[cfg(feature = "log")]
+            log::warn!("arm7_bios need: 0x30..0x30 + 0x1048");
         }
     }
 

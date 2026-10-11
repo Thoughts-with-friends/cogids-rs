@@ -71,8 +71,8 @@ impl Emulator {
     }
 
     fn write_command(&mut self, cmd: GxCommand) {
-        #[cfg(feature = "tracing")]
-        tracing::trace!(?cmd.command, ?cmd.param);
+        #[cfg(feature = "log")]
+        log::trace!("command={:?}, param={:?}", cmd.command, cmd.param);
 
         if self.gpu.engine_3d.gxfifo.is_empty() && self.gpu.engine_3d.gxpipe.len() < 4 {
             self.gpu.engine_3d.gxpipe.push_back(cmd);
@@ -154,8 +154,8 @@ impl Emulator {
         match self.gpu_event.id {
             0 => {
                 // Start HBLANK
-                #[cfg(feature = "tracing")]
-                tracing::trace!("Start HBLANK");
+                #[cfg(feature = "log")]
+                log::trace!("Start HBLANK");
 
                 // If the current line is within the visible screen
                 // and the frameskip condition is met, the GPU draws this line.
@@ -178,15 +178,15 @@ impl Emulator {
                     self.hblank_dma_request();
                 }
 
-                #[cfg(feature = "tracing")]
-                tracing::trace!("Add_gpu_event: 1");
+                #[cfg(feature = "log")]
+                log::trace!("Add_gpu_event: 1");
 
                 self.reschedule_gpu_event(1, 99 * 6);
             }
             1 => {
                 // End HBLANK
-                #[cfg(feature = "tracing")]
-                tracing::trace!("End HBLANK");
+                #[cfg(feature = "log")]
+                log::trace!("End HBLANK");
 
                 self.gpu.display_status_arm7.is_hblank = false;
                 self.gpu.display_status_arm9.is_hblank = false;
@@ -209,8 +209,8 @@ impl Emulator {
 
                 self.gpu.vertical_count += 1;
                 // VBLANK Counter
-                #[cfg(feature = "tracing")]
-                tracing::trace!("VBLANK Count: {}/{}", self.gpu.vertical_count, SCANLINES);
+                #[cfg(feature = "log")]
+                log::trace!("VBLANK Count: {}/{}", self.gpu.vertical_count, SCANLINES);
 
                 // 3D rendering starts at line 215 (melonDS), after the
                 // VBlank texture uploads, and is shown in the next frame.
@@ -222,8 +222,8 @@ impl Emulator {
 
                 if self.gpu.vertical_count as usize == SCANLINES {
                     // VBLANK
-                    #[cfg(feature = "tracing")]
-                    tracing::trace!("Start VBLANK");
+                    #[cfg(feature = "log")]
+                    log::trace!("Start VBLANK");
 
                     self.gpu.engine_3d.end_of_frame();
                     self.gpu.frame_complete = true;
@@ -253,8 +253,8 @@ impl Emulator {
                 self.reschedule_gpu_event(0, 256 * 6);
             }
             unknown_id => {
-                #[cfg(feature = "tracing")]
-                tracing::error!("Unrecognized event.id: {unknown_id}");
+                #[cfg(feature = "log")]
+                log::error!("Unrecognized event.id: {unknown_id}");
             }
         }
     }

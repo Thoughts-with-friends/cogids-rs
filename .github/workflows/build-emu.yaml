@@ -20,14 +20,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  tauri:
     strategy:
       fail-fast: false
       matrix:
         platform: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Setup environment
@@ -36,8 +36,37 @@ jobs:
           platform: ${{ matrix.platform }}
           build_profile: ${{ env.BUILD_PROFILE }}
 
-      # - name: Build GUI
-      #   run: npm run build
+      - name: Build GUI
+        run: npm run build
+
+      - name: Move exe -> ./build
+        uses: ./.github/actions/setup-release
+        with:
+          app_name: ${{ env.APP_NAME }}
+          build_profile: ${{ env.BUILD_PROFILE }}
+
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.APP_NAME }}-${{ runner.os }}
+          path: ./build/
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Setup environment
+        uses: ./.github/actions/setup-deps
+        with:
+          platform: ${{ matrix.platform }}
+          build_profile: ${{ env.BUILD_PROFILE }}
+
       - name: build
         run: cargo build -p lunaris_ds_egui --release
 
@@ -48,10 +77,9 @@ jobs:
           build_profile: ${{ env.BUILD_PROFILE }}
 
       - name: Upload a Build Artifact
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.APP_NAME }}-${{ runner.os }}
           # to include .keep file
           include-hidden-files: true
-          path: |
-            ./build/
+          path: ./build/

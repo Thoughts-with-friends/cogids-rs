@@ -67,8 +67,8 @@ pub fn arm9(ctx: &mut impl SwiContext) -> i32 {
         0x0B => cpu_set(ctx, true),
         0x0E => get_crc16(ctx),
         _opcode => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Unrecognized HLE SWI9 ${_opcode:02X}");
+            #[cfg(feature = "log")]
+            log::error!("Unrecognized HLE SWI9 ${_opcode:02X}");
         }
     }
     1
@@ -103,8 +103,8 @@ pub fn arm7(ctx: &mut impl SwiContext) -> i32 {
             ctx.set_reg(0, value.unwrap_or(0));
         }
         _ => {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Unrecognized HLE SWI7 ${opcode:02X}");
+            #[cfg(feature = "log")]
+            log::error!("Unrecognized HLE SWI7 ${opcode:02X}");
         }
     }
     1
