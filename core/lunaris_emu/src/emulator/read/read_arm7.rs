@@ -13,6 +13,9 @@ impl Emulator {
     /// # Panics
     #[expect(clippy::unwrap_used)]
     pub fn arm7_read_word(&mut self, address: u32) -> u32 {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.read32(address);
+        }
         match address {
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
@@ -76,6 +79,9 @@ impl Emulator {
     /// # Panics
     #[expect(clippy::unwrap_used, clippy::match_same_arms)]
     pub fn arm7_read_halfword(&self, address: u32) -> u16 {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.read16(address);
+        }
         match address {
             // BIOS (0x00000000..0x00003FFF)
             ..0x4000 => {
@@ -145,9 +151,6 @@ impl Emulator {
             0x04000208 => self.int7_reg.ime as u16,
             0x04000300 => self.postflg7.into(),
             0x04000304 => self.pow_cnt2.get_value(),
-            0x04000500 => self.spu.get_soundcnt(),
-            0x04000504 => self.spu.get_soundbias(),
-            0x04000508 => self.spu.get_sndcap0() as u16 | ((self.spu.get_sndcap1() as u16) << 8),
 
             0x04001080 => 0,
             0x04004700 => 0,
@@ -177,6 +180,9 @@ impl Emulator {
     }
 
     pub fn arm7_read_byte(&self, address: u32) -> u8 {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.read8(address);
+        }
         #[allow(non_contiguous_range_endpoints)]
         match address {
             0x04000180 => self.ipc.read_sync(Side::Arm7) as u8,
@@ -209,9 +215,6 @@ impl Emulator {
             0x04000218 | 0x0400021C => 0, // DSi IE2 | DSi IF2
             0x04000241 => self.wram_cnt & 0x3,
             0x04000300 => self.postflg7,
-            0x04000501 => (self.spu.get_soundcnt() >> 8) as u8,
-            0x04000508 => self.spu.get_sndcap0(),
-            0x04000509 => self.spu.get_sndcap1(),
 
             // BIOS (0x00000000..0x00003FFF)
             ..0x4000 => {
@@ -224,9 +227,6 @@ impl Emulator {
 
                 self.arm7_bios[address as usize]
             }
-
-            // SPU channel region
-            0x04000400..0x04000500 => self.spu.read_channel_byte(address),
 
             0x06000000..0x07000000 => self.gpu.read_arm7_u8(address),
 

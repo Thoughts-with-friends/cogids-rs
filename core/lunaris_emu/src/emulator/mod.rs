@@ -13,6 +13,7 @@ mod interrupt;
 mod load;
 mod read;
 mod runner;
+mod sound;
 mod timers;
 mod write;
 
@@ -68,6 +69,9 @@ pub struct Emulator {
     pub next_event_time: u64,
     pub gpu_event: SchedulerEvent,
     pub dma_event: SchedulerEvent,
+
+    /// ARM7 cycles not yet turned into an SPU output sample.
+    pub spu_cycles: u32,
 
     /// Raw 2D engine registers (A, B) as last written by the ARM9; see
     /// [`gpu::io_2d`].
@@ -178,6 +182,7 @@ impl Emulator {
             gpu_event: Default::default(),
             dma_event: Default::default(),
             io_2d: [[0; gpu::io_2d::IO_2D_SIZE]; 2],
+            spu_cycles: 0,
             ipc: Default::default(),
             aux_spi_cnt: Default::default(),
             int7_reg: Default::default(),

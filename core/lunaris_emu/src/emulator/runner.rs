@@ -24,6 +24,7 @@ impl Emulator {
             while self.arm7.get_timestamp() < self.system_timestamp {
                 self.execute(CpuType::Arm7);
                 self.run_timers7(self.arm7.cycles_ran() as i32);
+                self.run_spu(self.arm7.cycles_ran() as u32);
             }
 
             if self.system_timestamp >= self.gpu_event.activation_time {

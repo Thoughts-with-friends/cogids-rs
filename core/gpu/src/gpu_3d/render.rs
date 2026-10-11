@@ -198,7 +198,15 @@ impl Gpu3D {
         reg |= (self.gxfifo.len() << 16) as u32;
         reg |= ((self.gxfifo.len() < 128) as u32) << 25;
         reg |= ((self.gxfifo.is_empty()) as u32) << 26;
-        reg |= (self.gxstat.geo_busy as u32) << 27;
+        // Busy while anything is queued, a command is still executing or a
+        // SWAP_BUFFERS waits for VBlank. Computed live: the cached flag was
+        // only refreshed when a command executed, so it could stay set and
+        // leave games polling GXSTAT forever.
+        let busy = !self.gxfifo.is_empty()
+            || !self.gxpipe.is_empty()
+            || self.swap_buffers
+            || self.cycles > 0;
+        reg |= u32::from(busy) << 27;
         reg |= (self.gxstat.gxfifo_irq_stat as u32) << 30;
 
         reg

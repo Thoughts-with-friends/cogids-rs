@@ -23,6 +23,7 @@ impl Emulator {
                 #[cfg(feature = "tracing")]
                 tracing::trace!(target: "gx", "cmd {cmd_index:02X} {:08X}", self.gpu.engine_3d.cmd_params[0]);
                 self.gpu.engine_3d.cycles += CMD_CYCLE_AMOUNTS[cmd_index] as i64;
+                let polygons_before = self.gpu.engine_3d.consecutive_polygons;
 
                 // Update GEO_BUSY flag:
                 self.gpu.engine_3d.gxstat.geo_busy =
@@ -585,7 +586,36 @@ impl Emulator {
                     }
                 }
                 self.gpu.engine_3d.cmd_param_count = 0;
+                self.gpu.engine_3d.cycles +=
+                    self.geometry_pipeline_cycles(cmd_index, polygons_before);
             }
+        }
+    }
+
+    /// Extra geometry engine time not covered by the per-command table:
+    /// the vertex, normal (lighting) and polygon setup pipelines
+    /// (melonDS `GPU3D::SubmitVertex`/`SubmitPolygon`/`CalculateLighting`).
+    ///
+    /// Without it the FIFO drained several times faster than on hardware.
+    /// The SDK streams display lists by DMA from "FIFO less than half full"
+    /// interrupts and expects the last chunk's DMA interrupt to arrive while
+    /// the FIFO is still above half; draining too fast kept the GXFIFO
+    /// interrupt asserted and starved the DMA interrupt (HeartGold intro).
+    fn geometry_pipeline_cycles(&self, cmd: usize, polygons_before: i32) -> i64 {
+        let e = &self.gpu.engine_3d;
+        match cmd {
+            // Vertex commands: vertex pipeline.
+            0x23..=0x28 => {
+                let mut cycles = 3 + 7;
+                if e.consecutive_polygons != polygons_before {
+                    // Polygon setup: quads take longer than triangles.
+                    cycles += if e.polygon_type & 1 != 0 { 35 } else { 26 };
+                }
+                cycles
+            }
+            // NORMAL: one cycle per enabled light (at least one) + pipeline.
+            0x21 => i64::from(e.polygon_attr.light_enable.count_ones().max(1)) + 7,
+            _ => 0,
         }
     }
 }

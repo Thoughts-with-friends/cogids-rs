@@ -156,7 +156,7 @@ impl Default for Dma {
 
 /// DMA Controller
 /// Manages up to 8 DMA channels (4 ARM9, 4 ARM7) for fast memory transfers
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct NDSDma {
     /// DMA channels (0-7: 0-3 are ARM9, 4-7 are ARM7)
     pub dmas: [Dma; 8],
@@ -168,6 +168,15 @@ pub struct NDSDma {
 
     /// Bitmask of which DMA channels are active
     pub active_dmas: u8,
+}
+
+/// Not derived: a derived `Default` left every channel's `index` at 0, so
+/// all DMA completion interrupts were raised as DMA0 (and the ARM7 ones as
+/// Timer1), and games waiting for a DMA1-3 interrupt hung.
+impl Default for NDSDma {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NDSDma {
@@ -195,6 +204,7 @@ impl NDSDma {
 
         for (i, dma) in self.dmas.iter_mut().enumerate() {
             dma.is_arm9 = i < 4;
+            dma.index = i as u32;
             dma.cnt.set(0, dma.is_arm9);
         }
     }

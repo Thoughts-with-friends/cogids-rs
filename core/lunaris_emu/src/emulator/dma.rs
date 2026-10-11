@@ -34,7 +34,8 @@ impl Emulator {
                 let length = active_dma.length;
                 let irq_after_transfer = active_dma.cnt.irq_after_transfer;
                 let interrupt9 = (8 + active_dma.index) as usize;
-                let interrupt7 = (4 + active_dma.index) as usize;
+                // ARM7 channels are 4-7 but raise DMA0-3 (IF bits 8-11).
+                let interrupt7 = (8 + (active_dma.index & 3)) as usize;
 
                 (
                     is_arm9,
@@ -47,6 +48,16 @@ impl Emulator {
             };
 
             if internal_len > length {
+                #[cfg(feature = "tracing")]
+                tracing::debug!(
+                    target: "dma",
+                    "dma{event_id} done len={length} src={:08X} dst={:08X} irq={irq_after_transfer} gxfifo={} pipe={} IF9={:08X}",
+                    self.dma.dmas[event_id as usize].internal_source,
+                    self.dma.dmas[event_id as usize].internal_dest,
+                    self.gpu.engine_3d.gxfifo.len(),
+                    self.gpu.engine_3d.gxpipe.len(),
+                    self.int9_reg.irq_flags
+                );
                 if irq_after_transfer {
                     if is_arm9 {
                         if let Some(interrupt) = Interrupt::from_usize(interrupt9) {
@@ -207,6 +218,15 @@ impl Emulator {
 
         dma.cnt.set(cnt, is_arm9);
 
+        #[cfg(feature = "tracing")]
+        tracing::debug!(
+            target: "dma",
+            "dma{index} cnt={cnt:04X} (was {}) src={:08X} dst={:08X} len={}",
+            if old_enabled { "on" } else { "off" },
+            dma.source,
+            dma.destination,
+            dma.length
+        );
         if !old_enabled && (cnt & (1 << 15) != 0) {
             dma.internal_source = dma.source;
             dma.internal_dest = dma.destination;

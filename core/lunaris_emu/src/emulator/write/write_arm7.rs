@@ -9,12 +9,10 @@ impl Emulator {
     /// # Panics
     #[expect(clippy::match_same_arms)]
     pub fn arm7_write_word(&mut self, address: u32, word: u32) {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.write32(address, word);
+        }
         match address {
-            // Debug print (kept from original C++)
-            0x027E0014 => {
-                // #[cfg(feature = "tracing")]
-                // tracing::info!("(7) Write of {:08X} to {:08X}", word, address);
-            }
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 let off = (address & MAIN_RAM_MASK) as usize;
@@ -100,13 +98,10 @@ impl Emulator {
 
             0x04000218 => {} // ignore
             0x04000308 => self.bios_prot = word & !1,
-
-            0x04000500 => self.spu.set_soundcnt((word & 0xFFFF) as u16),
             0x04000510 => {}
             0x04000518 => {}
 
             // SPU channel write region
-            0x04000400..0x04000500 => self.spu.write_channel_word(address, word),
 
             // GPU VRAM write (ARM7)
             0x06000000..0x07000000 => self.gpu.write_arm7_u32(address, word),
@@ -125,6 +120,9 @@ impl Emulator {
 
     #[expect(clippy::match_same_arms)]
     pub fn arm7_write_halfword(&mut self, address: u32, halfword: u16) {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.write16(address, halfword);
+        }
         match address {
             0x06000000..0x07000000 => self.gpu.write_arm7_u16(address, halfword),
             // Main RAM
@@ -229,14 +227,6 @@ impl Emulator {
             0x04000300 => self.postflg7 = (halfword & 1) as u8,
             0x04000304 => self.pow_cnt2.set_value(halfword),
 
-            0x04000500 => self.spu.set_soundcnt(halfword),
-            0x04000504 => self.spu.set_soundbias(halfword),
-
-            0x04000508 => {
-                self.spu.set_sndcap0((halfword & 0xFF) as u8);
-                self.spu.set_sndcap1((halfword >> 8) as u8);
-            }
-
             0x04000514 => {}
             0x0400051C => {}
 
@@ -252,7 +242,6 @@ impl Emulator {
             0x04808184 => self.wifi.set_w_rf_cnt(halfword),
 
             // SPU channel writes
-            0x04000400..0x04000500 => self.spu.write_channel_halfword(address, halfword),
 
             // WiFi block (ignored)
             0x04800000..0x04900000 => {}
@@ -270,6 +259,9 @@ impl Emulator {
     }
 
     pub fn arm7_write_byte(&mut self, address: u32, byte: u8) {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.write8(address, byte);
+        }
         match address {
             0x04000181 => {
                 let irq = self
@@ -330,16 +322,7 @@ impl Emulator {
                 }
             }
 
-            0x04000500 => self.spu.set_soundcnt_lo(byte),
-
-            0x04000501 => self.spu.set_soundcnt_hi(byte),
-
-            0x04000508 => self.spu.set_sndcap0(byte),
-
-            0x04000509 => self.spu.set_sndcap1(byte),
-
             // SPU channel writes
-            0x04000400..0x04000500 => self.spu.write_channel_byte(address, byte),
 
             // GPU VRAM (ARM7 writes allowed)
             0x06000000..0x07000000 => self.gpu.write_arm7_u8(address, byte),

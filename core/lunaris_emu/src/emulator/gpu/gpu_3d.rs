@@ -10,16 +10,29 @@ use lunaris_ds_interrupts::Interrupt;
 use lunaris_ds_mem_const::SCANLINES;
 
 impl Emulator {
-    /// - Instead of
+    /// Re-evaluates the GXFIFO interrupt (GXSTAT bits 30-31).
+    ///
+    /// The interrupt is level triggered (melonDS `GPU3D::CheckFIFOIRQ`):
+    /// IF bit 21 follows the condition and is also *cleared* once the FIFO
+    /// refills. It must be re-checked whenever the FIFO level changes.
+    ///
+    /// The Nitro SDK streams display lists with "FIFO less than half full"
+    /// interrupts and switches them off from the DMA-complete interrupt of
+    /// the last chunk. Leaving bit 21 set after the DMA refilled the FIFO
+    /// made it win the IRQ priority over the DMA interrupt forever (an
+    /// interrupt storm), which froze 3D scenes such as the HeartGold intro.
     pub fn check_fifo_irq(&mut self) {
-        match self.gpu.engine_3d.gxstat.gxfifo_irq_stat {
-            1 if self.gpu.engine_3d.gxfifo.len() < 128 => {
-                self.request_interrupt9(Interrupt::GeometryFifo);
-            }
-            2 if self.gpu.engine_3d.gxfifo.is_empty() => {
-                self.request_interrupt9(Interrupt::GeometryFifo);
-            }
-            _ => {} //Never send IRQ requests
+        let len = self.gpu.engine_3d.gxfifo.len();
+        let raised = match self.gpu.engine_3d.gxstat.gxfifo_irq_stat {
+            1 => len < 128,
+            2 => len == 0,
+            _ => false,
+        };
+        let bit = 1 << (Interrupt::GeometryFifo as u32);
+        if raised {
+            self.int9_reg.irq_flags |= bit;
+        } else {
+            self.int9_reg.irq_flags &= !bit;
         }
     }
 
@@ -85,6 +98,7 @@ impl Emulator {
                 }
             }
             self.gpu.engine_3d.gxfifo.push_back(cmd);
+            self.check_fifo_irq();
         }
     }
 

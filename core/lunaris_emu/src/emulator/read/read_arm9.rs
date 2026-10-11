@@ -226,6 +226,8 @@ impl Emulator {
             0x0400_02B0 => self.sqrtcnt,
             0x0400_0300 => self.postflg9.into(),
             0x0400_0304 => self.gpu.get_powcnt1(),
+            0x0400_0600 => self.gpu.get_gxstat() as u16,
+            0x0400_0602 => (self.gpu.get_gxstat() >> 16) as u16,
             0x0400_0604 => self.gpu.get_poly_count(),
             0x0400_0606 => self.gpu.get_vert_count(),
             0x0400_1000 => (self.gpu.get_dispcnt_b() & 0xffff) as u16,
@@ -270,6 +272,7 @@ impl Emulator {
         match address {
             0x04000180 => self.ipc.read_sync(Side::Arm9) as u8,
             0x04000181 => (self.ipc.read_sync(Side::Arm9) >> 8) as u8,
+            0x04000600..=0x04000603 => (self.gpu.get_gxstat() >> ((address & 3) * 8)) as u8,
             0x04000184 => self.ipc.read_cnt(Side::Arm9) as u8,
             0x04000185 => (self.ipc.read_cnt(Side::Arm9) >> 8) as u8,
             MAIN_RAM_START..SHARED_WRAM_START => self.main_ram[(address & MAIN_RAM_MASK) as usize], // Main RAM

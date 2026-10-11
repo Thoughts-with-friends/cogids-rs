@@ -1,11 +1,18 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod audio;
 mod config;
 mod font;
 mod input;
+mod instance;
 
-use self::config::{Config, ScreenLayout, load_config, save_config};
+use self::audio::AudioOutput;
+use self::config::{Config, ScreenLayout, load_config, save_config, set_config_path};
 use self::input::{Gamepads, Touch};
+
+/// Native DS refresh rate (33.513982 MHz / (355 * 263 * 6)).
+const DS_FPS: f64 = 59.826_098;
+use self::instance::{Instance, Settings};
 use eframe::egui;
 use lunaris_ds_emu::Emulator;
 use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
@@ -60,11 +67,21 @@ struct App {
 
     gamepads: Gamepads,
     touch: Touch,
+
+    instance: Instance,
+    settings: Settings,
+
+    audio: AudioOutput,
+    audio_buf: Vec<i16>,
+    /// Emulated frames owed to real time (frame pacing).
+    frame_debt: f64,
+    last_tick: Instant,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(instance: Instance, settings: Settings) -> Self {
         let config = load_config();
+        let config_volume = config.volume.min(100);
         let rom_list = list_nds_files(&config.rom_dir);
 
         Self {
@@ -80,6 +97,12 @@ impl App {
             rom_list_open: false,
             gamepads: Gamepads::new(),
             touch: Touch::default(),
+            audio: AudioOutput::new(f32::from(config_volume) / 100.0),
+            audio_buf: Vec::with_capacity(4096),
+            frame_debt: 0.0,
+            last_tick: Instant::now(),
+            instance,
+            settings,
         }
     }
 
@@ -129,6 +152,15 @@ impl App {
                 ScreenLayout::Horizontal,
                 "Horizontal",
             );
+
+            ui.separator();
+            ui.label("Volume:");
+            if ui
+                .add(egui::Slider::new(&mut self.config.volume, 0..=100).suffix("%"))
+                .changed()
+            {
+                self.audio.set_volume(f32::from(self.config.volume) / 100.0);
+            }
 
             ui.separator();
             ui.checkbox(&mut self.config.show_fps, "FPS");
@@ -224,6 +256,10 @@ impl App {
 
         let mut emu = Emulator::new();
         // emu.config.test = true; // enable disassemble
+        self.settings.apply(&mut emu);
+        // Saves live in instances/instance1/saves; bring over one kept next to the ROM.
+        emu.config.save_dir = Some(self.instance.saves_dir());
+        self.instance.import_legacy_save(path);
 
         match emu.load_rom(path) {
             Ok(_) => {
@@ -240,6 +276,7 @@ impl App {
 
     fn stop_emulator(&mut self) {
         self.is_running = false;
+        self.audio.clear();
         if let Some(mut emu) = self.emu.take() {
             Self::flush_save(&mut emu);
         }
@@ -264,12 +301,31 @@ impl App {
         let mut upper_buffer = vec![0_u32; PIXEL];
         let mut lower_buffer = vec![0_u32; PIXEL];
 
-        self.gamepads.poll();
-        input::apply_keyboard(ctx, emu);
-        self.gamepads.apply(emu);
-        self.touch.apply(emu);
+        // Run as many frames as real time asks for (~59.83 per second), so
+        // speed and audio do not depend on the monitor refresh rate.
+        let now = Instant::now();
+        self.frame_debt = now
+            .duration_since(self.last_tick)
+            .as_secs_f64()
+            .mul_add(DS_FPS, self.frame_debt);
+        self.last_tick = now;
+        if self.frame_debt > 4.0 {
+            self.frame_debt = 1.0; // stalled (e.g. window dragged): don't race
+        }
+        let frames = self.frame_debt.floor() as u32;
+        self.frame_debt -= f64::from(frames);
 
-        emu.run();
+        self.gamepads.poll();
+        for _ in 0..frames {
+            input::apply_keyboard(ctx, emu);
+            self.gamepads.apply(emu);
+            self.touch.apply(emu);
+            emu.run();
+
+            emu.take_audio_samples(&mut self.audio_buf);
+            self.audio.push(&self.audio_buf);
+            self.audio_buf.clear();
+        }
         emu.get_upper_frame(&mut upper_buffer);
         emu.get_lower_frame(&mut lower_buffer);
 
@@ -373,8 +429,19 @@ impl eframe::App for App {
 
 // ===== entry =====
 fn main() -> eframe::Result<()> {
-    // let _ = tracing_rotation::init("./logs", "lunaris.log");
-    // let _ = tracing_rotation::change_level("trace");
+    let instance = Instance::open();
+    set_config_path(instance.config_path());
+    let settings = Settings::load(&instance.settings_path());
+
+    match tracing_rotation::init(instance.logs_dir(), "lunaris.log") {
+        Ok(()) => {
+            if let Err(e) = tracing_rotation::change_level(&settings.log_level) {
+                eprintln!("Invalid log level {:?}: {e}", settings.log_level);
+            }
+        }
+        Err(e) => eprintln!("Failed to start logging: {e}"),
+    }
+    tracing::info!("Started (logs, saves and settings in ./instances/instance1)");
 
     let options = eframe::NativeOptions::default();
 
@@ -383,7 +450,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             self::font::setup_custom_fonts::<&std::path::Path>(&cc.egui_ctx, None);
-            Ok(Box::new(App::new()))
+            Ok(Box::new(App::new(instance, settings)))
         }),
     )
 }
