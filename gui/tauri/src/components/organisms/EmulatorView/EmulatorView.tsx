@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type React from "react";
+import { useGamepads } from "@/components/hooks/useGamepads";
 import { openPath } from "@/services/api/dialog";
 import {
   EMU,
@@ -39,7 +40,9 @@ export const EmulatorView = () => {
 
   const upperRef = useRef<HTMLCanvasElement>(null);
   const lowerRef = useRef<HTMLCanvasElement>(null);
-  const keysRef = useRef(0);
+  /** Pressed DS buttons from the keyboard and from gamepads. */
+  const keyboardKeysRef = useRef(0);
+  const gamepadKeysRef = useRef(0);
   const touchingRef = useRef(false);
 
   // ===== Config =====
@@ -161,7 +164,19 @@ export const EmulatorView = () => {
     };
   }, [drawFrame]);
 
-  // ===== Keyboard =====
+  // ===== Input (keyboard + gamepads) =====
+
+  const sendKeys = useCallback(() => {
+    EMU.setKeys(keyboardKeysRef.current | gamepadKeysRef.current).catch(
+      reportError,
+    );
+  }, []);
+
+  const gamepads = useGamepads((keys) => {
+    gamepadKeysRef.current = keys;
+    sendKeys();
+  });
+
 
   const handleKey = useCallback(
     (pressed: boolean) => (e: KeyboardEvent) => {
@@ -181,21 +196,21 @@ export const EmulatorView = () => {
       e.preventDefault();
 
       const next = pressed
-        ? keysRef.current | bit
-        : keysRef.current & ~bit;
+        ? keyboardKeysRef.current | bit
+        : keyboardKeysRef.current & ~bit;
 
-      if (next === keysRef.current) return;
+      if (next === keyboardKeysRef.current) return;
 
-      keysRef.current = next;
-      EMU.setKeys(next).catch(reportError);
+      keyboardKeysRef.current = next;
+      sendKeys();
     },
-    [],
+    [sendKeys],
   );
 
   const releaseAllKeys = useCallback(() => {
-    keysRef.current = 0;
-    EMU.setKeys(0).catch(reportError);
-  }, []);
+    keyboardKeysRef.current = 0;
+    sendKeys();
+  }, [sendKeys]);
 
   useEffect(() => {
     const down = handleKey(true);
@@ -413,15 +428,18 @@ export const EmulatorView = () => {
   );
 
   const renderScreens = () => {
-    // GUI Screen size
-    const canvasSx = {
+    // Native <canvas> elements: the bitmap must be exactly 256x192. (MUI
+    // `<Box component="canvas" width height>` treats width/height as CSS,
+    // leaving the default 300x150 bitmap: the frame was cropped and
+    // stretched vertically.) The on-screen size is CSS only.
+    const canvasStyle = {
       width: `min(${SCREEN_W * config!.scale}px, 100%)`,
       height: "auto",
       aspectRatio: `${SCREEN_W} / ${SCREEN_H}`,
       imageRendering: "pixelated",
       background: "#000",
       display: "block",
-      flexShrink: 1,
+      minWidth: 0,
     } as const satisfies React.CSSProperties;
 
     return (
@@ -431,21 +449,19 @@ export const EmulatorView = () => {
         alignItems="center"
         justifyContent="center"
       >
-        <Box
-          component="canvas"
+        <canvas
           ref={upperRef}
           width={SCREEN_W}
           height={SCREEN_H}
-          sx={canvasSx}
+          style={canvasStyle}
         />
 
-        <Box
-          component="canvas"
+        <canvas
           ref={lowerRef}
           width={SCREEN_W}
           height={SCREEN_H}
-          sx={{
-            ...canvasSx,
+          style={{
+            ...canvasStyle,
             cursor: "crosshair",
             touchAction: "none",
           }}
@@ -461,9 +477,9 @@ export const EmulatorView = () => {
   const renderControllerInfo = () => (
     <Typography variant="caption" color="text.secondary">
       Controller:{" "}
-      {status?.gamepads.length
-        ? status.gamepads.join(", ")
-        : "none (keyboard: arrows, X=A, Z=B, S=X, A=Y, Q=L, W=R, Enter=START, Backspace=SELECT)"}
+      {gamepads.length
+        ? gamepads.join(", ")
+        : "none (press a button to detect one; keyboard: arrows, X=A, Z=B, S=X, A=Y, Q=L, W=R, Enter=START, Backspace=SELECT)"}
       {status && ` | Data: ${status.instanceDir}`}
     </Typography>
   );

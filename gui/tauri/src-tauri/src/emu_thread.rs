@@ -2,7 +2,7 @@
 //!
 //! The UI talks to it through [`Shared`]: it writes the pressed keys and the
 //! stylus position, and reads the latest frame (RGBA, both screens).
-use ds_common::{AudioOutput, DS_FPS, Gamepads};
+use ds_common::{AudioOutput, DS_FPS};
 use ds_emu::Emulator;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -50,7 +50,6 @@ pub struct Shared {
     /// Upper then lower screen, RGBA.
     frame: Mutex<Vec<u8>>,
     frame_seq: AtomicU64,
-    gamepads: Mutex<Vec<String>>,
     fps: AtomicU32,
 }
 
@@ -84,10 +83,6 @@ impl Shared {
         }
         let frame = self.frame.lock().ok()?.clone();
         Some((seq, frame))
-    }
-
-    pub fn gamepads(&self) -> Vec<String> {
-        self.gamepads.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// Emulated frames per second over the last second.
@@ -175,8 +170,6 @@ fn to_rgba(src: &[u32], dst: &mut [u8]) {
 }
 
 fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
-    // Gamepads are polled on this thread (gilrs is not shared).
-    let mut gamepads = Gamepads::new();
     let mut pixels = vec![0_u32; PIXELS_PER_LINE * SCANLINES];
     let mut rgba = vec![0_u8; SCREEN_BYTES * 2];
     let mut samples = Vec::with_capacity(4096);
@@ -186,12 +179,9 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
     let (mut fps_start, mut fps_frames) = (Instant::now(), 0_u32);
 
     while shared.running.load(Ordering::Relaxed) {
-        gamepads.poll();
-        if let Ok(mut names) = shared.gamepads.lock() {
-            *names = gamepads.names();
-        }
+        // Keyboard and gamepads are both read by the frontend (Web Gamepad
+        // API, see `useGamepads`), which sends the combined button bits.
         apply_keys(&mut emu, shared.keys.load(Ordering::Relaxed));
-        gamepads.apply(&mut emu);
         apply_touch(&mut emu, shared);
 
         emu.run();

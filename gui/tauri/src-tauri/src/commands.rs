@@ -179,7 +179,6 @@ pub fn get_frame(state: State<'_, AppState>, last_seq: u64) -> tauri::ipc::Respo
 pub struct Status {
     running: bool,
     fps: f32,
-    gamepads: Vec<String>,
     instance_dir: String,
 }
 
@@ -188,7 +187,6 @@ pub fn get_status(state: State<'_, AppState>) -> Status {
     Status {
         running: is_running(state.clone()),
         fps: state.shared.fps(),
-        gamepads: state.shared.gamepads(),
         instance_dir: std::path::absolute(state.instance.root())
             .unwrap_or_else(|_| state.instance.root().to_path_buf())
             .to_string_lossy()
