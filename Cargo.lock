@@ -1510,6 +1510,93 @@ dependencies = [
 ]
 
 [[package]]
+name = "ds_bios"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "ds_cartridge"
+version = "0.1.0"
+dependencies = [
+ "snafu",
+ "tracing",
+]
+
+[[package]]
+name = "ds_common"
+version = "0.1.0"
+
+[[package]]
+name = "ds_egui"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "ds_common",
+ "ds_emu",
+ "ds_frontend",
+ "eframe",
+ "egui",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing_rotation",
+ "winres",
+]
+
+[[package]]
+name = "ds_emu"
+version = "0.1.0"
+dependencies = [
+ "ds_bios",
+ "ds_cartridge",
+ "ds_common",
+ "ds_gpu",
+ "ds_peripherals",
+ "ds_spu",
+ "image",
+ "quick_tracing",
+ "snafu",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ds_frontend"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "ds_emu",
+ "ds_spu",
+ "gilrs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "ds_gpu"
+version = "0.1.0"
+dependencies = [
+ "ds_common",
+ "tracing",
+]
+
+[[package]]
+name = "ds_peripherals"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ds_common",
+ "tracing",
+]
+
+[[package]]
+name = "ds_spu"
+version = "0.1.0"
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3327,9 +3414,9 @@ dependencies = [
 name = "lunaris"
 version = "0.1.0"
 dependencies = [
- "lunaris_ds_emu",
- "lunaris_ds_frontend",
- "lunaris_ds_mem_const",
+ "ds_common",
+ "ds_emu",
+ "ds_frontend",
  "serde",
  "serde_json",
  "tauri",
@@ -3340,117 +3427,6 @@ dependencies = [
  "tracing",
  "tracing_rotation",
 ]
-
-[[package]]
-name = "lunaris_ds_audio"
-version = "0.1.0"
-
-[[package]]
-name = "lunaris_ds_cartridge"
-version = "0.1.0"
-dependencies = [
- "snafu",
- "tracing",
-]
-
-[[package]]
-name = "lunaris_ds_egui"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "eframe",
- "egui",
- "lunaris_ds_emu",
- "lunaris_ds_frontend",
- "lunaris_ds_mem_const",
- "serde",
- "serde_json",
- "tracing",
- "tracing_rotation",
- "winres",
-]
-
-[[package]]
-name = "lunaris_ds_emu"
-version = "0.1.0"
-dependencies = [
- "image",
- "lunaris_ds_audio",
- "lunaris_ds_cartridge",
- "lunaris_ds_free_bios",
- "lunaris_ds_gpu",
- "lunaris_ds_interrupts",
- "lunaris_ds_ipc",
- "lunaris_ds_mem_const",
- "lunaris_ds_rtc",
- "lunaris_ds_timers",
- "lunaris_ds_touchscreen",
- "lunaris_ds_wifi",
- "quick_tracing",
- "snafu",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "lunaris_ds_free_bios"
-version = "0.1.0"
-
-[[package]]
-name = "lunaris_ds_frontend"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "gilrs",
- "lunaris_ds_audio",
- "lunaris_ds_emu",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "lunaris_ds_gpu"
-version = "0.1.0"
-dependencies = [
- "lunaris_ds_mem_const",
- "tracing",
-]
-
-[[package]]
-name = "lunaris_ds_interrupts"
-version = "0.1.0"
-
-[[package]]
-name = "lunaris_ds_ipc"
-version = "0.1.0"
-
-[[package]]
-name = "lunaris_ds_mem_const"
-version = "0.1.0"
-
-[[package]]
-name = "lunaris_ds_rtc"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "tracing",
-]
-
-[[package]]
-name = "lunaris_ds_timers"
-version = "0.1.0"
-dependencies = [
- "tracing",
-]
-
-[[package]]
-name = "lunaris_ds_touchscreen"
-version = "0.1.0"
-
-[[package]]
-name = "lunaris_ds_wifi"
-version = "0.1.0"
 
 [[package]]
 name = "mach2"

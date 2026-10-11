@@ -1,0 +1,213 @@
+//! The ARM7's SPI bus and the three devices attached to it.
+//!
+//! ```text
+//!  ARM7 CPU
+//!    |  SPICNT  (0x040001C0)  bits 8-9: device select, bit 11: chip-select hold
+//!    |  SPIDATA (0x040001C2)  one byte out / one byte in per transfer
+//!    v
+//!  +--------------------------- SPI bus (spi/mod.rs) ---------------------------+
+//!  |        device 0                device 1                   device 2          |
+//!  +-----------|-----------------------|--------------------------|--------------+
+//!              v                       v                          v
+//!        power.rs                firmware.rs                touchscreen.rs
+//!        power management IC     firmware flash memory      touch screen controller
+//!        (power off, backlight,  (user settings, Wi-Fi      (TSC: pen position,
+//!         amplifier, mic gain)    settings, boot code)       mic, temperature ADC)
+//! ```
+//!
+//! None of these chips is mapped into the ARM7 address space: the CPU can
+//! only talk to them by selecting one with SPICNT and then exchanging bytes
+//! through SPIDATA. That is why the three device models live under `spi/`,
+//! next to the bus that multiplexes them.
+//!
+//! This module models the bus itself: the SPICNT/SPIDATA registers and the
+//! routing of each transferred byte to the selected device. A device stays
+//! selected across bytes while SPICNT bit 11 is set; clearing it ends the
+//! current command. See GBATEK "DS Serial Peripheral Interface Bus (SPI)".
+
+pub mod firmware;
+pub mod power;
+pub mod touchscreen;
+
+use firmware::Firmware;
+use power::PowerMan;
+use touchscreen::TouchScreen;
+
+/// SPI Control Register
+#[derive(Debug, Clone, Copy)]
+pub struct RegSpiCnt {
+    /// Baud rate (0=4MHz, 1=2MHz, 2=1MHz, 3=512kHz)
+    pub bandwidth: u32,
+    /// Transfer in progress
+    pub busy: bool,
+    /// Device select (0 = power management, 1 = firmware, 2 = touchscreen, 3 = reserved)
+    pub device: u32,
+    /// Transfer 16-bit instead of 8-bit
+    pub transfer_16bit: bool,
+    /// Keep chip select active after transfer
+    pub chipselect_hold: bool,
+    /// Generate interrupt after transfer
+    pub irq_after_transfer: bool,
+    /// SPI bus enabled
+    pub enabled: bool,
+}
+
+impl RegSpiCnt {
+    /// Create new SPI control register
+    pub const fn new() -> Self {
+        Self {
+            bandwidth: 0,
+            busy: false,
+            device: 0,
+            transfer_16bit: false,
+            chipselect_hold: false,
+            irq_after_transfer: false,
+            enabled: false,
+        }
+    }
+
+    /// Get register value as 16-bit halfword
+    pub const fn get(&self) -> u16 {
+        let mut value = 0_u16;
+        value |= (self.bandwidth & 0x3) as u16;
+        if self.busy {
+            value |= 1 << 7;
+        }
+        value |= ((self.device & 0x3) as u16) << 8;
+        if self.transfer_16bit {
+            value |= 1 << 10;
+        }
+        if self.chipselect_hold {
+            value |= 1 << 11;
+        }
+        if self.irq_after_transfer {
+            value |= 1 << 14;
+        }
+        if self.enabled {
+            value |= 1 << 15;
+        }
+        value
+    }
+
+    /// Set register value from 16-bit halfword
+    pub const fn set(&mut self, value: u16) {
+        self.bandwidth = (value & 0x3) as u32;
+        self.device = ((value >> 8) & 0x3) as u32;
+        self.transfer_16bit = (value & (1 << 10)) != 0;
+        self.chipselect_hold = (value & (1 << 11)) != 0;
+        self.irq_after_transfer = (value & (1 << 14)) != 0;
+        self.enabled = (value & (1 << 15)) != 0;
+    }
+}
+
+impl Default for RegSpiCnt {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// SPI Bus controller
+/// Manages communication with multiple SPI-attached devices
+#[derive(Debug, Default)]
+pub struct SPIBus {
+    /// Emulator reference
+    // pub(crate) emulator: EmulatorRef,
+    pub firmware: Firmware,
+    touchscreen: TouchScreen,
+    powerman: PowerMan,
+
+    /// SPI control register
+    spicnt: RegSpiCnt,
+
+    /// Output data buffer
+    output: u8,
+}
+
+impl SPIBus {
+    /// Create new SPI bus
+    pub fn new() -> Self {
+        Self {
+            firmware: Firmware::new(),
+            touchscreen: TouchScreen::new(),
+            powerman: PowerMan::default(),
+            spicnt: RegSpiCnt::new(),
+            output: 0,
+        }
+    }
+
+    /// Initializes the bus with a firmware image (see [`Firmware::load`]).
+    pub fn init(&mut self, firmware_image: &[u8]) {
+        self.firmware.load(firmware_image);
+
+        self.spicnt.busy = false;
+        self.spicnt.enabled = false;
+        self.touchscreen.power_on();
+    }
+
+    pub const fn touchscreen_press(&mut self, x: i32, y: i32) {
+        self.touchscreen.press_event(x, y);
+    }
+
+    /// Read from SPI data register (0 while the bus is disabled).
+    pub const fn read_spidata(&self) -> u8 {
+        if self.spicnt.enabled { self.output } else { 0 }
+    }
+
+    /// Write to SPI data register: clocks one byte through the selected
+    /// device. When SPICNT bit 11 (chip select hold) is clear the device is
+    /// released afterwards, ending the current command.
+    ///
+    /// Returns `true` if the SPI transfer-complete IRQ must be raised.
+    pub fn write_spidata(&mut self, data: u8) -> bool {
+        if !self.spicnt.enabled {
+            return false;
+        }
+        self.spicnt.busy = false;
+
+        let hold = self.spicnt.chipselect_hold;
+        self.output = match self.spicnt.device {
+            1 => {
+                let out = self.firmware.transfer_data(data);
+                if !hold {
+                    self.firmware.release();
+                }
+                out
+            }
+            2 => {
+                let out = self.touchscreen.transfer_data(data);
+                if !hold {
+                    self.touchscreen.deselect();
+                }
+                out
+            }
+            0 => {
+                let out = self.powerman.transfer(data);
+                if !hold {
+                    self.powerman.release();
+                }
+                out
+            }
+            _ => 0,
+        };
+
+        #[cfg(feature = "tracing")]
+        tracing::trace!(
+            target: "spi",
+            "dev{} hold={hold} in={data:02X} out={:02X}",
+            self.spicnt.device,
+            self.output
+        );
+
+        self.spicnt.irq_after_transfer
+    }
+
+    /// Get SPI control register
+    pub const fn get_spicnt(&self) -> u16 {
+        self.spicnt.get()
+    }
+
+    /// Set SPI control register
+    pub const fn set_spicnt(&mut self, value: u16) {
+        self.spicnt.set(value);
+    }
+}

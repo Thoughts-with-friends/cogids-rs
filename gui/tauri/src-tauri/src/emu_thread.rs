@@ -2,9 +2,9 @@
 //!
 //! The UI talks to it through [`Shared`]: it writes the pressed keys and the
 //! stylus position, and reads the latest frame (RGBA, both screens).
-use lunaris_ds_emu::Emulator;
-use lunaris_ds_frontend::{AudioOutput, DS_FPS, Gamepads};
-use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
+use ds_common::memory_map::{PIXELS_PER_LINE, SCANLINES};
+use ds_emu::Emulator;
+use ds_frontend::{AudioOutput, DS_FPS, Gamepads};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;

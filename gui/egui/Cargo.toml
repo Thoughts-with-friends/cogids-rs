@@ -1,5 +1,5 @@
 [package]
-name = "lunaris_ds_egui"
+name = "ds_egui"
 authors.workspace = true
 categories.workspace = true
 description.workspace = true
@@ -27,9 +27,9 @@ tracing = { workspace = true }
 tracing_rotation = { git = "https://github.com/SARDONYX-sard/dar-to-oar", tag = "1.1.0" }
 
 # workspace dependencies
-lunaris_ds_emu = { workspace = true, features = ["tracing"] }
-lunaris_ds_mem_const = { workspace = true }
-lunaris_ds_frontend = { workspace = true }
+ds_emu = { workspace = true, features = ["tracing"] }
+ds_common = { workspace = true }
+ds_frontend = { workspace = true }
 
 
 [lints]

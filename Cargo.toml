@@ -12,18 +12,13 @@ version = "0.1.0"
 
 [workspace]
 members = [
-  "core/audio",
+  "core/bios",
   "core/cartridge",
-  "core/free_bios",
+  "core/common",
   "core/gpu",
-  "core/interrupts",
-  "core/ipc",
-  "core/lunaris_emu",
-  "core/mem_const",
-  "core/rtc",
-  "core/timers",
-  "core/touchscreen",
-  "core/wifi",
+  "core/peripherals",
+  "core/spu",
+  "core/system",
   "gui/common",
   "gui/egui",
   "gui/tauri/src-tauri"
@@ -36,19 +31,14 @@ tracing = "0.1.44"
 snafu = "0.9.0"
 
 # workspace members
-lunaris_ds_audio = { path = "./core/audio" }
-lunaris_ds_cartridge = { path = "./core/cartridge" }
-lunaris_ds_emu = { path = "./core/lunaris_emu" }
-lunaris_ds_free_bios = { path = "./core/free_bios" }
-lunaris_ds_gpu = { path = "./core/gpu" }
-lunaris_ds_interrupts = { path = "./core/interrupts" }
-lunaris_ds_ipc = { path = "./core/ipc" }
-lunaris_ds_mem_const = { path = "./core/mem_const" }
-lunaris_ds_rtc = { path = "./core/rtc" }
-lunaris_ds_timers = { path = "./core/timers" }
-lunaris_ds_touchscreen = { path = "./core/touchscreen" }
-lunaris_ds_wifi = { path = "./core/wifi" }
-lunaris_ds_frontend = { path = "./gui/common" }
+ds_bios = { path = "./core/bios" }
+ds_cartridge = { path = "./core/cartridge" }
+ds_common = { path = "./core/common" }
+ds_emu = { path = "./core/system" }
+ds_gpu = { path = "./core/gpu" }
+ds_peripherals = { path = "./core/peripherals" }
+ds_spu = { path = "./core/spu" }
+ds_frontend = { path = "./gui/common" }
 
 
 [workspace.lints.clippy]

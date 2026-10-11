@@ -1,8 +1,8 @@
 [package]
-name = "lunaris_ds_gpu"
+name = "ds_gpu"
+description = "DS video: VRAM, 2D engines A/B and the 3D engine"
 authors.workspace = true
 categories.workspace = true
-description.workspace = true
 edition.workspace = true
 keywords.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ version.workspace = true
 tracing = { workspace = true, optional = true }
 
 # workspace members
-lunaris_ds_mem_const = { workspace = true }
+ds_common = { workspace = true }
 
 [features]
 default = ["tracing"]

@@ -1,7 +1,7 @@
 //! Tauri commands used by the frontend (`gui/tauri/src/services/api/emulator.ts`).
 use crate::emu_thread::{EmuThread, Shared};
-use lunaris_ds_emu::Emulator;
-use lunaris_ds_frontend::{AudioOutput, Instance, Settings};
+use ds_emu::Emulator;
+use ds_frontend::{AudioOutput, Instance, Settings};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

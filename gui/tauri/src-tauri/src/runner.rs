@@ -1,5 +1,5 @@
 use crate::commands::{self, AppState};
-use lunaris_ds_frontend::{Instance, Settings};
+use ds_frontend::{Instance, Settings};
 use tauri::Manager as _;
 
 /// Data folder: `instances/instance1` next to the executable (not the

@@ -27,9 +27,9 @@ tracing = { workspace = true }
 tracing_rotation = { git = "https://github.com/SARDONYX-sard/dar-to-oar", tag = "1.1.0" }
 
 # workspace members
-lunaris_ds_emu = { workspace = true, features = ["tracing"] }
-lunaris_ds_frontend = { workspace = true }
-lunaris_ds_mem_const = { workspace = true }
+ds_emu = { workspace = true, features = ["tracing"] }
+ds_frontend = { workspace = true }
+ds_common = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "ds_peripherals"
+description = "Small DS I/O devices: timers, IPC, RTC, Wi-Fi stub and the SPI devices"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.44" }
+tracing = { workspace = true, optional = true }
+
+ds_common = { workspace = true }
+
+[features]
+tracing = ["dep:tracing"]
+
+[lints]
+workspace = true

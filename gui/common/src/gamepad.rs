@@ -1,7 +1,7 @@
 //! Gamepad support: controllers are detected automatically (hot-plug) via
 //! `gilrs` and mapped onto the DS buttons.
+use ds_emu::Emulator;
 use gilrs::{Axis, Button, Gilrs};
-use lunaris_ds_emu::Emulator;
 
 /// Analog stick deflection treated as a D-pad press.
 const STICK_THRESHOLD: f32 = 0.5;

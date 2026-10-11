@@ -131,7 +131,7 @@ impl Settings {
     }
 
     /// Applies the settings to a freshly created emulator (before `load_rom`).
-    pub fn apply(&self, emu: &mut lunaris_ds_emu::Emulator) {
+    pub fn apply(&self, emu: &mut ds_emu::Emulator) {
         emu.config.hle_bios = self.hle_bios;
         emu.config.frameskip = self.frameskip;
         if let Some(path) = &self.firmware_path {

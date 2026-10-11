@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Source rate of the SPU output.
-const SOURCE_RATE: f64 = lunaris_ds_audio::OUTPUT_RATE_HZ;
+const SOURCE_RATE: f64 = ds_spu::OUTPUT_RATE_HZ;
 /// Queue level aimed for, in source frames (~70 ms, a bit over 4 emulated
 /// frames, so frame batching and scheduling jitter never empty it).
 const TARGET_FRAMES: usize = 2300;
