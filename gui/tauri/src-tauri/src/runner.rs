@@ -1,5 +1,5 @@
 use crate::commands::{self, AppState};
-use lunaris_ds_frontend::{Instance, Settings};
+use ds_common::{Instance, Settings};
 use tauri::Manager as _;
 
 /// Data folder: `instances/instance1` next to the executable (not the
@@ -18,15 +18,11 @@ fn open_instance() -> Instance {
 pub(crate) fn run() {
     let instance = open_instance();
     let settings = Settings::load(&instance.settings_path());
-    match tracing_rotation::init(instance.logs_dir(), "lunaris.log") {
-        Ok(()) => {
-            if let Err(e) = tracing_rotation::change_level(&settings.log_level) {
-                eprintln!("Invalid log level {:?}: {e}", settings.log_level);
-            }
-        }
-        Err(e) => eprintln!("Failed to start logging: {e}"),
+
+    if let Err(err) = ds_common::log::setup_logging_in(&instance.logs_dir()) {
+        log::error!("Failed to start logging: {err}");
     }
-    tracing::info!("Started (instance folder: {})", instance.root().display());
+    log::info!("Started (instance folder: {})", instance.root().display());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

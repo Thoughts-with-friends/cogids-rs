@@ -1,0 +1,344 @@
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+use super::Emulator;
+use ds_interrupt::Interrupt;
+use ds_mem_addr::*;
+use ds_peripherals::ipc::Side;
+
+impl Emulator {
+    /// # Panics
+    #[expect(clippy::match_same_arms)]
+    pub fn arm7_write_word(&mut self, address: u32, word: u32) {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.write32(address, word);
+        }
+        match address {
+            // Main RAM
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                let off = (address & MAIN_RAM_MASK) as usize;
+                self.main_ram[off..off + 4].copy_from_slice(&word.to_le_bytes());
+            }
+
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &mut self.arm7_wram
+                } else {
+                    &mut self.shared_wram
+                };
+                mem[off..off + 4].copy_from_slice(&word.to_le_bytes());
+            }
+
+            // Direct IO write (word)
+            0x040000B0 => self.dma.write_source(4, word),
+            0x040000B4 => self.dma.write_dest(4, word),
+            0x040000B8 => self.dma_write_len_cnt(4, word),
+
+            0x040000BC => self.dma.write_source(5, word),
+            0x040000C0 => self.dma.write_dest(5, word),
+            0x040000C4 => self.dma_write_len_cnt(5, word),
+
+            0x040000C8 => self.dma.write_source(6, word),
+            0x040000CC => self.dma.write_dest(6, word),
+            0x040000D0 => self.dma_write_len_cnt(6, word),
+
+            0x040000D4 => self.dma.write_source(7, word),
+            0x040000D8 => self.dma.write_dest(7, word),
+            0x040000DC => self.dma_write_len_cnt(7, word),
+
+            // Timers: LO/HIGH packed in one word
+            0x04000100 => {
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 0);
+                self.nds_timing.write_hi((word >> 16) as u16, 0);
+            }
+            0x04000104 => {
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 1);
+                self.nds_timing.write_hi((word >> 16) as u16, 1);
+            }
+            0x04000108 => {
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 2);
+                self.nds_timing.write_hi((word >> 16) as u16, 2);
+            }
+            0x0400010C => {
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 3);
+                self.nds_timing.write_hi((word >> 16) as u16, 3);
+            }
+
+            0x04000120 | 0x04000128 => {} // SIODATA32 ignored | write ignored
+
+            0x04000180 => {
+                let irq = self.ipc.write_sync(Side::Arm7, word as u16, 0xFFFF);
+                self.raise_ipc(irq);
+            }
+
+            0x04000184 => {
+                for irq in self.ipc.write_cnt(Side::Arm7, word as u16) {
+                    self.raise_ipc(irq);
+                }
+            }
+            0x04000188 => {
+                #[cfg(feature = "log")]
+                log::debug!(target: "ipc", "Arm7 send {word:08X}");
+                let irq = self.ipc.send(Side::Arm7, word);
+                self.raise_ipc(irq);
+            }
+
+            0x040001A0 => {
+                self.cart.set_auxspicnt(word as u16);
+                self.cart.set_auxspidata((word >> 16) as u8);
+            }
+            0x040001A4 => self.cart.set_romctrl(word),
+            0x040001B0 => self.cart.set_lo_key2_seed0(word),
+            0x040001B4 => self.cart.set_lo_key2_seed1(word),
+
+            0x04000208 => self.int7_reg.ime = word & 0x1,
+            0x04000210 => self.int7_reg.irq_enable = word,
+            0x04000214 => self.int7_reg.irq_flags &= !word,
+
+            0x04000218 => {} // ignore
+            0x04000308 => self.bios_prot = word & !1,
+            0x04000510 => {}
+            0x04000518 => {}
+
+            // SPU channel write region
+
+            // GPU VRAM write (ARM7)
+            0x06000000..0x07000000 => self.gpu.write_arm7_u32(address, word),
+
+            // Default
+            _ => {
+                #[cfg(feature = "log")]
+                log::warn!(
+                    "(7) Unrecognized word write {:08X} -> {:08X}",
+                    word,
+                    address
+                );
+            }
+        }
+    }
+
+    #[expect(clippy::match_same_arms)]
+    pub fn arm7_write_halfword(&mut self, address: u32, halfword: u16) {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.write16(address, halfword);
+        }
+        match address {
+            0x06000000..0x07000000 => self.gpu.write_arm7_u16(address, halfword),
+            // Main RAM
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                let off = (address & MAIN_RAM_MASK) as usize;
+                self.main_ram[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
+            }
+
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &mut self.arm7_wram
+                } else {
+                    &mut self.shared_wram
+                };
+                mem[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
+            }
+
+            // IO register halfword writes
+            0x04000004 => self.gpu.set_dispstat7(halfword),
+
+            // DMA0-3 (ARM7 channels 4-7) SAD/DAD/CNT halfword sub-writes.
+            // Previously only the control halfword was wired here, so
+            // source/destination addresses set via halfword stores (STRH)
+            // were silently dropped and every transfer read/wrote address 0.
+            0x040000B0 => self.dma.write_source_lo(4, halfword),
+            0x040000B2 => self.dma.write_source_hi(4, halfword),
+            0x040000B4 => self.dma.write_dest_lo(4, halfword),
+            0x040000B6 => self.dma.write_dest_hi(4, halfword),
+            0x040000B8 => self.dma.write_len(4, halfword),
+            0x040000BA => self.dma_write_cnt(4, halfword),
+
+            0x040000BC => self.dma.write_source_lo(5, halfword),
+            0x040000BE => self.dma.write_source_hi(5, halfword),
+            0x040000C0 => self.dma.write_dest_lo(5, halfword),
+            0x040000C2 => self.dma.write_dest_hi(5, halfword),
+            0x040000C4 => self.dma.write_len(5, halfword),
+            0x040000C6 => self.dma_write_cnt(5, halfword),
+
+            0x040000C8 => self.dma.write_source_lo(6, halfword),
+            0x040000CA => self.dma.write_source_hi(6, halfword),
+            0x040000CC => self.dma.write_dest_lo(6, halfword),
+            0x040000CE => self.dma.write_dest_hi(6, halfword),
+            0x040000D0 => self.dma.write_len(6, halfword),
+            0x040000D2 => self.dma_write_cnt(6, halfword),
+
+            0x040000D4 => self.dma.write_source_lo(7, halfword),
+            0x040000D6 => self.dma.write_source_hi(7, halfword),
+            0x040000D8 => self.dma.write_dest_lo(7, halfword),
+            0x040000DA => self.dma.write_dest_hi(7, halfword),
+            0x040000DC => self.dma.write_len(7, halfword),
+            0x040000DE => self.dma_write_cnt(7, halfword),
+
+            0x04000100 => self.nds_timing.write_lo(halfword, 0),
+            0x04000102 => self.nds_timing.write_hi(halfword, 0),
+            0x04000104 => self.nds_timing.write_lo(halfword, 1),
+            0x04000106 => self.nds_timing.write_hi(halfword, 1),
+            0x04000108 => self.nds_timing.write_lo(halfword, 2),
+            0x0400010A => self.nds_timing.write_hi(halfword, 2),
+            0x0400010C => self.nds_timing.write_lo(halfword, 3),
+            0x0400010E => self.nds_timing.write_hi(halfword, 3),
+
+            0x04000128 => self.sio_cnt = halfword,
+            0x04000134 => self.r_cnt = halfword,
+
+            0x04000138 => self.rtc.write(halfword, false),
+
+            0x04000180 => {
+                let irq = self.ipc.write_sync(Side::Arm7, halfword, 0xFFFF);
+                self.raise_ipc(irq);
+            }
+
+            0x04000184 => {
+                for irq in self.ipc.write_cnt(Side::Arm7, halfword) {
+                    self.raise_ipc(irq);
+                }
+            }
+
+            0x040001A0 => self.cart.set_auxspicnt(halfword),
+
+            0x040001A2 => {
+                // #[cfg(feature = "log")]
+                // log::info!("AUXSPIDATA: {:04X}", halfword);
+                self.cart.set_auxspidata((halfword & 0xFF) as u8);
+            }
+
+            0x040001B8 => self.cart.set_hi_key2_seed0(halfword.into()),
+            0x040001BA => self.cart.set_hi_key2_seed1(halfword.into()),
+
+            0x040001C0 => self.spi.set_spicnt(halfword),
+            0x040001C2 => {
+                if self.spi.write_spidata((halfword & 0xFF) as u8) {
+                    self.request_interrupt7(Interrupt::Spi);
+                }
+            }
+
+            0x04000206 => {} // WIFIWAITCNT TODO
+
+            0x04000208 => self.int7_reg.ime = (halfword & 0x1) as u32,
+
+            0x04000300 => self.postflg7 = (halfword & 1) as u8,
+            0x04000304 => self.pow_cnt2.set_value(halfword),
+
+            0x04000514 => {}
+            0x0400051C => {}
+
+            // Debug port (DS Lite firmware)
+            0x04001080 => {}
+
+            // WiFi registers
+            0x04808036 => self.wifi.set_w_power_us(halfword),
+            0x04808158 => self.wifi.set_w_bb_cnt(halfword),
+            0x0480815A => self.wifi.set_w_bb_write(halfword),
+            0x04808160 => self.wifi.set_w_bb_mode(halfword),
+            0x04808168 => self.wifi.set_w_bb_power(halfword),
+            0x04808184 => self.wifi.set_w_rf_cnt(halfword),
+
+            // SPU channel writes
+
+            // WiFi block (ignored)
+            0x04800000..0x04900000 => {}
+
+            // Default
+            _ => {
+                #[cfg(feature = "log")]
+                log::warn!(
+                    "(7) Unrecognized halfword write {:04X} -> {:08X}",
+                    halfword,
+                    address
+                );
+            }
+        }
+    }
+
+    pub fn arm7_write_byte(&mut self, address: u32, byte: u8) {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.write8(address, byte);
+        }
+        match address {
+            0x04000181 => {
+                let irq = self
+                    .ipc
+                    .write_sync(Side::Arm7, u16::from(byte) << 8, 0xFF00);
+                self.raise_ipc(irq);
+            }
+            0x04000180 => {} // IPCSYNC low byte is read-only
+            // Main RAM
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                self.main_ram[(address & MAIN_RAM_MASK) as usize] = byte;
+            }
+
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &mut self.arm7_wram
+                } else {
+                    &mut self.shared_wram
+                };
+                mem[off] = byte;
+            }
+
+            // IO register byte writes
+            0x04000138 => self.rtc.write(byte as u16, true),
+
+            0x040001A0 => self.cart.set_lo_auxspicnt(byte),
+            0x040001A1 => self.cart.set_hi_auxspicnt(byte),
+            0x040001A2 => self.cart.set_auxspidata(byte),
+
+            // Cart command sequence
+            0x040001A8..=0x040001AF => self
+                .cart
+                .receive_command(byte, (address - 0x040001A8) as usize),
+
+            0x040001C2 => {
+                if self.spi.write_spidata(byte) {
+                    self.request_interrupt7(Interrupt::Spi);
+                }
+            }
+
+            0x04000208 => self.int7_reg.ime = (byte & 0x1) as u32,
+
+            0x04000300 => self.postflg7 = byte & 0x1,
+
+            0x04000301 => {
+                match byte {
+                    0x80 => {
+                        // ARM7 halt request
+                        self.arm7.halt();
+                    }
+                    _ => {
+                        #[cfg(feature = "log")]
+                        log::error!("Unrecognized HALTCNT value {:02X} for ARM7", byte);
+                        // original code exits, but emulator should not crash
+                    }
+                }
+            }
+
+            // SPU channel writes
+
+            // GPU VRAM (ARM7 writes allowed)
+            0x06000000..0x07000000 => self.gpu.write_arm7_u8(address, byte),
+
+            // Ignore BIOS writes
+            0x00000000..0x00004000 => {}
+
+            // Default
+            _ => {
+                #[cfg(feature = "log")]
+                log::warn!(
+                    "(7) Unrecognized byte write {:02X} -> {:08X}",
+                    byte,
+                    address
+                );
+            }
+        }
+    }
+}

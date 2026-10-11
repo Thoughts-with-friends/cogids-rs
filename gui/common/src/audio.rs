@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Source rate of the SPU output.
-const SOURCE_RATE: f64 = lunaris_ds_audio::OUTPUT_RATE_HZ;
+const SOURCE_RATE: f64 = ds_spu::OUTPUT_RATE_HZ;
 /// Queue level aimed for, in source frames (~70 ms, a bit over 4 emulated
 /// frames, so frame batching and scheduling jitter never empty it).
 const TARGET_FRAMES: usize = 2300;
@@ -91,7 +91,7 @@ impl AudioOutput {
                 }
             });
         if let Err(e) = spawned {
-            tracing::error!("Failed to start audio thread: {e}");
+            log::error!("Failed to start audio thread: {e}");
         }
         out
     }
@@ -127,7 +127,7 @@ impl AudioOutput {
         };
         if last.elapsed().as_secs() >= 1 {
             *last = Instant::now();
-            tracing::debug!(
+            log::debug!(
                 target: "audio",
                 "queued={queued} underruns={} dropped={}",
                 self.stats.underruns.load(Ordering::Relaxed),
@@ -166,14 +166,14 @@ fn open_stream(
 ) -> Option<cpal::Stream> {
     let host = cpal::default_host();
     let device = host.default_output_device().or_else(|| {
-        tracing::error!("No audio output device");
+        log::error!("No audio output device");
         None
     })?;
     let config = device
         .default_output_config()
-        .inspect_err(|e| tracing::error!("Audio output config: {e}"))
+        .inspect_err(|e| log::error!("Audio output config: {e}"))
         .ok()?;
-    tracing::info!(
+    log::info!(
         "Audio output: {} ({} Hz, {} ch, {:?})",
         device.name().unwrap_or_default(),
         config.sample_rate().0,
@@ -186,13 +186,13 @@ fn open_stream(
         cpal::SampleFormat::I16 => build::<i16>(&device, &config.into(), queue, vol, stats),
         cpal::SampleFormat::U16 => build::<u16>(&device, &config.into(), queue, vol, stats),
         other => {
-            tracing::error!("Unsupported audio sample format {other:?}");
+            log::error!("Unsupported audio sample format {other:?}");
             return None;
         }
     }?;
     stream
         .play()
-        .inspect_err(|e| tracing::error!("Audio play: {e}"))
+        .inspect_err(|e| log::error!("Audio play: {e}"))
         .ok()?;
     Some(stream)
 }
@@ -283,10 +283,10 @@ where
                     }
                 }
             },
-            |e| tracing::error!("Audio stream error: {e}"),
+            |e| log::error!("Audio stream error: {e}"),
             None,
         )
-        .inspect_err(|e| tracing::error!("Audio stream: {e}"))
+        .inspect_err(|e| log::error!("Audio stream: {e}"))
         .ok()
 }
 

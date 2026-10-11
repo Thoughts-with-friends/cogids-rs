@@ -1,0 +1,84 @@
+//! Mixing: runs the channels for one output sample, applies panning,
+//! the capture units and the master volume. See GBATEK "DS Sound Control".
+use crate::channel::Channel;
+use crate::{Bus, CYCLES_PER_SAMPLE, SAMPLE_RATE, Spu};
+
+impl Spu {
+    /// Produces one output sample covering `CYCLES_PER_SAMPLE` bus cycles
+    /// and appends it to the sample buffer. `bus` reads sample data.
+    pub fn mix(&mut self, bus: &mut Bus) {
+        // Channel timers run at half the bus clock.
+        let cycles = CYCLES_PER_SAMPLE / 2;
+        let (mut left, mut right) = (0_i32, 0_i32);
+        let (mut left_out, mut right_out) = (0_i32, 0_i32);
+
+        if self.soundcnt & (1 << 15) != 0 {
+            let mut out = [0_i32; 16];
+            for (o, ch) in out.iter_mut().zip(self.channels.iter_mut()) {
+                *o = ch.run(cycles, bus);
+            }
+            for (i, &o) in out.iter().enumerate() {
+                // SOUNDCNT bits 12/13: channel 1/3 not sent to the mixer.
+                if (i == 1 && self.soundcnt & (1 << 12) != 0)
+                    || (i == 3 && self.soundcnt & (1 << 13) != 0)
+                {
+                    continue;
+                }
+                self.channels[i].pan_output(o, &mut left, &mut right);
+            }
+
+            // Sound capture of the left / right mixer.
+            for (i, mixed) in [left, right].into_iter().enumerate() {
+                if self.captures[i].cnt & 0x80 != 0 {
+                    let sample = (mixed >> 8).clamp(-0x8000, 0x7FFF);
+                    self.captures[i].run(cycles, sample, bus);
+                }
+            }
+
+            let side = |ch: &Channel, sample: i32, right_side: bool| {
+                let pan = if right_side { ch.pan } else { 128 - ch.pan };
+                ((i64::from(sample) * i64::from(pan)) >> 10) as i32
+            };
+            let (ch1, ch3) = (&self.channels[1], &self.channels[3]);
+            left_out = match (self.soundcnt >> 8) & 3 {
+                0 => left,
+                1 => side(ch1, out[1], false),
+                2 => side(ch3, out[3], false),
+                _ => side(ch1, out[1], false) + side(ch3, out[3], false),
+            };
+            right_out = match (self.soundcnt >> 10) & 3 {
+                0 => right,
+                1 => side(ch1, out[1], true),
+                2 => side(ch3, out[3], true),
+                _ => side(ch1, out[1], true) + side(ch3, out[3], true),
+            };
+        }
+
+        let mut master = i64::from(self.soundcnt & 0x7F);
+        if master == 127 {
+            master = 128;
+        }
+        let finish = |v: i32| -> i16 {
+            // The SOUNDBIAS used by commercial games (0x200) is the DC
+            // offset of an unsigned DAC; it is removed here.
+            let v = ((i64::from(v) * master) >> 7) >> 8;
+            v.clamp(-0x8000, 0x7FFF) as i16
+        };
+        // Without a consumer (headless use) keep at most ~2 s of audio.
+        if self.samples.len() >= SAMPLE_RATE as usize * 4 {
+            self.samples.drain(..SAMPLE_RATE as usize * 2);
+        }
+        self.samples.push(finish(left_out));
+        self.samples.push(finish(right_out));
+    }
+
+    /// Takes the buffered interleaved stereo samples (32768 Hz).
+    pub fn take_samples(&mut self, out: &mut Vec<i16>) {
+        out.append(&mut self.samples);
+    }
+
+    /// Drops buffered samples (e.g. when no audio output is attached).
+    pub fn clear_samples(&mut self) {
+        self.samples.clear();
+    }
+}

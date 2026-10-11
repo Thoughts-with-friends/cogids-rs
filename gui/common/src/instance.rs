@@ -74,8 +74,8 @@ impl Instance {
             return;
         }
         match std::fs::copy(&legacy, &target) {
-            Ok(_) => tracing::info!("Imported save {} -> {}", legacy.display(), target.display()),
-            Err(e) => tracing::error!("Failed to import save {}: {e}", legacy.display()),
+            Ok(_) => log::info!("Imported save {} -> {}", legacy.display(), target.display()),
+            Err(e) => log::error!("Failed to import save {}: {e}", legacy.display()),
         }
     }
 }
@@ -131,7 +131,7 @@ impl Settings {
     }
 
     /// Applies the settings to a freshly created emulator (before `load_rom`).
-    pub fn apply(&self, emu: &mut lunaris_ds_emu::Emulator) {
+    pub fn apply(&self, emu: &mut ds_emu::Emulator) {
         emu.config.hle_bios = self.hle_bios;
         emu.config.frameskip = self.frameskip;
         if let Some(path) = &self.firmware_path {
@@ -140,7 +140,7 @@ impl Settings {
         let read = |path: &Option<PathBuf>| {
             let path = path.as_ref()?;
             std::fs::read(path)
-                .inspect_err(|e| tracing::error!("Failed to read {}: {e}", path.display()))
+                .inspect_err(|e| log::error!("Failed to read {}: {e}", path.display()))
                 .ok()
         };
         if let Some(bin) = read(&self.arm9_bios_path) {

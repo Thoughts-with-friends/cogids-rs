@@ -1,5 +1,5 @@
 [package]
-name = "lunaris_ds_frontend"
+name = "ds_common"
 description = "Frontend helpers shared by the Lunaris GUIs (instance folder, audio, gamepads)"
 authors.workspace = true
 categories.workspace = true
@@ -16,10 +16,10 @@ cpal = "0.15.3"
 gilrs = "0.11.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tracing = { workspace = true }
+log = { workspace = true, features = ["alloc"] }
 
-lunaris_ds_audio = { workspace = true }
-lunaris_ds_emu = { workspace = true, features = ["tracing"] }
+ds_spu = { workspace = true }
+ds_emu = { workspace = true, features = ["log"] }
 
 [lints]
 workspace = true

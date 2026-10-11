@@ -1,0 +1,241 @@
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+use super::Emulator;
+use ds_mem_addr::*;
+use ds_peripherals::ipc::Side;
+
+impl Emulator {
+    /// ARM7 read 32-bit word
+    ///
+    /// FIXME: return Result?
+    ///
+    /// # Panics
+    #[expect(clippy::unwrap_used)]
+    pub fn arm7_read_word(&mut self, address: u32) -> u32 {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.read32(address);
+        }
+        match address {
+            // Main RAM
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                let off = (address & MAIN_RAM_MASK) as usize;
+                u32::from_le_bytes(self.main_ram[off..off + 4].try_into().unwrap())
+            }
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &self.arm7_wram
+                } else {
+                    &self.shared_wram
+                };
+                u32::from_le_bytes([mem[off], mem[off + 1], mem[off + 2], mem[off + 3]])
+            }
+
+            0x04000120 | 0x04000400..0x04000500 => 0,
+            0x04000180 => self.ipc.read_sync(Side::Arm7).into(),
+            0x04000184 => self.ipc.read_cnt(Side::Arm7).into(),
+            0x040001A0 => {
+                (u32::from(self.cart.get_auxspicnt()))
+                    | (u32::from(self.cart.read_auxspidata()) << 16)
+            }
+            0x040001A4 => self.cart.get_romctrl(),
+            0x040001C0 => (self.spi.get_spicnt() as u32) | (self.spi.read_spidata() as u32) << 16,
+            0x04000208 => self.int7_reg.ime,
+            0x04000210 => self.int7_reg.irq_enable,
+            0x04000214 => self.int7_reg.irq_flags,
+            0x04100000 => {
+                let (word, irq) = self.ipc.receive(Side::Arm7);
+                #[cfg(feature = "log")]
+                log::debug!(target: "ipc", "Arm7 recv {word:08X}");
+                self.raise_ipc(irq);
+                word
+            }
+            0x04100010 => self.cart.get_output(),
+
+            ..0x4000 => {
+                let arm7_pc = self.arm7.get_pc();
+                if arm7_pc > 0x4000 || (address < self.bios_prot && arm7_pc > self.bios_prot) {
+                    return 0xFFFF_FFFF;
+                }
+
+                let start = address as usize;
+                let end = (address + 4) as usize;
+                u32::from_le_bytes(self.arm7_bios[start..end].try_into().unwrap())
+            }
+            0x06000000..0x07000000 => self.gpu.read_arm7_u32(address),
+            GBA_ROM_START.. => 0xFFFF_FFFF,
+
+            _ => {
+                #[cfg(feature = "log")]
+                log::warn!("ARM7: Unrecognized word read from ${address:08X}");
+                0
+            }
+        }
+    }
+
+    /// ARM7 read 16-bit halfword
+    /// # Panics
+    #[expect(clippy::unwrap_used, clippy::match_same_arms)]
+    pub fn arm7_read_halfword(&self, address: u32) -> u16 {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.read16(address);
+        }
+        match address {
+            // BIOS (0x00000000..0x00003FFF)
+            ..0x4000 => {
+                let pc = self.arm7.get_pc();
+                if pc > 0x4000 {
+                    return 0xFFFF;
+                }
+                if address < self.bios_prot && pc > self.bios_prot {
+                    return 0xFFFF;
+                }
+
+                let start = address as usize;
+                let end = start + 2;
+                u16::from_le_bytes(self.arm7_bios[start..end].try_into().unwrap())
+            }
+
+            // Main RAM
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                let off = (address & MAIN_RAM_MASK) as usize;
+                u16::from_le_bytes(self.main_ram[off..off + 2].try_into().unwrap())
+            }
+
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &self.arm7_wram
+                } else {
+                    &self.shared_wram
+                };
+                u16::from_le_bytes([mem[off], mem[off + 1]])
+            }
+
+            // IO Registers
+            0x04000004 => self.gpu.get_dispstat7(),
+            0x04000006 => self.gpu.get_vcount(),
+
+            0x040000BA => self.dma.read_cnt(4),
+            0x040000C6 => self.dma.read_cnt(5),
+            0x040000D2 => self.dma.read_cnt(6),
+            0x040000DE => self.dma.read_cnt(7),
+
+            0x04000100 => self.nds_timing.read_lo(0),
+            0x04000102 => self.nds_timing.read_hi(0),
+            0x04000104 => self.nds_timing.read_lo(1),
+            0x04000106 => self.nds_timing.read_hi(1),
+            0x04000108 => self.nds_timing.read_lo(2),
+            0x0400010A => self.nds_timing.read_hi(2),
+            0x0400010C => self.nds_timing.read_lo(3),
+            0x0400010E => self.nds_timing.read_hi(3),
+
+            0x04000128 => self.sio_cnt,
+            0x04000130 => self.key_input.get_value(),
+            0x04000134 => self.r_cnt,
+            0x04000136 => self.ext_key_in.get_value(),
+            0x04000138 => self.rtc.read(),
+
+            0x04000180 => self.ipc.read_sync(Side::Arm7),
+            0x04000184 => self.ipc.read_cnt(Side::Arm7),
+
+            0x040001A0 => self.cart.get_auxspicnt(),
+            0x040001A2 => self.cart.read_auxspidata().into(),
+
+            0x040001C0 => self.spi.get_spicnt(),
+            0x040001C2 => self.spi.read_spidata().into(),
+
+            0x04000208 => self.int7_reg.ime as u16,
+            0x04000300 => self.postflg7.into(),
+            0x04000304 => self.pow_cnt2.get_value(),
+
+            0x04001080 => 0,
+            0x04004700 => 0,
+
+            0x0480815C => self.wifi.get_w_bb_read(),
+            0x0480815E => self.wifi.get_w_bb_busy() as u16,
+            0x04808180 => self.wifi.get_w_rf_busy() as u16,
+
+            // WiFi block
+            0x04800000..0x04900000 => 0,
+
+            // GPU
+            0x06000000..0x07000000 => self.gpu.read_arm7_u16(address),
+
+            // GBA Slot ROM
+            GBA_ROM_START.. => 0xFFFF,
+
+            // Unused IO region
+            0x04000400..0x04000500 => 0,
+
+            _ => {
+                #[cfg(feature = "log")]
+                log::warn!("ARM7: Unrecognized halfword read from ${address:08X}");
+                0
+            }
+        }
+    }
+
+    pub fn arm7_read_byte(&self, address: u32) -> u8 {
+        if (0x0400_0400..0x0400_0520).contains(&address) {
+            return self.spu.read8(address);
+        }
+        #[allow(non_contiguous_range_endpoints)]
+        match address {
+            0x04000180 => self.ipc.read_sync(Side::Arm7) as u8,
+            0x04000181 => (self.ipc.read_sync(Side::Arm7) >> 8) as u8,
+            0x04000184 => self.ipc.read_cnt(Side::Arm7) as u8,
+            0x04000185 => (self.ipc.read_cnt(Side::Arm7) >> 8) as u8,
+            // Main RAM
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                let off = (address & MAIN_RAM_MASK) as usize;
+                self.main_ram[off]
+            }
+
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &self.arm7_wram
+                } else {
+                    &self.shared_wram
+                };
+                mem[off]
+            }
+
+            // Direct IO byte reads
+            0x04000138 => self.rtc.read() as u8,
+            0x040001A0 => self.cart.get_auxspicnt() as u8,
+            0x040001A1 => (self.cart.get_auxspicnt() >> 8) as u8,
+            0x040001A2 => self.cart.read_auxspidata(),
+            0x040001C2 => self.spi.read_spidata(),
+            0x04000218 | 0x0400021C => 0, // DSi IE2 | DSi IF2
+            0x04000241 => self.wram_cnt & 0x3,
+            0x04000300 => self.postflg7,
+
+            // BIOS (0x00000000..0x00003FFF)
+            ..0x4000 => {
+                let pc = self.arm7.get_pc();
+
+                // BIOS protection checks
+                if pc > 0x4000 || address < self.bios_prot && pc > self.bios_prot {
+                    return 0xFF;
+                }
+
+                self.arm7_bios[address as usize]
+            }
+
+            0x06000000..0x07000000 => self.gpu.read_arm7_u8(address),
+
+            // Default case
+            _ => {
+                #[cfg(feature = "log")]
+                log::warn!("ARM7: Unrecognized byte read from ${address:08X}");
+                0
+            }
+        }
+    }
+}

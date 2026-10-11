@@ -1,7 +1,7 @@
-//! Host input: keyboard and the touch screen (gamepads: `lunaris_ds_frontend`).
+//! Host input: keyboard and the touch screen (gamepads: `ds_common`).
+use ds_emu::Emulator;
+use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use eframe::egui;
-use lunaris_ds_emu::Emulator;
-use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
 
 /// Frames a touch is kept down after the pointer is released, so that a
 /// quick tap (press and release within one host frame) still reaches the

@@ -1,7 +1,7 @@
 //! Gamepad support: controllers are detected automatically (hot-plug) via
 //! `gilrs` and mapped onto the DS buttons.
+use ds_emu::Emulator;
 use gilrs::{Axis, Button, Gilrs};
-use lunaris_ds_emu::Emulator;
 
 /// Analog stick deflection treated as a D-pad press.
 const STICK_THRESHOLD: f32 = 0.5;
@@ -17,7 +17,7 @@ impl Gamepads {
         let gilrs = match Gilrs::new() {
             Ok(gilrs) => Some(gilrs),
             Err(e) => {
-                tracing::error!("Gamepad support unavailable: {e}");
+                log::error!("Gamepad support unavailable: {e}");
                 None
             }
         };
@@ -32,10 +32,10 @@ impl Gamepads {
         while let Some(event) = gilrs.next_event() {
             match event.event {
                 gilrs::EventType::Connected => {
-                    tracing::info!("Gamepad connected: {}", gilrs.gamepad(event.id).name());
+                    log::info!("Gamepad connected: {}", gilrs.gamepad(event.id).name());
                 }
                 gilrs::EventType::Disconnected => {
-                    tracing::info!("Gamepad disconnected: {}", gilrs.gamepad(event.id).name());
+                    log::info!("Gamepad disconnected: {}", gilrs.gamepad(event.id).name());
                 }
                 _ => {}
             }

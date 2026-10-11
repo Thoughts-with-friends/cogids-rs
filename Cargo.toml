@@ -12,18 +12,7 @@ version = "0.1.0"
 
 [workspace]
 members = [
-  "core/audio",
-  "core/cartridge",
-  "core/free_bios",
-  "core/gpu",
-  "core/interrupts",
-  "core/ipc",
-  "core/lunaris_emu",
-  "core/mem_const",
-  "core/rtc",
-  "core/timers",
-  "core/touchscreen",
-  "core/wifi",
+  "core/*", #
   "gui/common",
   "gui/egui",
   "gui/tauri/src-tauri"
@@ -32,23 +21,20 @@ resolver = "3"
 default-members = ["gui/egui"]
 
 [workspace.dependencies]
-tracing = "0.1.44"
+log = "0.4.34"
 snafu = "0.9.0"
 
 # workspace members
-lunaris_ds_audio = { path = "./core/audio" }
-lunaris_ds_cartridge = { path = "./core/cartridge" }
-lunaris_ds_emu = { path = "./core/lunaris_emu" }
-lunaris_ds_free_bios = { path = "./core/free_bios" }
-lunaris_ds_gpu = { path = "./core/gpu" }
-lunaris_ds_interrupts = { path = "./core/interrupts" }
-lunaris_ds_ipc = { path = "./core/ipc" }
-lunaris_ds_mem_const = { path = "./core/mem_const" }
-lunaris_ds_rtc = { path = "./core/rtc" }
-lunaris_ds_timers = { path = "./core/timers" }
-lunaris_ds_touchscreen = { path = "./core/touchscreen" }
-lunaris_ds_wifi = { path = "./core/wifi" }
-lunaris_ds_frontend = { path = "./gui/common" }
+ds_bios = { path = "./core/bios" }
+ds_cartridge = { path = "./core/cartridge" }
+ds_common = { path = "./gui/common" }
+ds_cpu = { path = "./core/cpu" }
+ds_emu = { path = "./core/system" }
+ds_gpu = { path = "./core/gpu" }
+ds_interrupt = { path = "./core/interrupt" }
+ds_mem_addr = { path = "./core/mem_addr" }
+ds_peripherals = { path = "./core/peripherals" }
+ds_spu = { path = "./core/spu" }
 
 
 [workspace.lints.clippy]
@@ -73,7 +59,6 @@ cognitive_complexity = "deny"
 debug_assert_with_mut_call = "deny"
 disallowed_script_idents = "deny"
 doc_link_with_quotes = "deny"
-empty_enum = "deny"
 empty_line_after_outer_attr = "deny"
 empty_structs_with_brackets = "deny"
 expect_used = "deny"
@@ -89,7 +74,6 @@ float_cmp_const = "deny"
 float_equality_without_abs = "deny"
 fn_params_excessive_bools = "deny"
 fn_to_numeric_cast_any = "deny"
-from_iter_instead_of_collect = "deny"
 if_let_mutex = "deny"
 implicit_clone = "deny"
 imprecise_flops = "deny"
