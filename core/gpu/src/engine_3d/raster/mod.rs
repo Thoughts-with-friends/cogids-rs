@@ -49,6 +49,7 @@ struct Frame<'a> {
 }
 
 impl Frame<'_> {
+    /// Vertex `i` of polygon `p`.
     #[inline]
     fn vtx(&self, p: &Polygon, i: usize) -> &Vertex {
         &self.verts[p.vertices[i]]
@@ -99,6 +100,24 @@ impl Raster {
     /// `polys`), sorted as the hardware does. When `changed` is false
     /// (same polygons and registers as the last frame) and the texture
     /// data is unchanged too, the previous frame is kept.
+    ///
+    /// ```text
+    /// from: Gpu::render_3d_frame()
+    ///   |
+    ///   v
+    /// render(state, polys, order, verts, vram, changed)
+    ///   1. snapshot texture image / palette VRAM; changed?
+    ///   2. nothing changed -> keep the last frame
+    ///   3. render_frame():
+    ///        clear_buffers()      clear color/depth/attr (or rear plane)
+    ///        bands in parallel    Band::render: polygon edges (slope.rs),
+    ///                             spans, texturing (texture.rs), depth
+    ///                             test, blending (pixel.rs)
+    ///        scanline_final_pass  edge marking, fog, anti-aliasing
+    ///   |
+    ///   v
+    /// to:   line(y) is read by render_bg_3d() while composing BG0
+    /// ```
     pub fn render(
         &mut self,
         st: &RenderState,
@@ -134,6 +153,7 @@ impl Raster {
         self.pal = pal;
     }
 
+    /// Clears the buffers, renders the bands in parallel, then the final pass.
     fn render_frame(&mut self, f: &Frame) {
         self.clear_buffers(f);
 
@@ -169,6 +189,7 @@ impl Raster {
         }
     }
 
+    /// Clears color/depth/attributes to CLEAR_COLOR/DEPTH, or loads the rear-plane bitmap.
     fn clear_buffers(&mut self, f: &Frame) {
         let st = f.st;
         let clear_z = ((st.clear_attr2 & 0x7FFF) * 0x200 + 0x1FF) as i32;
@@ -215,6 +236,7 @@ impl Raster {
         }
     }
 
+    /// Blends a translucent pixel over the destination (when DISP3DCNT bit 3 enables blending).
     fn alpha_blend(st: &RenderState, src: u32, dst: u32, mut alpha: u32) -> u32 {
         let mut dst_alpha = dst >> 24;
         if dst_alpha == 0 {
@@ -235,6 +257,7 @@ impl Raster {
         r | (g << 8) | (b << 16) | (dst_alpha << 24)
     }
 
+    /// Fog density for the pixel at `addr` from its depth and the fog table.
     fn fog_density(&self, st: &RenderState, addr: usize) -> u32 {
         let z = self.depth[addr] as u32;
         let (id, frac) = if z < st.fog_offset {
@@ -250,6 +273,7 @@ impl Raster {
         if d >= 127 { 128 } else { d }
     }
 
+    /// Mixes the fog color into the pixel at `addr` (pixels with the fog attribute bit only).
     fn apply_fog(&mut self, st: &RenderState, addr: usize) {
         if self.attr[addr] & (1 << 15) == 0 {
             return;

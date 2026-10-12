@@ -13,6 +13,7 @@ pub(super) enum DepthTest {
 }
 
 impl DepthTest {
+    /// Depth test of a polygon: equal (Z or W) when POLYGON_ATTR bit 14 is set, otherwise less.
     pub(super) fn for_poly(p: &Polygon) -> Self {
         if p.attr & (1 << 14) != 0 {
             if p.w_buffer {
@@ -27,6 +28,7 @@ impl DepthTest {
         }
     }
 
+    /// Runs the depth test of a new pixel against the destination.
     #[inline]
     pub(super) fn test(self, dstz: i32, z: i32, dstattr: u32) -> bool {
         match self {

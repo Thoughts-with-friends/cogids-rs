@@ -29,11 +29,13 @@ const fn split(address: u32) -> (usize, usize) {
 }
 
 impl Emulator {
+    /// Halfword of the raw register shadow of `engine`.
     fn io_2d_u16(&self, engine: usize, offset: usize) -> u16 {
         let regs = &self.io_2d[engine];
         u16::from_le_bytes([regs[offset & !1], regs[(offset & !1) + 1]])
     }
 
+    /// Word of the raw register shadow of `engine`.
     fn io_2d_u32(&self, engine: usize, offset: usize) -> u32 {
         let lo = u32::from(self.io_2d_u16(engine, offset & !3));
         let hi = u32::from(self.io_2d_u16(engine, (offset & !3) + 2));
@@ -49,6 +51,22 @@ impl Emulator {
     }
 
     /// Halfword write to a 2D engine register.
+    ///
+    /// ```text
+    /// from: arm9_write_halfword() when is_2d_reg(address)
+    ///   |   (u8 / u32 variants: arm9_write_byte / arm9_write_word)
+    ///   v
+    /// write_io_2d_u16(address, value)
+    ///   1. split -> engine A (0x04000000) or B (0x04001000), offset
+    ///   2. sync_dispcapcnt()       refresh the capture-busy bit first
+    ///   3. merge `value` into the raw shadow io_2d[engine]
+    ///   4. apply_io_2d()           decode the whole register into the
+    ///                              GPU (gpu.set_dispcnt_a, set_bgcnt_*,
+    ///                              scroll, rotation, windows, blending...)
+    ///   |
+    ///   v
+    /// to:   the 2D engine uses the new state from the next draw_scanline()
+    /// ```
     pub fn write_io_2d_u16(&mut self, address: u32, value: u16) {
         let (engine, offset) = split(address & !1);
         self.sync_dispcapcnt(engine, offset);
@@ -79,6 +97,8 @@ impl Emulator {
     }
 
     /// Halfword read. Write-only registers read as 0 (GBATEK).
+    /// Called by arm9_read_* for 2D registers; DISPCAPCNT and DISP3DCNT come
+    /// from the live GPU state, the rest from the shadow.
     pub fn read_io_2d_u16(&self, address: u32) -> u16 {
         let (engine, offset) = split(address & !1);
         match offset {
@@ -118,7 +138,8 @@ impl Emulator {
             | (u32::from(self.read_io_2d_u16(address + 2)) << 16)
     }
 
-    /// Forwards the (complete) register containing halfword `offset` to the GPU.
+    /// Forwards the (complete) register containing halfword `offset` to the GPU
+    /// (last step of write_io_2d_u8/u16/u32).
     fn apply_io_2d(&mut self, engine: usize, offset: usize) {
         let half = self.io_2d_u16(engine, offset);
         // The full 32-bit register for DISPCNT, BGxX/BGxY and DISPCAPCNT.

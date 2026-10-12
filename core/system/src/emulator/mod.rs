@@ -141,6 +141,7 @@ pub struct Emulator {
 }
 
 impl Drop for Emulator {
+    /// Writes any unsaved backup memory to the `.sav` file on shutdown.
     fn drop(&mut self) {
         if let Err(_err) = self.cart.flush_save() {
             #[cfg(feature = "log")]
@@ -156,7 +157,13 @@ impl Default for Emulator {
 }
 
 impl Emulator {
-    /// Create a new emulator instance with default values
+    /// Creates a powered-off emulator with zeroed memory.
+    ///
+    /// ```text
+    /// from: frontends (gui/egui, gui/tauri emu_thread, headless example)
+    /// to:   set `config`, then load_rom() (which calls power_on()) and
+    ///       run() once per frame
+    /// ```
     pub fn new() -> Self {
         Self {
             arm7: ArmCpu::new(1, CpuType::Arm7),
@@ -214,6 +221,7 @@ impl Emulator {
         }
     }
 
+    /// The ARM7 or ARM9 core (used by the interpreter and the scheduler).
     pub fn get_cpu(&self, cpu_type: CpuType) -> &ArmCpu {
         match cpu_type {
             CpuType::Arm7 => &self.arm7,
@@ -221,6 +229,7 @@ impl Emulator {
         }
     }
 
+    /// Mutable access to the ARM7 or ARM9 core.
     pub fn get_cpu_mut(&mut self, cpu_type: CpuType) -> &mut ArmCpu {
         match cpu_type {
             CpuType::Arm7 => &mut self.arm7,
@@ -247,6 +256,12 @@ impl Emulator {
     }
 
     /// Runs the hardware divider (DIVCNT 0x04000280) on the current operands.
+    ///
+    /// ```text
+    /// from: ARM9 writes to DIVCNT / DIV_NUMER / DIV_DENOM
+    ///       (arm9_write_halfword/word, write_div_operand)
+    /// to:   DIV_RESULT / DIVREM_RESULT, read back by arm9_read_word
+    /// ```
     ///
     /// Results are available immediately, so the busy bit never shows.
     /// Follows GBATEK "DS Maths" and melonDS `NDS::DivDone`: signed
@@ -305,7 +320,8 @@ impl Emulator {
         }
     }
 
-    /// Writes one 32-bit half of a divider operand and restarts the division.
+    /// Writes one 32-bit half of a divider operand and restarts the division
+    /// (ARM9 writes to 0x04000290..0x0400029F -> start_division()).
     pub fn write_div_operand(&mut self, address: u32, word: u32) {
         let (field, high) = match address & 0xC {
             0x0 => (&mut self.div_numer, false),
@@ -323,6 +339,8 @@ impl Emulator {
 
     /// Runs the square root unit (SQRTCNT 0x040002B0): floor(sqrt(param)),
     /// with a 32-bit (bit 0 clear) or 64-bit (bit 0 set) input.
+    /// Called from SQRTCNT / SQRT_PARAM writes; the result is read back
+    /// from SQRT_RESULT (0x040002B4).
     pub fn start_sqrt(&mut self) {
         let param = if self.sqrtcnt & 1 != 0 {
             self.sqrt_param
@@ -332,7 +350,8 @@ impl Emulator {
         self.sqrt_result = param.isqrt() as u32;
     }
 
-    /// Writes one 32-bit half of the square root input and restarts it.
+    /// Writes one 32-bit half of the square root input and restarts it
+    /// (ARM9 writes to 0x040002B8..0x040002BF -> start_sqrt()).
     pub fn write_sqrt_param(&mut self, address: u32, word: u32) {
         self.sqrt_param = if address & 4 != 0 {
             (self.sqrt_param & 0xFFFF_FFFF) | (u64::from(word) << 32)
@@ -344,7 +363,24 @@ impl Emulator {
 
     /* ===== power and run (public) ===== */
 
-    /// Power on the system.
+    /// Resets every component to its power-on state and, with
+    /// `config.direct_boot_enabled`, boots the cartridge directly.
+    ///
+    /// ```text
+    /// from: load_rom() (after the ROM and firmware are loaded)
+    ///   |
+    ///   v
+    /// power_on()
+    ///   1. CPUs, CP15, DMA, cartridge, GPU, SPU, timers, RTC reset
+    ///   2. add_gpu_event(0, 256 * 6)      first HBlank of line 0
+    ///   3. POWCNT2 (speakers on, Wi-Fi off); wifi.reset() from the
+    ///      firmware header (console type 0x1D, RF chip 0x40)
+    ///   4. scheduler, IPC, 2D I/O copies, keys, IE/IF/IME cleared
+    ///   5. direct_boot()                  (skips BIOS/firmware boot code)
+    ///   |
+    ///   v
+    /// to:   frontend calls run() every frame
+    /// ```
     pub fn power_on(&mut self) {
         let _ = &mut self.config.bg_enable.fill(true);
         self.cycle_count = 0;
@@ -363,6 +399,10 @@ impl Emulator {
         self.total_timestamp = 20; //Give the processors some time to run
         self.pow_cnt2.speakers = true;
         self.pow_cnt2.wifi = false;
+        let fw = &self.spi.firmware;
+        self.wifi
+            .reset((fw.read_u16(0x1C) >> 8) as u8, fw.read_u16(0x40) as u8);
+        self.wifi.set_power_cnt(false);
 
         self.system_timestamp = 0;
         self.next_event_time = 0xffffffff;
@@ -427,7 +467,29 @@ impl Emulator {
         self.cart.flush_save()
     }
 
-    /// Perform a direct boot sequence.
+    /// Sets the machine up as the firmware leaves it before jumping to the
+    /// game, without running BIOS or firmware code (melonDS
+    /// `NDS::SetupDirectBoot`).
+    ///
+    /// ```text
+    /// from: power_on() when config.direct_boot_enabled
+    ///   |
+    ///   v
+    /// direct_boot()
+    ///   1. copy cartridge header 0x000..0x16F to 0x027FFE00
+    ///   2. read ARM9/ARM7 ROM offset, entry point, RAM address, size
+    ///      from the copied header (0x027FFE20..)
+    ///   3. CPUs: registers/modes after boot, pc = entry points; CP15
+    ///      (TCM, high vectors)
+    ///   4. boot variables in main RAM: chip ID (0x027FF800/0x027FFC00),
+    ///      header CRC / secure area CRC, boot flags
+    ///   5. POSTFLG, RCNT, EXMEMCNT, AUXSPICNT, BIOS protection, WRAMCNT=3
+    ///   6. copy the ARM9 and ARM7 binaries from ROM into RAM
+    ///   7. firmware_direct_boot()          user settings into RAM
+    ///   |
+    ///   v
+    /// to:   first run() starts executing at the entry points
+    /// ```
     pub fn direct_boot(&mut self) {
         let mut boot_info = [0_u32; 8];
         // Only the first 0x170 header bytes are copied, like the firmware and
@@ -537,6 +599,14 @@ impl Emulator {
         self.cycles = 0;
     }
 
+    /// Writes the firmware values the boot menu leaves in main RAM:
+    /// firmware size, part of the header, and the user settings (name,
+    /// language, touch calibration...) at 0x027FFC80.
+    ///
+    /// ```text
+    /// from: direct_boot() step 7
+    /// to:   read by the game's OS_GetOwnerInfo / TP calibration at boot
+    /// ```
     fn firmware_direct_boot(&mut self) {
         self.arm7_write_word(0x27FF864, 0);
 
@@ -557,7 +627,8 @@ impl Emulator {
         }
     }
 
-    /// Run emulator in debug mode.
+    /// Toggles `config.test` and logs IE/IF of both CPUs (debug aid, `log`
+    /// feature only).
     pub fn debug(&mut self) {
         #[cfg(feature = "log")]
         {
@@ -578,7 +649,7 @@ impl Emulator {
     }
 
     /// Whether any enabled interrupt is requested (IE & IF), ignoring IME.
-    /// This is what releases a halted CPU.
+    /// This is what releases a halted CPU (execute() step 2).
     pub const fn irq_line_raised(&self, cpu_id: i32) -> bool {
         match cpu_id {
             0 => (self.int9_reg.irq_enable & self.int9_reg.irq_flags) != 0,
@@ -586,7 +657,8 @@ impl Emulator {
         }
     }
 
-    /// Check whether a CPU is requesting an interrupt.
+    /// Whether the CPU should take an IRQ exception: IE & IF != 0 and IME
+    /// set (CPSR.I is checked by the caller, execute()).
     pub fn requesting_interrupt(&self, cpu_id: i32) -> bool {
         match cpu_id {
             0 => {
@@ -611,39 +683,43 @@ impl Emulator {
 
     /* ===== get frame(public) ===== */
 
-    /// Copy upper screen framebuffer.
+    /// Copies the finished top screen (256x192 0x00RRGGBB) into `buffer`.
+    /// Called by the frontends after run().
     pub fn get_upper_frame(&self, buffer: &mut [u32]) {
         self.gpu.get_upper_frame(buffer);
     }
 
-    /// Copy lower screen framebuffer.
+    /// Copies the finished bottom (touch) screen into `buffer`.
+    /// Called by the frontends after run().
     pub fn get_lower_frame(&self, buffer: &mut [u32]) {
         self.gpu.get_lower_frame(buffer);
     }
 
-    /// Set upper screen framebuffer.
+    /// Replaces the top screen buffer (unused by the frontends).
     pub fn set_upper_screen(&mut self, buffer: Vec<u32>) {
         self.gpu.set_upper_buffer(buffer);
     }
 
-    /// Set lower screen framebuffer.
+    /// Replaces the bottom screen buffer (unused by the frontends).
     pub fn set_lower_screen(&mut self, buffer: Vec<u32>) {
         self.gpu.set_lower_buffer(buffer);
     }
 
     /* frame, display and dma ===== (public) ===== */
 
-    /// Check if a frame has completed.
+    /// Not implemented (CorgiDS API placeholder); use `gpu.is_frame_complete()`.
     pub fn frame_complete(&self) -> bool {
         unimplemented!();
     }
 
-    /// Check if screens are swapped.
+    /// Not implemented (CorgiDS API placeholder); POWCNT1 bit 15 decides
+    /// which engine drives the top screen.
     pub fn display_swapped(&self) -> bool {
         unimplemented!();
     }
 
-    /// Check if DMA is active for a CPU.
+    /// Whether any DMA channel is transferring; execute() stalls both CPUs
+    /// while it is.
     pub fn dma_active(&self) -> bool {
         self.dma.is_active()
     }
@@ -655,23 +731,24 @@ impl Emulator {
     // pub fn gamecart_dma_request(&mut self);
     // pub fn gxfifo_dma_request(&mut self);
 
-    /// Request HBLANK DMA.
+    /// HBlank DMA trigger: gpu_handle_event() -> hblank_request().
     pub fn hblank_dma_request(&mut self) {
         self.hblank_request(); // inline
     }
 
-    /// Request game cartridge DMA.
+    /// Cartridge DMA trigger: cartridge_run() -> gamecart_request().
     pub fn gamecart_dma_request(&mut self) {
         self.gamecart_request(); // wrapping
     }
 
-    /// Request GX FIFO DMA.
+    /// GXFIFO DMA trigger: check_fifo_dma() & co. -> gxfifo_request().
     // GPU::check_GXFIFO_DMA() -> eng_3D.check_FIFO_DMA()
     pub fn gxfifo_dma_request(&mut self) {
         self.gxfifo_request(); // wrapping
     }
 
-    /// Check GX FIFO DMA status.
+    /// Starts GXFIFO DMAs if the FIFO is less than half full; called by
+    /// dma_write_cnt() when a timing-7 channel is enabled.
     // GPU::check_GXFIFO_DMA() -> eng_3D.check_FIFO_DMA()
     pub fn check_gxfifo_dma(&mut self) {
         if self.gpu.engine_3d.gxfifo.len() < 128 {
@@ -681,7 +758,8 @@ impl Emulator {
 
     /* ===== add and sys stamp (public) ===== */
 
-    /// Add a GPU event.
+    /// Schedules the GPU scanline event `relative_time` cycles from now
+    /// (power_on() only; later events use reschedule_gpu_event()).
     pub fn add_gpu_event(&mut self, event_id: i32, relative_time: u64) {
         self.gpu_event.id = event_id;
         self.gpu_event.activation_time = self.system_timestamp + relative_time;
@@ -692,7 +770,8 @@ impl Emulator {
     }
 
     /// Schedules the next GPU (scanline) event `relative_time` cycles after
-    /// the one being handled. Basing it on the due time rather than the
+    /// the one being handled (called at the end of gpu_handle_event()). Basing it on the due time
+    /// rather than the
     /// current time keeps handling latency from accumulating: frames used
     /// to run ~2% long (572k instead of 560190 cycles), which made the SPU
     /// produce ~33.4 kHz instead of ~32.7 kHz of audio per real second.
@@ -701,7 +780,9 @@ impl Emulator {
         self.gpu_event.activation_time += relative_time;
     }
 
-    /// Add a DMA event.
+    /// Schedules DMA channel `event_id` to run `relative_time` cycles from
+    /// now; run() then calls dma_handle_event(). Only one DMA event is
+    /// pending at a time (the last one scheduled wins).
     pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
         #[cfg(feature = "log")]
         log::trace!("call add_dma_event");
@@ -715,7 +796,21 @@ impl Emulator {
         }
     }
 
-    /// Recalculate system timestamp.
+    /// Advances `system_timestamp` to the end of the next time slice.
+    ///
+    /// ```text
+    /// from: run() step 2a
+    ///   |
+    ///   v
+    /// calculate_system_timestamp()
+    ///   1. next = earliest pending event (GPU, and DMA if scheduled)
+    ///   2. slice = next - now, clamped to 1..=64 cycles
+    ///      (an overdue event also gives a 64-cycle slice)
+    ///   3. system_timestamp += slice
+    ///   |
+    ///   v
+    /// to:   run() lets both CPUs catch up to the new time
+    /// ```
     pub fn calculate_system_timestamp(&mut self) {
         // NOTE: It appears that next_event_time < system_timestamp is in accordance with CorgiDS specifications.
         // (This is counterintuitive and the reason is unclear.)
@@ -742,16 +837,33 @@ impl Emulator {
 
     /* ===== touchscreen (public) ===== */
 
-    /// Handle touchscreen press.
+    /// Sets the stylus position for the next frames: pixel `x, y` on the
+    /// bottom screen, or `y == 0xFFF` for "not touching".
+    ///
+    /// ```text
+    /// from: frontend before run() (gui/egui input.rs Touch::apply,
+    ///       gui/tauri emu_thread apply_touch, headless TOUCH=)
+    ///   |
+    ///   v
+    /// touchscreen_press(x, y)
+    ///   1. EXTKEYIN bit 6 (pen down, read by the ARM7 at 0x04000136)
+    ///   2. spi.touchscreen_press() -> TSC latches ADC x<<4, y<<4
+    ///   |
+    ///   v
+    /// to:   ARM7 TP code samples the TSC over SPI (write_spidata, dev 2)
+    ///       and passes the result to the ARM9 (IPC FIFO tag 6 / auto
+    ///       sampling buffer)
+    /// ```
     pub fn touchscreen_press(&mut self, x: i32, y: i32) {
         self.ext_key_in.pen_down = y != 0xfff;
         self.spi.touchscreen_press(x, y);
     }
 
-    /// Call high-level BIOS function.
     // ===== read and write arm =====
     // - moved read_arm7/read_arm9, write_arm7/write_arm9
     /* ===== cartrige ===== */
+    /// Copies the KEY1 seed table (ARM7 BIOS 0x30..0x1077) into `buffer`
+    /// (CorgiDS API; the cartridge crate now reads the BIOS itself).
     pub fn cart_copy_keybuffer(&self, buffer: &mut [u8]) {
         if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
             buffer[..0x1048].copy_from_slice(bios);
@@ -761,6 +873,8 @@ impl Emulator {
         }
     }
 
+    /// Writes a halfword of the cartridge header copy at 0x027FFE00
+    /// (CorgiDS API; unused).
     pub fn cart_write_header(&mut self, address: u32, halfword: u16) {
         let addr = ((0x027FFE00 + (address & 0x1FF)) & MAIN_RAM_MASK) as usize;
 

@@ -54,6 +54,7 @@ impl Default for PowerMan {
 impl PowerMan {
     const MASKS: [u8; 8] = [0x7F, 0x00, 0x01, 0x03, 0x0F, 0, 0, 0];
 
+    /// First byte selects a register (bit 7 = read), the second reads or writes it.
     pub const fn transfer(&mut self, value: u8) -> u8 {
         if !self.selected {
             self.selected = true;
@@ -77,6 +78,7 @@ impl PowerMan {
         out
     }
 
+    /// Chip select released: the next byte is a register index again.
     pub const fn release(&mut self) {
         self.selected = false;
     }

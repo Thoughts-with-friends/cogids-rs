@@ -6,6 +6,25 @@ use ds_peripherals::ipc::Side;
 
 use ds_gpu::engine_3d::state::Gpu3D;
 impl Emulator {
+    /// ARM9 32-bit read: the ARM9 memory map (TCM is handled earlier by
+    /// read_word()).
+    ///
+    /// ```text
+    /// from: read_word(Arm9) / ARM9 DMA (dma_handle_event)
+    ///   |
+    ///   v
+    /// arm9_read_word(address)
+    ///   0xFFFF_0000..             ARM9 BIOS
+    ///   0x02xx_xxxx               main RAM
+    ///   0x03xx_xxxx               shared WRAM (WRAMCNT)
+    ///   0x0400_0000..             2D engine A/B, DMA, IPC, cartridge,
+    ///                             IE/IF/IME, VRAMCNT, divider, sqrt,
+    ///                             GXSTAT and 3D registers
+    ///   0x0410_0000               IPC FIFO receive (may raise IRQ)
+    ///   0x0410_0010               cartridge data -> cart_read_data()
+    ///   0x05/0x06/0x07xx_xxxx     palette / VRAM / OAM (gpu)
+    ///   anything else             0 (logged with the `log` feature)
+    /// ```
     /// # Panics
     #[expect(clippy::unwrap_used)]
     pub fn arm9_read_word(&mut self, address: u32) -> u32 {

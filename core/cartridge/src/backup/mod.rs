@@ -277,6 +277,7 @@ impl BackupMemory {
         }
     }
 
+    /// Status/write-enable commands common to all chips, then the chip-specific protocol.
     fn transfer_chip(&mut self, value: u8) -> u8 {
         if self.chip == SaveChip::None {
             return 0xFF;
@@ -305,10 +306,12 @@ impl BackupMemory {
         reply
     }
 
+    /// Whether the write enable latch (WEL) is set.
     const fn write_enabled(&self) -> bool {
         self.status & STATUS_WEL != 0
     }
 
+    /// Marks the contents dirty so end_frame() schedules a flush.
     const fn mark_written(&mut self) {
         self.dirty = true;
         self.idle_frames = 0;

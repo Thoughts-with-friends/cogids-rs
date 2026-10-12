@@ -89,10 +89,12 @@ impl Gpu3D {
 
     // ===== DISP3DCNT / GXSTAT =====
 
+    /// DISP3DCNT, including the underflow/overflow status bits 12-13.
     pub fn get_disp3dcnt(&self) -> u16 {
         self.disp_cnt as u16
     }
 
+    /// DISP3DCNT write; writing 1 to bits 12-13 acknowledges them.
     pub fn set_disp3dcnt(&mut self, value: u16) {
         let v = u32::from(value);
         self.disp_cnt = (v & 0x4FFF) | (self.disp_cnt & 0x3000);
@@ -145,10 +147,12 @@ impl Gpu3D {
         self.gxstat >> 30
     }
 
+    /// Vertices in the current polygon RAM bank.
     pub fn get_vert_count(&self) -> u16 {
         self.num_vertices as u16
     }
 
+    /// Polygons in the current polygon RAM bank.
     pub fn get_poly_count(&self) -> u16 {
         self.num_polygons as u16
     }
@@ -156,6 +160,23 @@ impl Gpu3D {
     /// VBlank (melonDS `GPU3D::VBlank`): on a pending SWAP_BUFFERS the
     /// polygon list becomes the render list; the rendering registers are
     /// latched every frame.
+    ///
+    /// ```text
+    /// from: ds_emu gpu_handle_event() at line 192 (VBlank start)
+    ///   |
+    ///   v
+    /// end_of_frame()
+    ///   1. SWAP_BUFFERS pending:
+    ///        render list = opaque polygons, then translucent ones,
+    ///        Y-sorted (translucent too unless manual sort was asked)
+    ///        render bank = current bank; flip to the other bank, reset
+    ///        polygon/vertex counts; GX commands may run again
+    ///   2. latch DISP3DCNT, clear color/depth, fog, edge and toon tables
+    ///      into `render` (dirty if anything changed)
+    ///   |
+    ///   v
+    /// to:   render_3d_frame() at line 215
+    /// ```
     pub fn end_of_frame(&mut self) {
         if self.swap_buffers {
             let bank = self.cur_bank;

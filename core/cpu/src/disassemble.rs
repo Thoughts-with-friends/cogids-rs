@@ -1,6 +1,7 @@
 use crate::arm_cpu::ArmCpu;
 use crate::instruction_table::ARMInstr;
 
+/// Disassembles one ARM instruction (debug log of ds_emu arm_interpret).
 pub fn disasm_arm(cpu: &mut ArmCpu, instruction: u32, address: u32) -> String {
     let opcode = arm_decode(instruction);
 
@@ -19,6 +20,7 @@ pub fn disasm_arm(cpu: &mut ArmCpu, instruction: u32, address: u32) -> String {
     }
 }
 
+/// Data processing (AND..MVN) text.
 fn disasm_data_processing(cpu: &mut ArmCpu, instruction: u32) -> String {
     let opcode = (instruction >> 21) & 0xF;
     let first_operand = (instruction >> 16) & 0xF;
@@ -119,6 +121,7 @@ fn disasm_data_processing(cpu: &mut ArmCpu, instruction: u32) -> String {
     )
 }
 
+/// MRS text.
 fn disasm_mrs(_cpu: &ArmCpu, instruction: u32) -> String {
     let cond = ArmCpu::get_condition_name(instruction >> 28);
     let rd = ArmCpu::get_reg_name((instruction >> 12) & 0xF);
@@ -129,6 +132,7 @@ fn disasm_mrs(_cpu: &ArmCpu, instruction: u32) -> String {
     format!("mrs{} {}, {}", cond, rd, psr)
 }
 
+/// MSR text.
 fn disasm_msr(cpu: &mut ArmCpu, instruction: u32) -> String {
     let cond = ArmCpu::get_condition_name(instruction >> 28);
 
@@ -150,6 +154,7 @@ fn disasm_msr(cpu: &mut ArmCpu, instruction: u32) -> String {
     format!("msr{} {}, {}", cond, psr, operand_str)
 }
 
+/// LDR/STR text.
 fn disasm_load_store(_cpu: &ArmCpu, instruction: u32) -> String {
     let mut out = String::new();
 
@@ -201,6 +206,7 @@ fn disasm_load_store(_cpu: &ArmCpu, instruction: u32) -> String {
     out
 }
 
+/// B/BL text with the absolute target.
 fn disasm_branch(cpu: &ArmCpu, instruction: u32, address: u32) -> String {
     let condition = instruction >> 28;
 
@@ -233,6 +239,7 @@ fn disasm_branch(cpu: &ArmCpu, instruction: u32, address: u32) -> String {
     out
 }
 
+/// BX text.
 pub fn disasm_bx(instruction: u32) -> String {
     format!(
         "bx{} {}",

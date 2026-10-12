@@ -14,7 +14,14 @@ impl Emulator {
     // Initialize emulator subsystems.
     // remove pub fn init(&mut self) -> i32
 
-    /// Load firmware from internal source.
+    /// Loads the BIOS and firmware dumps named in `config` (a missing
+    /// firmware file falls back to the built-in image).
+    ///
+    /// ```text
+    /// from: frontend, optionally, before load_rom()
+    /// to:   arm9_bios / arm7_bios, spi.init(firmware) -> SPI flash and
+    ///       the user settings patch
+    /// ```
     /// # Errors
     pub fn load_firmware(&mut self) -> Result<(), EmuError> {
         let bin =
@@ -55,7 +62,23 @@ impl Emulator {
         self.cart.load_database(name)
     }
 
-    /// Load a ROM file.
+    /// Loads a `.nds` file and powers the console on.
+    ///
+    /// ```text
+    /// from: frontend (gui/egui run_emulator, gui/tauri emu_thread::start,
+    ///       headless main)
+    ///   |
+    ///   v
+    /// load_rom(path)
+    ///   1. cartridge_load_rom()   read ROM, pick the save chip and load
+    ///                             the .sav, KEY1-encrypt the secure area
+    ///                             (non direct boot)
+    ///   2. no firmware yet?       spi.init(built-in or configured image)
+    ///   3. power_on()             reset everything, direct_boot()
+    ///   |
+    ///   v
+    /// to:   frontend calls run() every frame
+    /// ```
     /// # Errors
     pub fn load_rom<A>(&mut self, rom_path: A) -> Result<(), CartridgeError>
     where

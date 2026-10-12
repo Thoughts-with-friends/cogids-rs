@@ -8,7 +8,34 @@ use crate::emulator::Emulator;
 use ds_interrupt::Interrupt;
 
 impl Emulator {
-    /// Handle scheduler event
+    /// Runs the DMA channel whose scheduler event came due, transferring
+    /// all of its units at once.
+    ///
+    /// ```text
+    /// from: run() step 2f (dma_event.activation_time reached); the event
+    ///       was added by dma_write_cnt (immediate), hblank_request,
+    ///       gamecart_request, gxfifo_request or a repeating DMA
+    ///   |
+    ///   v
+    /// dma_handle_event()
+    ///   loop per unit:
+    ///     1. internal_len += 1; all units done?
+    ///          yes: IRQ (DMA0-3 of the owning CPU) if enabled
+    ///               repeat off -> disable channel, clear active bit
+    ///               repeat on  -> reload dest (mode 3); immediate timing
+    ///                             re-schedules itself, others wait for
+    ///                             their trigger again
+    ///               return
+    ///     2. copy one halfword/word with the owning CPU's bus
+    ///        (arm9_/arm7_read_* -> arm9_/arm7_write_*, so I/O side
+    ///        effects such as GXFIFO writes happen)
+    ///     3. step dest / source by +size, -size or fixed
+    ///     4. ARM9 GXFIFO timing (7): stop after 112 units, keep the rest
+    ///        for the next FIFO request
+    ///   |
+    ///   v
+    /// to:   run(); execute() resumes the CPUs once active_dmas is 0
+    /// ```
     pub fn dma_handle_event(&mut self) {
         #[cfg(feature = "log")]
         log::debug!("Emulator::dma_handle_event has called.");
@@ -207,7 +234,24 @@ impl Emulator {
         panic!("C++ code is not called.")
     }
 
-    /// Write control register to DMA channel
+    /// DMAxCNT high halfword write: updates the control bits and starts
+    /// the channel on a 0 -> 1 edge of the enable bit.
+    ///
+    /// ```text
+    /// from: arm9_/arm7_write_halfword(DMAxCNT_H) / dma_write_len_cnt()
+    ///   |
+    ///   v
+    /// dma_write_cnt(index, cnt)
+    ///   1. cnt.set(cnt)                 (start timing width per CPU)
+    ///   2. newly enabled?  latch source/dest, internal_len = 0
+    ///        timing 0 (immediate) -> mark active, add_dma_event(now)
+    ///        timing 7 (GXFIFO)    -> check_gxfifo_dma()
+    ///        other timings        -> wait for hblank_request /
+    ///                                gamecart_request / ...
+    ///   |
+    ///   v
+    /// to:   dma_handle_event() via the scheduler
+    /// ```
     pub fn dma_write_cnt(&mut self, index: usize, cnt: u16) {
         #[cfg(feature = "log")]
         log::debug!("call dma_write_cnt: index: {index}, cnt: {cnt}");
@@ -243,7 +287,8 @@ impl Emulator {
         }
     }
 
-    /// Write length and control register as single word
+    /// 32-bit DMAxCNT write: low half = length (`dma.write_len`), high
+    /// half = control (`dma_write_cnt`).
     pub fn dma_write_len_cnt(&mut self, index: usize, word: u32) {
         if index >= self.dma.dmas.len() {
             return;
@@ -253,7 +298,13 @@ impl Emulator {
         self.dma_write_cnt(index, (word >> 16) as u16);
     }
 
-    /// Request HBLANK-triggered DMA transfers
+    /// Starts the first enabled ARM9 HBlank DMA (timing 2).
+    ///
+    /// ```text
+    /// from: gpu_handle_event() HBlank start (visible lines) ->
+    ///       hblank_dma_request()
+    /// to:   add_dma_event(now) -> dma_handle_event()
+    /// ```
     pub fn hblank_request(&mut self) {
         for i in 0..4 {
             // for ARM9
@@ -266,7 +317,14 @@ impl Emulator {
         }
     }
 
-    /// Request game cartridge DMA transfer
+    /// Starts the cartridge DMA of the CPU that owns the slot (EXMEMCNT
+    /// bit 11): ARM7 channels with timing 4 or ARM9 channels with timing 5.
+    ///
+    /// ```text
+    /// from: cartridge_run() when a ROM data word is ready ->
+    ///       gamecart_dma_request()
+    /// to:   add_dma_event(now) -> dma_handle_event() reads 0x04100010
+    /// ```
     pub fn gamecart_request(&mut self) {
         if self.arm7_has_cart_rights() {
             // NDS7 DMAs
@@ -290,7 +348,13 @@ impl Emulator {
         }
     }
 
-    /// Request GXFIFO DMA transfer
+    /// Starts the first enabled ARM9 GXFIFO DMA (timing 7).
+    ///
+    /// ```text
+    /// from: check_fifo_dma() / request_fifo_dma() / check_gxfifo_dma()
+    ///       (GXFIFO less than half full) -> gxfifo_dma_request()
+    /// to:   add_dma_event(now) -> dma_handle_event() (112 words max)
+    /// ```
     pub fn gxfifo_request(&mut self) {
         for i in 0..4 {
             let dma = &self.dma.dmas[i];

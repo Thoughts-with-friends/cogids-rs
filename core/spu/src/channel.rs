@@ -56,6 +56,7 @@ pub(crate) struct Channel {
 }
 
 impl Channel {
+    /// SOUNDxCNT write: volume, shift, pan, format; a 0 -> 1 start bit sets key_on.
     pub(crate) fn set_cnt(&mut self, value: u32) {
         let old = self.cnt;
         self.cnt = value & 0xFF7F_837F;
@@ -73,14 +74,17 @@ impl Channel {
         }
     }
 
+    /// Sample format: 0 PCM8, 1 PCM16, 2 ADPCM, 3 PSG/noise.
     pub(crate) const fn format(&self) -> u32 {
         (self.cnt >> 29) & 3
     }
 
+    /// Repeat mode: 1 loop, 2 one-shot.
     pub(crate) const fn repeat(&self) -> u32 {
         (self.cnt >> 27) & 3
     }
 
+    /// Key on (first run() after start): reload the timer, reset position and prefill the FIFO.
     pub(crate) fn start(&mut self, bus: &mut Bus) {
         self.timer = u32::from(self.timer_reload);
         self.pos = if self.format() == 3 { -1 } else { -3 };
@@ -96,6 +100,7 @@ impl Channel {
         }
     }
 
+    /// Reads up to 16 bytes of sample data from memory into the channel FIFO.
     pub(crate) fn fifo_fill(&mut self, bus: &mut Bus) {
         let total = self.loop_pos + self.length;
         if self.fifo_offset >= total {
@@ -119,6 +124,7 @@ impl Channel {
         self.fifo_level += burst as i32;
     }
 
+    /// Takes `bytes` bytes from the FIFO, refilling it when half empty.
     pub(crate) fn fifo_read(&mut self, bytes: usize, bus: &mut Bus) -> u32 {
         let mut value = 0;
         for i in 0..bytes {
@@ -148,6 +154,7 @@ impl Channel {
         }
     }
 
+    /// Timer overflow: next signed 8-bit sample.
     pub(crate) fn next_pcm8(&mut self, bus: &mut Bus) {
         self.pos += 1;
         if self.pos < 0 {
@@ -161,6 +168,7 @@ impl Channel {
         self.cur_sample = i16::from(self.fifo_read(1, bus) as u8 as i8) << 8;
     }
 
+    /// Timer overflow: next signed 16-bit sample.
     pub(crate) fn next_pcm16(&mut self, bus: &mut Bus) {
         self.pos += 1;
         if self.pos < 0 {
@@ -174,6 +182,7 @@ impl Channel {
         self.cur_sample = self.fifo_read(2, bus) as u16 as i16;
     }
 
+    /// Timer overflow: header at the start, then the next 4-bit IMA-ADPCM nibble.
     pub(crate) fn next_adpcm(&mut self, bus: &mut Bus) {
         self.pos += 1;
         if self.pos < 8 {
@@ -215,11 +224,13 @@ impl Channel {
         self.cur_sample = self.adpcm_val as i16;
     }
 
+    /// Timer overflow: next step of the square wave (duty from SOUNDxCNT bits 24-26).
     pub(crate) fn next_psg(&mut self) {
         self.pos += 1;
         self.cur_sample = PSG_TABLE[((self.cnt >> 24) & 7) as usize][(self.pos & 7) as usize];
     }
 
+    /// Timer overflow: next bit of the 15-bit LFSR noise.
     pub(crate) fn next_noise(&mut self) {
         if self.noise & 1 != 0 {
             self.noise = (self.noise >> 1) ^ 0x6000;
@@ -269,6 +280,7 @@ impl Channel {
         (i32::from(self.cur_sample) << self.volume_shift) * self.volume
     }
 
+    /// Adds the sample to left/right with the channel panning.
     pub(crate) fn pan_output(&self, sample: i32, left: &mut i32, right: &mut i32) {
         *left += ((i64::from(sample) * i64::from(128 - self.pan)) >> 10) as i32;
         *right += ((i64::from(sample) * i64::from(self.pan)) >> 10) as i32;

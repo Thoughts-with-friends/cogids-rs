@@ -58,6 +58,18 @@ impl NDSCart {
 
     /// Writes AUXSPIDATA: exchanges one byte with the save chip.
     ///
+    /// ```text
+    /// from: ds_emu arm7_/arm9_write_halfword|byte(0x040001A2)
+    ///   1. slot enabled and AUXSPICNT in SPI mode, else ignore
+    ///   2. first byte -> backup.select()       (byte is a command)
+    ///   3. backup.transfer(value)              EEPROM / FLASH state
+    ///                                          machine (backup/), reply
+    ///                                          kept for AUXSPIDATA reads
+    ///   4. chip-select hold clear -> backup.release() (ends the command,
+    ///      a finished write marks the save dirty)
+    /// to:   save_check() writes the .sav after the game stops writing
+    /// ```
+    ///
     /// The chip is selected by the first byte and released after any byte
     /// written while AUXSPICNT bit 6 (chip select hold) is clear.
     pub fn set_auxspidata(&mut self, value: u8) {

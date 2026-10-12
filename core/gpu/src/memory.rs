@@ -75,26 +75,31 @@ impl Gpu {
         self.vram.write(region, offset, bytes);
     }
 
+    /// ARM9 write to engine A BG VRAM (0x06000000) through the bank mapping.
     pub fn write_bga(&mut self, address: u32, halfword: u16) {
         self.vram
             .write(Region::BgA, address, &halfword.to_le_bytes());
     }
 
+    /// ARM9 write to engine B BG VRAM (0x06200000) through the bank mapping.
     pub fn write_bgb(&mut self, address: u32, halfword: u16) {
         self.vram
             .write(Region::BgB, address, &halfword.to_le_bytes());
     }
 
+    /// ARM9 write to engine A OBJ VRAM (0x06400000) through the bank mapping.
     pub fn write_obja(&mut self, address: u32, halfword: u16) {
         self.vram
             .write(Region::ObjA, address, &halfword.to_le_bytes());
     }
 
+    /// ARM9 write to engine B OBJ VRAM (0x06600000) through the bank mapping.
     pub fn write_objb(&mut self, address: u32, halfword: u16) {
         self.vram
             .write(Region::ObjB, address, &halfword.to_le_bytes());
     }
 
+    /// ARM9 write to LCDC VRAM (0x06800000, banks mapped to the CPU).
     pub fn write_lcdc(&mut self, address: u32, halfword: u16) {
         self.vram
             .write(Region::Lcdc, address, &halfword.to_le_bytes());
@@ -106,24 +111,29 @@ impl Gpu {
         self.vram.read_u8(Region::Arm7, address)
     }
 
+    /// ARM7 16-bit read of VRAM banks C/D mapped to the ARM7 (0x06000000).
     #[inline]
     pub fn read_arm7_u16(&self, address: u32) -> u16 {
         self.vram.read_u16(Region::Arm7, address)
     }
 
+    /// ARM7 32-bit read of VRAM banks C/D (0x06000000).
     #[inline]
     pub fn read_arm7_u32(&self, address: u32) -> u32 {
         self.vram.read_u32(Region::Arm7, address)
     }
 
+    /// ARM7 32-bit write to VRAM banks C/D (0x06000000).
     pub fn write_arm7_u32(&mut self, address: u32, value: u32) {
         self.vram.write(Region::Arm7, address, &value.to_le_bytes());
     }
 
+    /// ARM7 16-bit write to VRAM banks C/D (0x06000000).
     pub fn write_arm7_u16(&mut self, address: u32, value: u16) {
         self.vram.write(Region::Arm7, address, &value.to_le_bytes());
     }
 
+    /// ARM7 8-bit write to VRAM banks C/D (0x06000000).
     pub fn write_arm7_u8(&mut self, address: u32, value: u8) {
         self.vram.write(Region::Arm7, address, &[value]);
     }
@@ -132,11 +142,13 @@ impl Gpu {
 const OAM_MASK: u32 = 0x7FF;
 
 impl Gpu {
+    /// Byte read from OAM (0x07000000, engine A; +0x400 engine B).
     pub fn read_oam_u8(&self, address: u32) -> u8 {
         let index = (address & OAM_MASK) as usize;
         self.oam[index]
     }
 
+    /// Halfword read from OAM.
     pub fn read_oam_u16(&self, address: u32) -> u16 {
         let idx = (address & OAM_MASK) as usize;
 
@@ -146,6 +158,7 @@ impl Gpu {
         u16::from_le_bytes([lo, hi])
     }
 
+    /// Word read from OAM.
     pub fn read_oam_u32(&self, address: u32) -> u32 {
         let idx = (address & OAM_MASK) as usize;
 
@@ -171,6 +184,7 @@ impl Gpu {
         self.palette_lower[index..index + 2].copy_from_slice(&value.to_le_bytes());
     }
 
+    /// Halfword write to OAM (0x07000000, 2 KB).
     pub fn write_oam(&mut self, address: u32, halfword: u16) {
         let index = (address & 0x7FE) as usize;
         self.oam[index..index + 2].copy_from_slice(&halfword.to_le_bytes());

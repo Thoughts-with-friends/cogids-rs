@@ -27,6 +27,7 @@ pub enum Interrupt {
 }
 
 impl Interrupt {
+    /// Interrupt for IE/IF bit number `id` (`None` if unused).
     pub const fn from_usize(value: usize) -> Option<Self> {
         Some(match value {
             0 => Self::VBlank,
@@ -67,6 +68,7 @@ pub struct InterruptRegs {
 }
 
 impl InterruptRegs {
+    /// Not implemented (CorgiDS placeholder; ds_emu checks IE & IF itself).
     pub fn is_requesting_int(&self, _bit: u32) -> bool {
         // (self.irq_enable & bit != 0) && (self.irq_flags & bit != 0)
         unimplemented!("It is not used in C++ and has no definition.");

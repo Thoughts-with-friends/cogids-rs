@@ -77,6 +77,21 @@ impl SwiContext for Caller<'_> {
 impl Emulator {
     /// Runs the BIOS function requested by `SWI` on CPU `cpu_id`
     /// (0 = ARM9). Returns the cycles taken.
+    ///
+    /// ```text
+    /// from: arm_instruction::swi / thumb SWI, when config.hle_bios is set
+    ///       (otherwise the CPU jumps into the BIOS image: handle_swi)
+    ///   |
+    ///   v
+    /// hle_bios(cpu_id)
+    ///   wrap the CPU + bus in `Caller` (SwiContext) and call
+    ///   ds_bios::swi::arm9 / arm7, which decodes the SWI number and runs
+    ///   Div, CpuSet, LZ77/Huffman decompression, Halt, IntrWait, CRC...
+    ///   using reg()/set_reg() and read*/write* (normal bus routing)
+    ///   |
+    ///   v
+    /// to:   back to the interpreter, which continues after the SWI
+    /// ```
     pub fn hle_bios(&mut self, cpu_id: i32) -> i32 {
         if cpu_id == 0 {
             swi::arm9(&mut Caller {

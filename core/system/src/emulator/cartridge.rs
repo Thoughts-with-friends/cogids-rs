@@ -5,6 +5,22 @@ use ds_cartridge::{BackupMemory, CartCommand, CartridgeError, SaveMemType, game_
 
 impl Emulator {
     /// Loads ROM image and optional save data.
+    ///
+    /// ```text
+    /// from: load_rom() step 1
+    ///   |
+    ///   v
+    /// cartridge_load_rom(path)
+    ///   1. flush the previous game's save
+    ///   2. read the whole ROM into cart.rom, remember its name
+    ///   3. cartridge_setup_backup()   save chip type + .sav contents
+    ///   4. direct boot?  done
+    ///   5. otherwise re-encrypt the secure area with KEY1 (as on a real
+    ///      card) and leave KEY1 initialised for the boot protocol
+    ///   |
+    ///   v
+    /// to:   load_rom() -> power_on()
+    /// ```
     /// # Errors
     pub fn cartridge_load_rom(&mut self, rom_file: &Path) -> Result<(), CartridgeError> {
         use std::fs::File;
@@ -219,7 +235,9 @@ impl Emulator {
         }
     }
 
-    /// Initializes keycode from chip ID and level.
+    /// Initializes the KEY1 key table from the ARM7 BIOS seed and the game
+    /// code (GBATEK "init_keycode"), applying it `level` times.
+    /// Called by cartridge_load_rom() and the card protocol.
     pub fn cartridge_init_keycode(&mut self, idcode: u32, level: i32, modulo: u32) {
         if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
             self.cart.key1_buffer[..0x1048].copy_from_slice(bios);
@@ -244,7 +262,23 @@ impl Emulator {
         }
     }
 
-    /// Executes cartridge transfer logic for a given number of cycles.
+    /// Produces the next 32-bit word of a running ROM transfer.
+    ///
+    /// ```text
+    /// from: run() step 2g, every slice; the transfer was started by a
+    ///       ROMCTRL write (cart command in 0x040001A8..)
+    ///   |
+    ///   v
+    /// cartridge_run(cycles)
+    ///   1. busy and no word waiting?  count down 8 cycles per word
+    ///   2. by command: dummy / header / chip ID / KEY1 enable /
+    ///      secure area / ROM data (0xB7) -> data_output, word_ready
+    ///   3. bytes_left -= 4; gamecart_dma_request()  (DMA may read it)
+    ///   4. transfer finished -> cart_end_transfer()  (busy off, IRQ)
+    ///   |
+    ///   v
+    /// to:   the CPU or a DMA reads 0x04100010 -> cart_read_data()
+    /// ```
     pub fn cartridge_run(&mut self, cycles: i32) {
         // #[cfg(feature = "log")]
         // log::trace!(%self.cart.romctrl.block_busy,%self.cart.romctrl.word_ready);
@@ -326,6 +360,12 @@ impl Emulator {
 
     /// Reads the card data port (0x04100010).
     ///
+    /// ```text
+    /// from: arm7_/arm9_read_word(0x04100010) (CPU poll or cart DMA)
+    /// to:   cart.get_output() (clears word_ready so cartridge_run makes
+    ///       the next word); last word -> cart_end_transfer()
+    /// ```
+    ///
     /// ROMCTRL stays busy (bit 31) until the last word of the block has been
     /// read, not merely made ready (melonDS `NDSCartSlot::ReadROMData`).
     /// Polling loops check "word ready" and then "busy"; clearing busy early
@@ -340,7 +380,8 @@ impl Emulator {
         data
     }
 
-    /// Clears ROMCTRL busy and raises the transfer-complete IRQ if enabled.
+    /// Clears ROMCTRL busy and raises the transfer-complete IRQ if enabled,
+    /// on the CPU that owns the slot (from cartridge_run / cart_read_data).
     fn cart_end_transfer(&mut self) {
         self.cart.romctrl.block_busy = false;
 

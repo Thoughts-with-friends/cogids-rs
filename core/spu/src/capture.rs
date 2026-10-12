@@ -22,6 +22,7 @@ pub(crate) struct Capture {
 }
 
 impl Capture {
+    /// SNDCAPxCNT write; starting a capture resets its position and FIFO.
     pub(crate) fn set_cnt(&mut self, value: u8) {
         if value & 0x80 != 0 && self.cnt & 0x80 == 0 {
             self.timer = u32::from(self.timer_reload);
@@ -38,6 +39,7 @@ impl Capture {
         self.cnt = value;
     }
 
+    /// Writes the buffered words to memory (wrapping at the capture length).
     pub(crate) fn flush(&mut self, bus: &mut Bus) {
         for _ in 0..4 {
             let i = self.fifo_read * 4;
@@ -58,6 +60,7 @@ impl Capture {
         }
     }
 
+    /// Buffers captured bytes and flushes every 16 bytes.
     pub(crate) fn push(&mut self, bytes: &[u8], bus: &mut Bus) {
         for &b in bytes {
             self.fifo[self.fifo_write] = b;
@@ -69,6 +72,8 @@ impl Capture {
         }
     }
 
+    /// Advances by `cycles` (timer of channel 1/3); on each overflow
+    /// records `sample` as PCM8/PCM16, looping or stopping at the end.
     pub(crate) fn run(&mut self, cycles: u32, sample: i32, bus: &mut Bus) {
         self.timer += cycles;
         let pcm8 = self.cnt & 0x08 != 0;

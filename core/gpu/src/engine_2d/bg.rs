@@ -5,6 +5,7 @@ use super::compose::{BG_3D, OPAQUE, W};
 use crate::Gpu;
 use crate::vram::Region;
 
+/// Sign-extends a 28-bit affine reference point.
 #[inline]
 const fn sign_extend_28(v: i32) -> i32 {
     (v << 4) >> 4

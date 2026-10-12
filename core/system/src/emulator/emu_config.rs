@@ -62,6 +62,8 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Default settings: no BIOS/firmware paths (built-in replacements),
+    /// direct boot and HLE BIOS on, saves next to the ROM.
     pub fn new() -> Self {
         Self {
             arm7_bios_path: Default::default(),
@@ -242,6 +244,8 @@ pub enum BiosMem<const BIOS_SIZE: usize> {
 }
 
 impl<const BIOS_SIZE: usize> BiosMem<BIOS_SIZE> {
+    /// Bytes `range` of the BIOS image (`None` when out of bounds or no
+    /// dump is loaded).
     pub fn get(&self, range: core::ops::Range<usize>) -> Option<&[u8]> {
         match self {
             Self::User(items) => items.get(range),

@@ -75,6 +75,7 @@ impl Region {
         }
     }
 
+    /// Number of 16 KB pages covered by the region.
     const fn pages(self) -> usize {
         (self.size() >> PAGE_SHIFT) as usize
     }
@@ -97,6 +98,7 @@ impl Default for Vram {
 }
 
 impl Vram {
+    /// All banks zeroed and unmapped.
     pub fn new() -> Self {
         Self {
             banks: BANK_SIZES.map(|size| vec![0; size]),
@@ -163,6 +165,7 @@ impl Vram {
         ((c & 0x87 == 0x82) as u8) | (((d & 0x87 == 0x82) as u8) << 1)
     }
 
+    /// Maps `bank` into `region` pages `start..start + size`.
     fn map(&mut self, region: Region, start: u32, size: u32, bank: usize) {
         let first = (start >> PAGE_SHIFT) as usize;
         let count = (size.div_ceil(PAGE_SIZE)) as usize;
@@ -304,21 +307,25 @@ impl Vram {
         }
     }
 
+    /// Byte read from `region` through the bank mapping (0 if unmapped).
     #[inline]
     pub fn read_u8(&self, region: Region, offset: u32) -> u8 {
         self.read::<1>(region, offset)[0]
     }
 
+    /// Halfword read from `region` through the bank mapping.
     #[inline]
     pub fn read_u16(&self, region: Region, offset: u32) -> u16 {
         u16::from_le_bytes(self.read(region, offset))
     }
 
+    /// Word read from `region` through the bank mapping.
     #[inline]
     pub fn read_u32(&self, region: Region, offset: u32) -> u32 {
         u32::from_le_bytes(self.read(region, offset))
     }
 
+    /// Doubleword read from `region` through the bank mapping.
     #[inline]
     pub fn read_u64(&self, region: Region, offset: u32) -> u64 {
         u64::from_le_bytes(self.read(region, offset))

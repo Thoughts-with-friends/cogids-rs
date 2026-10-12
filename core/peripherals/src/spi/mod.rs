@@ -144,6 +144,7 @@ impl SPIBus {
         self.touchscreen.power_on();
     }
 
+    /// Latches the stylus position in the TSC (from ds_emu touchscreen_press).
     pub const fn touchscreen_press(&mut self, x: i32, y: i32) {
         self.touchscreen.press_event(x, y);
     }
@@ -156,6 +157,24 @@ impl SPIBus {
     /// Write to SPI data register: clocks one byte through the selected
     /// device. When SPICNT bit 11 (chip select hold) is clear the device is
     /// released afterwards, ending the current command.
+    ///
+    /// ```text
+    /// from: ds_emu arm7_write_halfword(0x040001C2) (ARM7 only)
+    ///   |
+    ///   v
+    /// write_spidata(byte)
+    ///   bus disabled -> ignore
+    ///   SPICNT device:
+    ///     0 power manager -> powerman.transfer()   (backlight, amp...)
+    ///     1 firmware      -> firmware.transfer_data() (user settings,
+    ///                        Wi-Fi calibration, NVRAM writes)
+    ///     2 touch screen  -> touchscreen.transfer_data() (pen x/y ADC)
+    ///   no chip-select hold -> release / deselect the device
+    ///   result byte -> `output` (read back at 0x040001C2)
+    ///   |
+    ///   v
+    /// to:   caller raises the SPI IRQ when SPICNT bit 14 asks for it
+    /// ```
     ///
     /// Returns `true` if the SPI transfer-complete IRQ must be raised.
     pub fn write_spidata(&mut self, data: u8) -> bool {

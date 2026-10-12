@@ -23,6 +23,7 @@ mod tables;
 pub trait SwiContext {
     /// Register `index` (r0-r15) of the calling CPU.
     fn reg(&self, index: usize) -> u32;
+    /// Sets register `index` of the calling CPU (results in r0-r3).
     fn set_reg(&mut self, index: usize, value: u32);
     /// PC of the calling CPU while the SWI is handled (the `SWI`
     /// instruction is found relative to it).
@@ -30,10 +31,15 @@ pub trait SwiContext {
     /// Whether `SWI` was executed in THUMB state.
     fn is_thumb(&self) -> bool;
 
+    /// Byte read through the calling CPU's bus.
     fn read8(&mut self, addr: u32) -> u8;
+    /// Halfword read through the calling CPU's bus.
     fn read16(&mut self, addr: u32) -> u16;
+    /// Word read through the calling CPU's bus.
     fn read32(&mut self, addr: u32) -> u32;
+    /// Halfword write through the calling CPU's bus.
     fn write16(&mut self, addr: u32, value: u16);
+    /// Word write through the calling CPU's bus.
     fn write32(&mut self, addr: u32, value: u32);
 
     /// Stalls the CPU for `cycles` cycles.

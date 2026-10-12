@@ -102,7 +102,9 @@ impl Gpu {
     // pub fn draw_scanline(&self) {}
     // pub fn draw_3d_scanline(&mut self, is_engine_a: bool, bg_priority: u8)
 
-    /// Power on GPU
+    /// Resets registers, VRAM mapping, palettes and OAM (from ds_emu
+    /// power_on()). POWCNT1 = 0x820F: both engines and 3D on, engine A on
+    /// the top screen.
     pub fn power_on(&mut self) {
         // self.eng_3d.power_on();
         self.cycles = 0;
@@ -157,12 +159,13 @@ impl Gpu {
         engine.get_framebuffer(buffer);
     }
 
-    /// Mark frame start
+    /// Clears `frame_complete` (ds_emu run() step 1).
     pub fn start_frame(&mut self) {
         self.frame_complete = false;
     }
 
-    /// Mark frame completion
+    /// Sets `frame_complete` (the scheduler sets the field directly at
+    /// VBlank).
     pub fn end_frame(&mut self) {
         self.frame_complete = true;
     }
@@ -171,7 +174,7 @@ impl Gpu {
     // fn check_gxfifo_dma(&self)
     // fn check_gxfifo_irq(&self)
 
-    /// Check if current frame is complete
+    /// Whether VBlank started; ends the ds_emu run() loop.
     pub fn is_frame_complete(&self) -> bool {
         self.frame_complete
     }

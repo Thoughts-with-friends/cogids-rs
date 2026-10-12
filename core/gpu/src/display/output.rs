@@ -8,6 +8,19 @@ use ds_mem_addr::*;
 impl Gpu {
     /// Draws the current scanline for every powered-on 2D engine.
     ///
+    /// ```text
+    /// from: ds_emu gpu_handle_event(), start of HBlank on lines 0..191
+    ///       (skipped on frame-skipped frames)
+    ///   |
+    ///   v
+    /// draw_scanline()
+    ///   POWCNT1 engine A on -> draw_scanline_for_engine(A)
+    ///   POWCNT1 engine B on -> draw_scanline_for_engine(B)
+    ///   |
+    ///   v
+    /// to:   front_framebuffer rows, copied out by get_upper/lower_frame()
+    /// ```
+    ///
     /// Matches CorgiDS `GPU::draw_scanline()`, which calls
     /// `eng_A.draw_scanline()` and `eng_B.draw_scanline()` unconditionally
     /// (each gated only by its own POWCNT1 enable bit). The previous
@@ -26,6 +39,24 @@ impl Gpu {
 
     /// Renders one scanline for a single 2D engine (Engine A if
     /// `is_engine_a`, otherwise Engine B).
+    ///
+    /// ```text
+    /// from: draw_scanline()
+    ///   |
+    ///   v
+    /// draw_scanline_for_engine(engine)
+    ///   1. compose_scanline()       BGs + OBJs + windows + blending
+    ///                               -> framebuffer row
+    ///   2. DISPCNT display mode:
+    ///        0 off       -> white row
+    ///        1 normal    -> framebuffer row
+    ///        2 VRAM      -> LCDC bank row (BGR555 -> RGB888)
+    ///        (3 main memory FIFO: not implemented)
+    ///      -> front_framebuffer row
+    ///   3. engine A capture (DISPCAPCNT): blend source A (2D/3D) and B
+    ///      (VRAM) into the capture bank
+    ///   4. MASTER_BRIGHT fade up / down on the row
+    /// ```
     fn draw_scanline_for_engine(&mut self, is_engine_a: bool) {
         let line_start = self.get_vcount() as usize * PIXELS_PER_LINE;
 

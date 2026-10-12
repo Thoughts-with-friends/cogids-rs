@@ -145,7 +145,8 @@ impl NDSCart {
         self.command_buffer.get(index).copied().unwrap_or(0)
     }
 
-    /// Writes a command byte into command buffer.
+    /// Writes a command byte into command buffer (ARM7/ARM9 writes to
+    /// 0x040001A8..0x040001AF; the command runs on the next ROMCTRL start).
     pub fn receive_command(&mut self, command: u8, index: usize) {
         if let Some(slot) = self.command_buffer.get_mut(index) {
             *slot = command;
@@ -230,7 +231,9 @@ impl NDSCart {
         self.romctrl.get()
     }
 
-    /// Returns cartridge output register value.
+    /// Returns cartridge output register value (0x04100010 read via ds_emu
+    /// cart_read_data); consuming a ready word lets cartridge_run() fetch the
+    /// next one 8 cycles later.
     pub const fn get_output(&mut self) -> u32 {
         if self.romctrl.word_ready {
             self.romctrl.word_ready = false;
@@ -241,6 +244,25 @@ impl NDSCart {
     }
 
     /// Updates ROMCTRL register and may trigger a new cartridge transfer.
+    ///
+    /// ```text
+    /// from: ds_emu arm7_/arm9_write_word(0x040001A4) (ROMCTRL)
+    ///   |
+    ///   v
+    /// set_romctrl(value)
+    ///   1. decode gaps, KEY2 flags, block size, speed, start bit
+    ///   2. start bit 0 -> 1 with the slot enabled:
+    ///        bytes_left = block size (0, 0x200 << n, or 4)
+    ///        KEY1 mode: add the gap, decrypt the 8 command bytes
+    ///        decode command_buffer[0]: 9F dummy, 00 header, 90/B8 chip ID,
+    ///        3C enable KEY1, B7 ROM data (address from bytes 1-4),
+    ///        KEY1-mode commands: 1x chip ID, 2x secure area, 4x dummy,
+    ///        Ax enable KEY2
+    ///   |
+    ///   v
+    /// to:   ds_emu cartridge_run() produces the words, read through
+    ///       0x04100010 (cart_read_data -> get_output)
+    /// ```
     ///
     /// # Panics
     pub fn set_romctrl(&mut self, value: u32) {

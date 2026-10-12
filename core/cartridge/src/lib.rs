@@ -227,6 +227,7 @@ impl NDSCart {
             .map_err(|source| self.save_error(source))
     }
 
+    /// Wraps an I/O error with the save file path.
     fn save_error(&self, source: std::io::Error) -> CartridgeError {
         CartridgeError::SaveWrite {
             path: self

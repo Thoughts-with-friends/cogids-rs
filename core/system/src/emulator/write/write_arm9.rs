@@ -8,6 +8,26 @@ use ds_peripherals::ipc::Side;
 impl Emulator {
     /// Writes a 32-bit word to ARM9 memory-mapped address space
     ///
+    /// ```text
+    /// from: write_word(Arm9) / ARM9 DMA (dma_handle_event)
+    ///   |
+    ///   v
+    /// arm9_write_word(address, word)
+    ///   1. 3D registers (toon/fog/edge tables...) -> engine_3d.write_reg
+    ///   2. 2D engine registers                    -> write_io_2d_u32
+    ///   3. by address:
+    ///      main RAM / shared WRAM
+    ///      DMA, IPC (may raise IRQ), cartridge ROMCTRL/commands, IE/IF
+    ///      VRAMCNT, divider -> start_division, sqrt -> start_sqrt
+    ///      GXSTAT -> set_gxstat, GXFIFO -> write_gxfifo,
+    ///      command ports -> write_fifo_direct
+    ///      palette / VRAM / OAM (gpu)
+    ///   |
+    ///   v
+    /// to:   the device; side effects (DMA start, IRQ, 3D command queue)
+    ///       happen immediately
+    /// ```
+    ///
     /// Handles writes to:
     /// - Main RAM
     /// - Shared WRAM (controlled by WRAM CNT)
@@ -171,6 +191,9 @@ impl Emulator {
     }
 
     /// Writes a 16-bit halfword to the specified ARM9 memory address.
+    ///
+    /// Same routing as [`Self::arm9_write_word`]; 3D registers and GXSTAT
+    /// are written with a byte mask, 2D registers through write_io_2d_u16.
     ///
     /// This function emulates the ARM9 memory map of the Nintendo DS, handling:
     /// - Main RAM and shared WRAM writes

@@ -8,6 +8,14 @@ use crate::engine_3d::state::{Gpu3D, MAX_POLYGONS, MAX_VERTICES, Polygon, Vertex
 
 impl Gpu3D {
     /// melonDS `SubmitVertex`.
+    ///
+    /// ```text
+    /// from: execute_command() VTX_* commands
+    ///   1. transform by the clip matrix (projection * position)
+    ///   2. store with the current color / texcoord in the vertex slot
+    ///   3. enough vertices for the primitive (tri, quad, strips)?
+    ///        -> submit_polygon()
+    /// ```
     pub(super) fn submit_vertex(&mut self) {
         self.update_clip_matrix();
         let v = self.cur_vertex.map(i32::from);
@@ -74,6 +82,16 @@ impl Gpu3D {
 
     /// melonDS `SubmitPolygon`: culling, clipping, viewport transform and
     /// polygon setup.
+    ///
+    /// ```text
+    /// from: submit_vertex()
+    ///   1. back/front-face culling per POLYGON_ATTR
+    ///   2. clip_polygon() against the view volume (clip.rs)
+    ///   3. viewport transform to screen x/y, depth (Z or W buffering)
+    ///   4. append to polygon RAM (+ vertex RAM); count opaque ones and
+    ///      compute the Y sort key
+    /// to:   end_of_frame() turns the list into the render list
+    /// ```
     #[expect(clippy::too_many_lines)]
     pub(super) fn submit_polygon(&mut self) {
         let mut nverts = if self.polygon_mode & 1 != 0 { 4 } else { 3 };

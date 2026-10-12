@@ -2,6 +2,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! emulator.hpp
 //!
+//! Button state setters for the frontends.
+//!
+//! ```text
+//! from: frontend input (gui/egui input.rs apply_keyboard, gamepads in
+//!       gui/common, gui/tauri commands, headless PRESS=) before run()
+//!   |
+//!   v
+//! button_*_pressed / button_*_released
+//!   A B SELECT START arrows R L -> key_input  (KEYINPUT 0x04000130,
+//!                                              read by both CPUs)
+//!   X Y                         -> ext_key_in (EXTKEYIN 0x04000136,
+//!                                              ARM7 only)
+//!   |
+//!   v
+//! to:   the game's key polling (ARM7 copies X/Y/pen/hinge to the ARM9
+//!       through shared RAM 0x027FFFA8)
+//! ```
 use crate::emulator::Emulator;
 
 impl Emulator {

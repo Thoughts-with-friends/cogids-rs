@@ -4,6 +4,7 @@
 use crate::NDSCart;
 
 impl NDSCart {
+    /// Word `index` of the KEY1 key buffer.
     #[inline]
     fn read_keybuf_u32(&self, index: usize) -> u32 {
         let i = index * 4;
@@ -15,6 +16,7 @@ impl NDSCart {
         ])
     }
 
+    /// Stores word `index` of the KEY1 key buffer.
     #[inline]
     fn write_keybuf_u32(&mut self, index: usize, value: u32) {
         let i = index * 4;
@@ -107,6 +109,7 @@ impl NDSCart {
     }
 }
 
+/// Reverses the byte order of a word.
 const fn byteswap_word(word: u32) -> u32 {
     let mut result = 0;
     result |= word >> 24;

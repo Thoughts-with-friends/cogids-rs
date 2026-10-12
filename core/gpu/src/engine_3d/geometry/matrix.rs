@@ -40,6 +40,7 @@ pub(super) fn mtx_mult_3x3(m: &mut Mtx, s: &[i32]) {
     }
 }
 
+/// MTX_SCALE: scales the first three rows by x, y, z.
 pub(super) fn mtx_scale(m: &mut Mtx, s: &[i32]) {
     for r in 0..3 {
         for c in 0..4 {
@@ -48,6 +49,7 @@ pub(super) fn mtx_scale(m: &mut Mtx, s: &[i32]) {
     }
 }
 
+/// MTX_TRANS: `row3 += x*row0 + y*row1 + z*row2`.
 pub(super) fn mtx_translate(m: &mut Mtx, s: &[i32]) {
     for c in 0..4 {
         let v = mul(s[0], m[c]) + mul(s[1], m[4 + c]) + mul(s[2], m[8 + c]);
@@ -55,6 +57,7 @@ pub(super) fn mtx_translate(m: &mut Mtx, s: &[i32]) {
     }
 }
 
+/// MTX_LOAD_4x3: loads a 4x3 matrix (last column 0,0,0,1).
 pub(super) fn mtx_load_4x3(m: &mut Mtx, s: &[i32]) {
     *m = [
         s[0], s[1], s[2], 0, //

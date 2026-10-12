@@ -11,7 +11,23 @@ use self::arm_instruction::blx;
 use crate::cpu::arm_table;
 use crate::emulator::Emulator;
 
-/// Interprets an ARM instruction
+/// Decodes and runs the 32-bit ARM instruction just fetched.
+///
+/// ```text
+/// from: execute() step 5 (CPSR.T clear)
+///   |
+///   v
+/// arm_interpret(emu, cpu)
+///   1. instruction = current_instr, condition = bits 28-31
+///   2. (config.test) log disassembly
+///   3. ARM9 BLX imm (cond 0xF, 0xFA/0xFB) -> blx()
+///      otherwise: condition passes? -> ARM_TABLE[bits 20-27:4-7]
+///                 (data processing, multiply, load/store, block
+///                 transfer, branch, coprocessor, SWI...)
+///   |
+///   v
+/// to:   the handler updates registers / memory through read_* / write_*
+/// ```
 pub fn arm_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u32 = emu.get_cpu_mut(cpu_type).get_current_instr();
     let condition: u32 = (instruction & 0xF000_0000) >> 28;

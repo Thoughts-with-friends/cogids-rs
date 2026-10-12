@@ -27,6 +27,23 @@ impl Emulator {
         }
     }
 
+    /// CPU-side 32-bit load: the entry point for every instruction fetch
+    /// and data read of either CPU.
+    ///
+    /// ```text
+    /// from: execute() (ARM fetch), LDR/LDM/POP/SWP handlers,
+    ///       HLE BIOS (bios.rs Caller::read32)
+    ///   |
+    ///   v
+    /// read_word(address, cpu)
+    ///   ARM9: CP15 ITCM/DTCM hit?  -> TCM contents
+    ///         otherwise            -> arm9_read_word()
+    ///   ARM7:                      -> arm7_read_word()
+    ///   |
+    ///   v
+    /// to:   RAM / BIOS / VRAM or the I/O register of a device (GPU, DMA,
+    ///       timers, IPC, cartridge, SPI, SPU, Wi-Fi...)
+    /// ```
     pub fn read_word(&mut self, address: u32, cpu_type: CpuType) -> u32 {
         if cpu_type == CpuType::Arm9 {
             match self.arm9_cp15.tcm_read::<4>(address) {
@@ -38,7 +55,9 @@ impl Emulator {
         }
     }
 
-    pub fn read_halfword(&self, address: u32, cpu_type: CpuType) -> u16 {
+    /// CPU-side 16-bit load (Thumb fetch, LDRH/LDRSH); same routing as
+    /// [`Self::read_word`] via arm9_/arm7_read_halfword().
+    pub fn read_halfword(&mut self, address: u32, cpu_type: CpuType) -> u16 {
         if cpu_type == CpuType::Arm9 {
             match self.arm9_cp15.tcm_read::<2>(address) {
                 Some(bytes) => u16::from_le_bytes(bytes),
@@ -49,7 +68,9 @@ impl Emulator {
         }
     }
 
-    pub fn read_byte(&self, address: u32, cpu_type: CpuType) -> u8 {
+    /// CPU-side 8-bit load (LDRB/LDRSB); same routing as
+    /// [`Self::read_word`] via arm9_/arm7_read_byte().
+    pub fn read_byte(&mut self, address: u32, cpu_type: CpuType) -> u8 {
         if cpu_type == CpuType::Arm9 {
             match self.arm9_cp15.tcm_read::<1>(address) {
                 Some([byte]) => byte,

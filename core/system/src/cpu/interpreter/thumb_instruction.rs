@@ -8,7 +8,22 @@ use ds_cpu::instruction_table::ThumbInstr;
 
 use crate::emulator::Emulator;
 
-/// Interprets a Thumb instruction
+/// Decodes and runs the 16-bit Thumb instruction just fetched.
+///
+/// ```text
+/// from: execute() step 5 (CPSR.T set)
+///   |
+///   v
+/// thumb_interpret(emu, cpu)
+///   1. instruction = low 16 bits of current_instr
+///   2. classify with thumb_decode() into a ThumbInstr format
+///   3. dispatch to thumb_* handler (shifts, ALU, hi-reg/BX, PC/SP
+///      relative loads, load/store, push/pop, LDM/STM, branches; SWI is
+///      the condition-0xF case of thumb_cond_branch)
+///   |
+///   v
+/// to:   the handler updates registers / memory through read_* / write_*
+/// ```
 pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     // NOTE: log output is gated behind the `log` feature
     let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF;

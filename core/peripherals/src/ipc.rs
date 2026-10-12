@@ -78,6 +78,7 @@ pub struct Ipc {
 }
 
 impl Ipc {
+    /// Both FIFOs empty and disabled, IPCSYNC cleared.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -88,6 +89,7 @@ impl Ipc {
         *self = Self::default();
     }
 
+    /// Stored IPCSYNC bits of `side`.
     const fn sync(&self, side: Side) -> u16 {
         match side {
             Side::Arm9 => self.sync9,
@@ -95,6 +97,7 @@ impl Ipc {
         }
     }
 
+    /// Mutable IPCSYNC bits of `side`.
     const fn sync_mut(&mut self, side: Side) -> &mut u16 {
         match side {
             Side::Arm9 => &mut self.sync9,
@@ -102,6 +105,7 @@ impl Ipc {
         }
     }
 
+    /// Stored IPCFIFOCNT bits of `side`.
     const fn cnt(&self, side: Side) -> u16 {
         match side {
             Side::Arm9 => self.cnt9,
@@ -109,6 +113,7 @@ impl Ipc {
         }
     }
 
+    /// Mutable IPCFIFOCNT bits of `side`.
     const fn cnt_mut(&mut self, side: Side) -> &mut u16 {
         match side {
             Side::Arm9 => &mut self.cnt9,
@@ -212,6 +217,15 @@ impl Ipc {
 
     /// Writes IPCFIFOSEND (4000188h).
     ///
+    /// ```text
+    /// from: ds_emu arm7_/arm9_write_word(0x04000188)
+    ///   send FIFO enabled? push `word` into the 16-entry queue of `side`
+    ///   (full -> error flag), and if it was empty and the remote has the
+    ///   receive-not-empty IRQ on -> IrqRequest for the remote
+    /// to:   ds_emu raise_ipc(); the remote CPU reads it with receive()
+    ///       (SDK PXI: bits 0-4 tag, e.g. 6 touch panel, 10 wireless)
+    /// ```
+    ///
     /// Raises the remote's receive-not-empty IRQ when the queue goes from
     /// empty to non-empty.
     pub fn send(&mut self, side: Side, word: u32) -> Option<IrqRequest> {
@@ -236,6 +250,15 @@ impl Ipc {
     }
 
     /// Reads IPCFIFORECV (4100000h).
+    ///
+    /// ```text
+    /// from: ds_emu arm7_/arm9_read_word(0x04100000)
+    ///   FIFO disabled -> peek without popping
+    ///   otherwise pop the remote's send queue (empty -> last word and
+    ///   error flag); when it drains and the sender enabled the
+    ///   send-empty IRQ -> IrqRequest for the sender
+    /// to:   ds_emu raise_ipc()
+    /// ```
     ///
     /// Raises the remote's send-empty IRQ when its queue drains.
     pub fn receive(&mut self, side: Side) -> (u32, Option<IrqRequest>) {

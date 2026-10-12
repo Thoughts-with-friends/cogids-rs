@@ -14,6 +14,7 @@ struct SpuBus<'a> {
 }
 
 impl SpuBus<'_> {
+    /// The 4 bytes at word address `addr` in main RAM / WRAM, or `None`.
     fn locate(&mut self, addr: u32) -> Option<&mut [u8]> {
         let (mem, off): (&mut [u8], usize) = match addr >> 24 {
             0x02 => (&mut *self.main_ram, (addr & MAIN_RAM_MASK) as usize),
@@ -48,6 +49,19 @@ impl SoundBus for SpuBus<'_> {
 impl Emulator {
     /// Advances the SPU by `cycles` ARM7 bus cycles, producing one stereo
     /// sample every [`CYCLES_PER_SAMPLE`] cycles (32768 Hz).
+    ///
+    /// ```text
+    /// from: run() step 2c, after every ARM7 instruction
+    ///   |
+    ///   v
+    /// run_spu(cycles)
+    ///   while a full sample period has elapsed:
+    ///     spu.mix(bus)    16 channels -> mixer -> capture -> output
+    ///                     (bus = main RAM / WRAM, where sample data lives)
+    ///   |
+    ///   v
+    /// to:   samples queue inside the SPU until take_audio_samples()
+    /// ```
     pub fn run_spu(&mut self, cycles: u32) {
         self.spu_cycles += cycles;
         while self.spu_cycles >= CYCLES_PER_SAMPLE {
@@ -71,7 +85,8 @@ impl Emulator {
     }
 
     /// Moves the audio produced so far (interleaved stereo `i16`,
-    /// [`ds_spu::SAMPLE_RATE`] Hz) into `out`.
+    /// [`ds_spu::SAMPLE_RATE`] Hz) into `out`. Called by the frontends after
+    /// run() to feed the host audio device.
     pub fn take_audio_samples(&mut self, out: &mut Vec<i16>) {
         self.spu.take_samples(out);
     }

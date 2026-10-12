@@ -35,6 +35,8 @@ pub const OUTPUT_RATE_HZ: f64 = 33_513_982.0 / CYCLES_PER_SAMPLE as f64;
 /// Memory accesses of the SPU (sound DMA) on the ARM7 bus.
 pub trait SoundBus {
     fn read32(&mut self, addr: u32) -> u32;
+    /// Word write to a sound register (ds_emu arm7_write_word,
+    /// 0x04000400..0x0400051F) -> write().
     fn write32(&mut self, addr: u32, value: u32);
 }
 
@@ -61,6 +63,7 @@ impl Default for Spu {
 }
 
 impl Spu {
+    /// Creates a silent SPU: 16 channels, 2 capture units, empty buffer.
     pub fn new() -> Self {
         let mut channels: [Channel; 16] = Default::default();
         for (i, ch) in channels.iter_mut().enumerate() {
@@ -103,10 +106,12 @@ impl Spu {
         }
     }
 
+    /// Halfword read of a sound register (from ds_emu arm7_read_halfword).
     pub fn read16(&self, address: u32) -> u16 {
         (self.read32(address) >> ((address & 2) * 8)) as u16
     }
 
+    /// Byte read of a sound register.
     pub fn read8(&self, address: u32) -> u8 {
         (self.read32(address) >> ((address & 3) * 8)) as u8
     }
@@ -168,44 +173,56 @@ impl Spu {
         self.write(address, value, 0xFFFF_FFFF);
     }
 
+    /// Halfword write to a sound register -> write().
     pub fn write16(&mut self, address: u32, value: u16) {
         let shift = (address & 2) * 8;
         self.write(address, u32::from(value) << shift, 0xFFFF << shift);
     }
 
+    /// Byte write to a sound register -> write().
     pub fn write8(&mut self, address: u32, value: u8) {
         let shift = (address & 3) * 8;
         self.write(address, u32::from(value) << shift, 0xFF << shift);
     }
 
     // Older accessors kept for the register dispatch code.
+    /// SOUNDCNT (master volume / output select / enable).
     pub fn get_soundcnt(&self) -> u16 {
         self.soundcnt
     }
+    /// SOUNDBIAS.
     pub fn get_soundbias(&self) -> u16 {
         self.bias
     }
+    /// SNDCAP0CNT.
     pub fn get_sndcap0(&self) -> u8 {
         self.captures[0].cnt
     }
+    /// SNDCAP1CNT.
     pub fn get_sndcap1(&self) -> u8 {
         self.captures[1].cnt
     }
+    /// Writes SOUNDCNT.
     pub fn set_soundcnt(&mut self, value: u16) {
         self.write16(0x0400_0500, value);
     }
+    /// Writes the low byte of SOUNDCNT (master volume).
     pub fn set_soundcnt_lo(&mut self, value: u8) {
         self.write8(0x0400_0500, value);
     }
+    /// Writes the high byte of SOUNDCNT (output select, enable).
     pub fn set_soundcnt_hi(&mut self, value: u8) {
         self.write8(0x0400_0501, value);
     }
+    /// Writes SOUNDBIAS.
     pub fn set_soundbias(&mut self, value: u16) {
         self.write16(0x0400_0504, value);
     }
+    /// Writes SNDCAP0CNT.
     pub fn set_sndcap0(&mut self, value: u8) {
         self.write8(0x0400_0508, value);
     }
+    /// Writes SNDCAP1CNT.
     pub fn set_sndcap1(&mut self, value: u8) {
         self.write8(0x0400_0509, value);
     }

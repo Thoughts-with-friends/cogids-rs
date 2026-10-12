@@ -6,6 +6,24 @@ use crate::{Bus, CYCLES_PER_SAMPLE, SAMPLE_RATE, Spu};
 impl Spu {
     /// Produces one output sample covering `CYCLES_PER_SAMPLE` bus cycles
     /// and appends it to the sample buffer. `bus` reads sample data.
+    ///
+    /// ```text
+    /// from: ds_emu run_spu(), once per 1024 ARM7 cycles
+    ///   |
+    ///   v
+    /// mix(bus)
+    ///   1. SOUNDCNT master enable off -> silence
+    ///   2. channel[0..15].run(512 SPU cycles)  timer steps fetch PCM8 /
+    ///      PCM16 / ADPCM through the channel FIFO, or PSG / noise
+    ///   3. pan_output() into left/right (channels 1/3 may be excluded,
+    ///      SOUNDCNT bits 12-13)
+    ///   4. capture 0/1 enabled -> capture.run(left/right) -> memory
+    ///   5. output select (SOUNDCNT bits 8-11): mixer or channel 1/3
+    ///   6. master volume, clamp to i16, push the stereo pair
+    ///   |
+    ///   v
+    /// to:   take_samples() (ds_emu take_audio_samples -> frontend audio)
+    /// ```
     pub fn mix(&mut self, bus: &mut Bus) {
         // Channel timers run at half the bus clock.
         let cycles = CYCLES_PER_SAMPLE / 2;
@@ -72,7 +90,8 @@ impl Spu {
         self.samples.push(finish(right_out));
     }
 
-    /// Takes the buffered interleaved stereo samples (32768 Hz).
+    /// Takes the buffered interleaved stereo samples (32768 Hz); from
+    /// ds_emu take_audio_samples() after each frame.
     pub fn take_samples(&mut self, out: &mut Vec<i16>) {
         out.append(&mut self.samples);
     }

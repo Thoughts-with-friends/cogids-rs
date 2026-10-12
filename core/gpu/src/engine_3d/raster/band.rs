@@ -100,6 +100,9 @@ impl Band {
         (y as usize - self.y0) * SCANLINE_WIDTH + 1
     }
 
+    /// Renders this band's rows (Raster::render_frame, one thread per band):
+    /// collect the polygons overlapping the band, set their edges up at the
+    /// first row, then render_scanline() for every row.
     pub(super) fn render(&mut self, f: &Frame) {
         let (y0, y1) = (self.y0 as i32, self.y1 as i32);
         self.polys.clear();
@@ -133,6 +136,7 @@ impl Band {
         }
     }
 
+    /// Next vertex index around the polygon in the given winding.
     pub(super) fn next_vertex(p: &Polygon, cur: usize, forward: bool) -> usize {
         let n = p.num_vertices;
         if forward {
@@ -144,6 +148,7 @@ impl Band {
         }
     }
 
+    /// Advances the left edge to the vertex pair spanning row `y`.
     pub(super) fn setup_left_edge(f: &Frame, rp: &mut RendererPolygon, y: i32) {
         let p = &f.polys[rp.poly];
         while y >= f.vtx(p, rp.next_vl).final_position[1] && rp.cur_vl != p.v_bottom {
@@ -163,6 +168,7 @@ impl Band {
         );
     }
 
+    /// Advances the right edge to the vertex pair spanning row `y`.
     pub(super) fn setup_right_edge(f: &Frame, rp: &mut RendererPolygon, y: i32) {
         let p = &f.polys[rp.poly];
         while y >= f.vtx(p, rp.next_vr).final_position[1] && rp.cur_vr != p.v_bottom {
@@ -182,6 +188,7 @@ impl Band {
         );
     }
 
+    /// Starts walking a polygon from its top vertex (both edges).
     pub(super) fn setup_polygon(f: &Frame, rp: &mut RendererPolygon) {
         let p = &f.polys[rp.poly];
         rp.cur_vl = p.v_top;
@@ -213,6 +220,8 @@ impl Band {
         }
     }
 
+    /// Draws row `y` of every polygon covering it, shadow masks and normal polygons in render
+    /// order.
     pub(super) fn render_scanline(&mut self, f: &Frame, y: i32) {
         for i in 0..self.polys.len() {
             let mut rp = self.polys[i];
@@ -369,6 +378,7 @@ impl Band {
         }
     }
 
+    /// Shadow-mask polygon row: marks stencil bits where the depth test fails.
     pub(super) fn render_shadow_mask_scanline(
         &mut self,
         f: &Frame,
@@ -415,6 +425,9 @@ impl Band {
         rp.xr = rp.slope_r.step();
     }
 
+    /// One polygon row: interpolate edges, then per pixel depth test,
+    /// texturing/shading (render_pixel), alpha test, opaque write or
+    /// plot_translucent_pixel, edge/AA coverage.
     #[expect(clippy::too_many_lines)]
     pub(super) fn render_polygon_scanline(&mut self, f: &Frame, rp: &mut RendererPolygon, y: i32) {
         let p = &f.polys[rp.poly];
@@ -599,6 +612,7 @@ impl Band {
         rp.xr = rp.slope_r.step();
     }
 
+    /// Translucent pixel: polygon-ID rule, optional depth update, alpha blend.
     pub(super) fn plot_translucent_pixel(
         &mut self,
         st: &RenderState,

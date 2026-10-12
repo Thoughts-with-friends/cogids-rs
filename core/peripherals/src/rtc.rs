@@ -33,6 +33,7 @@ impl Default for Alarm {
 }
 
 // https://stackoverflow.com/questions/1408361/unsigned-integer-to-bcd-conversion
+/// Binary 0-99 -> BCD.
 const fn byte_to_bcd(byte: u8) -> u8 {
     (byte / 10 * 16) + (byte % 10)
 }

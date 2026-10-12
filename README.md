@@ -118,8 +118,23 @@ cargo run -p lunaris_ds_egui --release
 
 ## References
 
-- [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
-- [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
-- [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
-- [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator, sorta
-- [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
+This project is a modified/extended version based on NDS-Emulator.
+
+- Emulators
+  - [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528): NDS Emulator written in Rust
+  - [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
+  - [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator (Base on this)
+  - [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
+  - [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator high performance, low memory usage
+
+- Tools
+  - [melonds-rs](https://github.com/tangobattle/melonds-rs): Wrapper for the melonDS library
+  - [melonds-rs (folk ver.)](https://github.com/Thoughts-with-friends/melonds-rs): Wrapper for the melonDS library
+
+- Technical Information
+  - [Nintendo DS Architecture](https://www.copetti.org/writings/consoles/nintendo-ds/): An overview of the NDS
+  - [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
+  - [GBATEK-md](https://mgba-emu.github.io/gbatek/#dstechnicaldata): GBA / Nintendo DS / DSi / 3DS - Technical Info
+  - [BlocksDS](https://blocksds.skylyrac.net/tutorial/): Details on the NDS, focusing on easy-to-understand specifications at the implementation stage
+  - [TinyFB.nds](https://imrannazar.com/The-Smallest-NDS-File): The smallest Nintendo DS file
+

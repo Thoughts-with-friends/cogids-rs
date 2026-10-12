@@ -19,12 +19,14 @@ pub(super) struct Interp<const DIR: bool> {
 }
 
 impl<const DIR: bool> Interp<DIR> {
+    /// Interpolator between `x0` and `x1` with depths/W `w0`, `w1`.
     pub(super) fn new(x0: i32, x1: i32, w0: i32, w1: i32, wbuffer: bool) -> Self {
         let mut s = Self::default();
         s.setup(x0, x1, w0, w1, wbuffer);
         s
     }
 
+    /// Re-initializes the interpolator (perspective weights from W).
     pub(super) fn setup(&mut self, x0: i32, x1: i32, w0: i32, w1: i32, wbuffer: bool) {
         self.x0 = x0;
         self.xdiff = x1.wrapping_sub(x0);
@@ -50,6 +52,7 @@ impl<const DIR: bool> Interp<DIR> {
         }
     }
 
+    /// Moves the interpolator to position `x`.
     pub(super) fn set_x(&mut self, x: i32) {
         let x = x - self.x0;
         self.x = x;
@@ -62,6 +65,7 @@ impl<const DIR: bool> Interp<DIR> {
         }
     }
 
+    /// Perspective-correct interpolation of a vertex attribute.
     pub(super) fn interpolate(&self, y0: i32, y1: i32) -> i32 {
         if self.xdiff == 0 || y0 == y1 {
             return y0;
@@ -81,6 +85,7 @@ impl<const DIR: bool> Interp<DIR> {
         }
     }
 
+    /// Depth interpolation (linear for Z buffering, perspective for W).
     pub(super) fn interpolate_z(&self, z0: i32, z1: i32) -> i32 {
         if self.xdiff == 0 || z0 == z1 {
             return z0;
@@ -134,6 +139,7 @@ pub(super) struct Slope<const RIGHT: bool> {
 }
 
 impl<const RIGHT: bool> Slope<RIGHT> {
+    /// Zero-height edge at `x0` (flat polygon rows).
     pub(super) fn setup_dummy(&mut self, x0: i32, wbuffer: bool) -> i32 {
         self.dx = 0;
         self.x0 = x0;
@@ -147,6 +153,7 @@ impl<const RIGHT: bool> Slope<RIGHT> {
         x0
     }
 
+    /// Sets the edge up from two vertices at row `y`; returns the starting X.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn setup(
         &mut self,
@@ -222,6 +229,7 @@ impl<const RIGHT: bool> Slope<RIGHT> {
         x
     }
 
+    /// Advances the edge one row; returns the new X.
     pub(super) fn step(&mut self) -> i32 {
         self.dx = self.dx.wrapping_add(self.increment);
         self.y += 1;
@@ -230,6 +238,7 @@ impl<const RIGHT: bool> Slope<RIGHT> {
         x
     }
 
+    /// Current X of the edge in pixels.
     pub(super) fn x_val(&self) -> i32 {
         let ret = if self.negative {
             self.x0 - (self.dx >> 18)

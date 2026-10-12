@@ -71,6 +71,7 @@ pub struct Gpu2DEngine {
 }
 
 impl Gpu2DEngine {
+    /// Creates an engine with all registers cleared.
     pub(crate) fn new() -> Self {
         Gpu2DEngine {
             framebuffer: vec![0; PIXELS_PER_LINE * SCANLINES],
@@ -127,7 +128,8 @@ impl Gpu2DEngine {
     // Framebuffer handling
     // ============================================================
 
-    /// Copies the internal framebuffer into `buffer`.
+    /// Copies the internal framebuffer into `buffer` (from
+    /// Gpu::get_upper_frame / get_lower_frame).
     pub fn get_framebuffer(&self, buffer: &mut [u32]) {
         // Ensure the buffer is large enough
         assert!(buffer.len() >= SCANLINES * PIXELS_PER_LINE);
@@ -160,7 +162,9 @@ impl Gpu2DEngine {
     // Timing
     // ============================================================
 
-    /// Called at the start of VBLANK.
+    /// Called at the start of VBLANK (ds_emu gpu_handle_event, line 192):
+    /// reloads the BG2/BG3 affine reference points and ends a display
+    /// capture.
     pub fn vblank_start(&mut self) {
         for i in 0..4 {
             self.bg2p_internal[i] = self.bg2p[i];
@@ -214,22 +218,27 @@ impl Gpu2DEngine {
         self.bgcnt[index]
     }
 
+    /// Raw BGxHOFS value.
     pub fn get_bghofs(&self, index: usize) -> u16 {
         self.bghofs[index]
     }
 
+    /// Raw BGxVOFS value.
     pub fn get_bgvofs(&self, index: usize) -> u16 {
         self.bgvofs[index]
     }
 
+    /// Raw WIN0V value.
     pub fn get_win0v(&self) -> u16 {
         self.win0v
     }
 
+    /// Raw WIN1V value.
     pub fn get_win1v(&self) -> u16 {
         self.win1v
     }
 
+    /// WININ packed from the decoded window flags.
     pub fn get_winin(&self) -> u16 {
         let mut reg: u16 = 0;
 
@@ -246,6 +255,7 @@ impl Gpu2DEngine {
         reg
     }
 
+    /// WINOUT packed from the decoded window flags.
     pub fn get_winout(&self) -> u16 {
         let mut reg: u16 = 0;
 
@@ -262,6 +272,7 @@ impl Gpu2DEngine {
         reg
     }
 
+    /// BLDCNT packed from the decoded blend targets.
     pub fn get_bldcnt(&self) -> u16 {
         let mut reg: u16 = 0;
 
@@ -279,14 +290,17 @@ impl Gpu2DEngine {
         reg
     }
 
+    /// Raw BLDALPHA value.
     pub fn get_bldalpha(&self) -> u16 {
         self.bldalpha
     }
 
+    /// Raw MASTER_BRIGHT value.
     pub fn get_master_bright(&self) -> u16 {
         self.master_bright
     }
 
+    /// DISPCAPCNT packed (engine A only; 0 for engine B).
     pub fn get_dispcapcnt(&self, is_engine_a: bool) -> u32 {
         if !is_engine_a {
             return 0;
@@ -367,6 +381,7 @@ impl Gpu2DEngine {
         );
     }
 
+    /// Decodes BGxCNT (priority, tile/map bases, size, palette mode).
     pub fn set_bgcnt(&mut self, halfword: u16, index: usize) {
         self.bgcnt[index] = halfword;
 
@@ -384,10 +399,12 @@ impl Gpu2DEngine {
         );
     }
 
+    /// Stores BGxHOFS (9-bit X scroll).
     pub fn set_bghofs(&mut self, halfword: u16, index: usize) {
         self.bghofs[index] = halfword;
     }
 
+    /// Stores BGxVOFS (9-bit Y scroll).
     pub fn set_bgvofs(&mut self, halfword: u16, index: usize) {
         self.bgvofs[index] = halfword;
     }
@@ -400,6 +417,7 @@ impl Gpu2DEngine {
         }
     }
 
+    /// Sets BG3 affine parameter (PA, PB, PC, PD).
     pub fn set_bg3p(&mut self, halfword: u16, index: usize, vcount: u16) {
         self.bg3p[index] = halfword;
         if vcount < 192 {
@@ -407,6 +425,7 @@ impl Gpu2DEngine {
         }
     }
 
+    /// Sets BG2X (28-bit reference X); on lines 0-191 the internal reference is reloaded too.
     pub fn set_bg2x(&mut self, word: u32, vcount: u16) {
         self.bg2x = word;
         if vcount < 192 {
@@ -414,6 +433,7 @@ impl Gpu2DEngine {
         }
     }
 
+    /// Sets BG2Y (28-bit reference Y); on lines 0-191 the internal reference is reloaded too.
     pub fn set_bg2y(&mut self, word: u32, vcount: u16) {
         self.bg2y = word;
         if vcount < 192 {
@@ -421,6 +441,7 @@ impl Gpu2DEngine {
         }
     }
 
+    /// Sets BG3X (28-bit reference X); on lines 0-191 the internal reference is reloaded too.
     pub fn set_bg3x(&mut self, word: u32, vcount: u16) {
         self.bg3x = word;
         if vcount < 192 {
@@ -428,6 +449,7 @@ impl Gpu2DEngine {
         }
     }
 
+    /// Sets BG3Y (28-bit reference Y); on lines 0-191 the internal reference is reloaded too.
     pub fn set_bg3y(&mut self, word: u32, vcount: u16) {
         self.bg3y = word;
         if vcount < 192 {
@@ -435,26 +457,32 @@ impl Gpu2DEngine {
         }
     }
 
+    /// Stores WIN0H (left/right edges).
     pub fn set_win0h(&mut self, halfword: u16) {
         self.win0h = halfword;
     }
 
+    /// Stores WIN1H (left/right edges).
     pub fn set_win1h(&mut self, halfword: u16) {
         self.win1h = halfword;
     }
 
+    /// Stores WIN0V (top/bottom edges).
     pub fn set_win0v(&mut self, halfword: u16) {
         self.win0v = halfword;
     }
 
+    /// Stores WIN1V (top/bottom edges).
     pub fn set_win1v(&mut self, halfword: u16) {
         self.win1v = halfword;
     }
 
+    /// Stores MOSAIC.
     pub fn set_mosaic(&mut self, halfword: u16) {
         self.mosaic = halfword;
     }
 
+    /// Decodes WININ into per-window layer / effect flags.
     pub fn set_winin(&mut self, halfword: u16) {
         for bit in 0..4 {
             self.winin.win0_bg_enabled[bit] = (halfword & (1 << bit)) != 0;
@@ -466,6 +494,7 @@ impl Gpu2DEngine {
         self.winin.win1_color_special = (halfword & (1 << 13)) != 0;
     }
 
+    /// Decodes WINOUT into outside / OBJ-window layer flags.
     pub fn set_winout(&mut self, halfword: u16) {
         for bit in 0..4 {
             self.winout.outside_bg_enabled[bit] = (halfword & (1 << bit)) != 0;
@@ -477,6 +506,7 @@ impl Gpu2DEngine {
         self.winout.objwin_color_special = (halfword & (1 << 13)) != 0;
     }
 
+    /// Decodes BLDCNT (first/second targets, effect).
     pub fn set_bldcnt(&mut self, halfword: u16) {
         for bit in 0..4 {
             self.bldcnt.bg_first_target_pix[bit] = (halfword & (1 << bit)) != 0;
@@ -491,18 +521,22 @@ impl Gpu2DEngine {
         self.bldcnt.effect = ((halfword >> 6) & 0x3) as u8;
     }
 
+    /// Stores BLDALPHA (EVA/EVB).
     pub fn set_bldalpha(&mut self, halfword: u16) {
         self.bldalpha = halfword;
     }
 
+    /// Stores BLDY (EVY).
     pub fn set_bldy(&mut self, byte: u8) {
         self.bldy = byte;
     }
 
+    /// Stores MASTER_BRIGHT (mode bits 14-15, factor 0-16).
     pub fn set_master_bright(&mut self, halfword: u16) {
         self.master_bright = halfword;
     }
 
+    /// Decodes DISPCAPCNT (EVA/EVB, write bank/offset, size, sources, enable).
     pub fn set_dispcapcnt(&mut self, word: u32) {
         // EVA (0..=16 clamp)
         let eva = (word & 0x1F) as u8;

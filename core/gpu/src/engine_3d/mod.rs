@@ -13,6 +13,20 @@ use crate::Gpu;
 impl Gpu {
     /// Renders the 3D frame swapped in at the last VBlank. It is shown on
     /// engine A's BG0 during the next frame.
+    ///
+    /// ```text
+    /// from: ds_emu gpu_handle_event() at line 215 (after the VBlank
+    ///       texture uploads)
+    ///   |
+    ///   v
+    /// render_3d_frame()
+    ///   1. 3D not displayed (DISPCNT bit 3)?  mark dirty, skip
+    ///   2. raster.render(latched registers, polygon/vertex RAM of the
+    ///      render bank, sorted render list, VRAM textures, dirty flag)
+    ///   |
+    ///   v
+    /// to:   compose_scanline() -> render_bg_3d() reads raster.line(y)
+    /// ```
     pub fn render_3d_frame(&mut self) {
         let e = &mut self.engine_3d;
         if !self.engine_upper.dispcnt.bg_3d {

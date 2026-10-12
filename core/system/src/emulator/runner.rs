@@ -5,7 +5,39 @@ use ds_cpu::arm_cpu::CpuType;
 use crate::emulator::Emulator;
 
 impl Emulator {
-    /// Run the emulator main loop.
+    /// Runs the emulator for one video frame (263 scanlines, 560190 bus
+    /// cycles). Called once per host frame by the frontends.
+    ///
+    /// The two CPUs and the devices are interleaved in small time slices:
+    /// the scheduler picks the end of the next slice, the ARM9 (66 MHz) and
+    /// then the ARM7 (33 MHz) execute until they reach it, and the devices
+    /// that came due fire.
+    ///
+    /// ```text
+    /// from: gui/egui main.rs render_frame / gui/tauri emu_thread::run /
+    ///       examples headless main            (input already applied)
+    ///   |
+    ///   v
+    /// run()
+    ///   1. gpu.start_frame()                  clear the frame-complete flag
+    ///   2. loop until gpu.is_frame_complete() (set when line 192 starts
+    ///                                         VBlank, gpu_handle_event)
+    ///      a. calculate_system_timestamp()    system_timestamp += slice
+    ///                                         (<= 64 cycles or next event)
+    ///      b. ARM9 catch-up, while arm9 time < 2 * system_timestamp:
+    ///           execute(Arm9) -> run_timers9(ran) -> run_3d(ran)
+    ///      c. ARM7 catch-up, while arm7 time < system_timestamp:
+    ///           execute(Arm7) -> run_timers7(ran) -> run_spu(ran)
+    ///      d. wifi.run(slice) -> raise_wifi_irq()
+    ///      e. gpu_event due?  -> gpu_handle_event()   HBlank/VBlank/lines
+    ///      f. dma_event due?  -> dma_handle_event()   pending DMA transfers
+    ///      g. cartridge_run(slice)                    ROM data transfer
+    ///   3. cart.save_check()                  flush the .sav when idle
+    ///   |
+    ///   v
+    /// to:   caller reads get_upper_frame / get_lower_frame and
+    ///       take_audio_samples, then calls run() again next frame
+    /// ```
     pub fn run(&mut self) {
         self.gpu.start_frame();
 
@@ -21,7 +53,8 @@ impl Emulator {
                 // one-cycle steps to 0, so a tight GXSTAT/timer polling
                 // loop never let the 3D engine or the timers advance
                 // (Pokemon Ranger waited forever on GXSTAT busy).
-                let ran = (self.arm9.timestamp >> 1).wrapping_sub(self.arm9.last_timestamp >> 1) as i64;
+                let ran =
+                    (self.arm9.timestamp >> 1).wrapping_sub(self.arm9.last_timestamp >> 1) as i64;
                 self.run_timers9(ran as i32);
                 self.run_3d(ran);
             }
@@ -32,6 +65,8 @@ impl Emulator {
                 self.run_timers7(self.arm7.cycles_ran() as i32);
                 self.run_spu(self.arm7.cycles_ran() as u32);
             }
+            self.wifi.run(slice as u32);
+            self.raise_wifi_irq();
 
             if self.system_timestamp >= self.gpu_event.activation_time {
                 self.gpu_handle_event();
@@ -51,6 +86,31 @@ impl Emulator {
         };
     }
 
+    /// Executes one instruction on `cpu_type`, or idles it when it is
+    /// halted or the bus is held by a DMA.
+    ///
+    /// ```text
+    /// from: run() step 2b (ARM9) / 2c (ARM7)
+    ///   |
+    ///   v
+    /// execute(cpu)
+    ///   1. last_timestamp = timestamp          (cycles_ran() is measured
+    ///                                           from here)
+    ///   2. halted or DMA active?
+    ///        yes: timestamp = system time      (jump to the slice end)
+    ///             IE & IF != 0 -> leave HALT
+    ///             IME && !CPSR.I -> handle_irq()
+    ///             return
+    ///   3. trace hooks (Config::trace_trigger / trace_cpus)
+    ///   4. fetch at pc-2 (Thumb) or pc-4 (ARM) via read_halfword/read_word,
+    ///      record_pc, add code cycles, advance r15
+    ///   5. thumb_interpret() / arm_interpret()  decode + run the handler
+    ///      (memory accesses go through read_* / write_* -> devices)
+    ///   6. IRQ pending and CPSR.I clear -> handle_irq()
+    ///   |
+    ///   v
+    /// to:   back to run(), which advances timers / 3D / SPU by cycles_ran()
+    /// ```
     pub fn execute(&mut self, cpu_type: CpuType) {
         let cpu_id = {
             // ARM7 or ARM9
@@ -138,6 +198,11 @@ impl Emulator {
     }
 
     /// Prints the instruction about to execute (see `Config::trace_cpus`).
+    ///
+    /// ```text
+    /// from: execute() step 3, only while tracing is enabled for this CPU
+    /// to:   stderr line "<9|7><A|T> addr opcode cpsr r0..r14"
+    /// ```
     #[cold]
     fn trace_instruction(&mut self, cpu_type: CpuType, thumb_on: bool, pc: u32) {
         let addr = pc.wrapping_sub(if thumb_on { 2 } else { 4 });

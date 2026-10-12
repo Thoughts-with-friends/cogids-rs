@@ -9,16 +9,19 @@ pub const REG_SP: u32 = 13;
 pub const REG_LR: u32 = 14;
 pub const REG_PC: u32 = 15;
 
+/// Carry out of `a + b`.
 #[inline]
 pub const fn carry_add(a: u32, b: u32) -> bool {
     (0xFFFF_FFFF_u32.wrapping_sub(a)) < b
 }
 
+/// Signed overflow of `a + b = result`.
 #[inline]
 pub const fn add_overflow(a: u32, b: u32, result: u32) -> bool {
     (((a ^ b) & 0x8000_0000) == 0) && (((a ^ result) & 0x8000_0000) != 0)
 }
 
+/// Signed overflow of `a - b = result`.
 #[inline]
 pub const fn sub_overflow(a: u32, b: u32, result: u32) -> bool {
     (((a ^ b) & 0x8000_0000) != 0) && (((a ^ result) & 0x8000_0000) != 0)
@@ -423,6 +426,16 @@ impl ArmCpu {
         self.cpsr.irq_disabled = true;
         self.jp(self.exception_base + 0x04, true);
     }
+    /// Takes the IRQ exception.
+    ///
+    /// ```text
+    /// from: ds_emu execute() when IE & IF != 0, IME set and CPSR.I clear
+    ///   1. SPSR_irq = CPSR, LR_irq = return address (+4 convention)
+    ///   2. switch to IRQ mode registers, CPSR.I = 1, ARM state
+    ///   3. jump to vector base + 0x18 (BIOS / high vectors on the ARM9)
+    /// to:   the game's IRQ handler (via the BIOS dispatcher), which acknowledges
+    ///       IF and returns with SUBS PC, LR, #4
+    /// ```
     pub fn handle_irq(&mut self) {
         let value = self.cpsr.get();
         self.spsr[PsrMode::Irq as usize].set(value);
@@ -445,6 +458,14 @@ impl ArmCpu {
         self.halted = true;
     }
 
+    /// Takes the SWI exception (real BIOS code path, `config.hle_bios` off).
+    ///
+    /// ```text
+    /// from: SWI handlers in ds_emu arm_instruction / thumb_instruction
+    ///   1. SPSR_svc = CPSR, LR_svc = address after the SWI
+    ///   2. supervisor mode registers, CPSR.I = 1
+    ///   3. jump to vector base + 0x08 (BIOS SWI dispatcher)
+    /// ```
     pub fn handle_swi(&mut self) {
         let value = self.cpsr.get();
         self.spsr[PsrMode::Supervisor as usize].set(value);
@@ -542,6 +563,7 @@ impl ArmCpu {
         }
     }
 
+    /// Lower-case condition suffix for the disassembler ("" for AL).
     #[inline]
     pub const fn get_condition_name(id: u32) -> &'static str {
         match id {
@@ -564,6 +586,7 @@ impl ArmCpu {
         }
     }
 
+    /// CPU id: 0 = ARM9, 1 = ARM7.
     #[inline]
     pub const fn get_id(&self) -> i32 {
         self.cpu_id
@@ -606,6 +629,7 @@ impl ArmCpu {
         }
     }
 
+    /// Upper-case condition suffix (`None` for AL / NV).
     pub const fn print_condition(condition: u32) -> Option<&'static str> {
         Some(match condition {
             0x0 => "EQ",
@@ -626,10 +650,12 @@ impl ArmCpu {
         })
     }
 
+    /// Cycles executed so far (ARM9: 66 MHz units, ARM7: 33 MHz).
     pub const fn get_timestamp(&self) -> u64 {
         self.timestamp
     }
 
+    /// Cycles taken by the last execute() (timestamp - last_timestamp).
     pub const fn cycles_ran(&self) -> i64 {
         self.timestamp.wrapping_sub(self.last_timestamp) as i64
     }
@@ -641,6 +667,7 @@ impl ArmCpu {
         self.regs[REG_PC as usize]
     }
 
+    /// The instruction fetched by execute() and being interpreted.
     pub const fn get_current_instr(&self) -> u32 {
         self.current_instr
     }
@@ -658,37 +685,45 @@ impl ArmCpu {
     }
 
     //WaitState bullshit
+    /// Adds the time of `cycles` non-sequential 32-bit code fetches at `address`.
     pub const fn add_n32_code(&mut self, address: u32, cycles: i32) {
         let idx = ((address & 0x0F00_0000) >> 24) as usize;
         self.timestamp += (1 + self.code_waitstates[idx][0]) as u64 * cycles as u64;
     }
+    /// Adds the time of `cycles` sequential 32-bit code fetches at `address`.
     pub const fn add_s32_code(&mut self, address: u32, cycles: i32) {
         let idx = ((address & 0x0F00_0000) >> 24) as usize;
         self.timestamp += (1 + self.code_waitstates[idx][1]) as u64 * cycles as u64;
     }
+    /// Adds the time of `cycles` non-sequential 16-bit code fetches at `address`.
     pub const fn add_n16_code(&mut self, address: u32, cycles: i32) {
         let idx = ((address & 0x0F00_0000) >> 24) as usize;
         self.timestamp += (1 + self.code_waitstates[idx][2]) as u64 * cycles as u64;
     }
+    /// Adds the time of `cycles` sequential 16-bit code fetches at `address`.
     pub const fn add_s16_code(&mut self, address: u32, cycles: i32) {
         let idx = ((address & 0x0F00_0000) >> 24) as usize;
         self.timestamp += (1 + self.code_waitstates[idx][3]) as u64 * cycles as u64;
     }
+    /// Adds the time of `cycles` non-sequential 32-bit data accesses at `address`.
     pub const fn add_n32_data(&mut self, address: u32, cycles: i32) {
         let index = ((address & 0x0F000000) >> 24) as usize;
         let data_waitstates = self.data_waitstates[index][0] as u64;
         self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
+    /// Adds the time of `cycles` sequential 32-bit data accesses at `address`.
     pub const fn add_s32_data(&mut self, address: u32, cycles: i32) {
         let index = ((address & 0x0F000000) >> 24) as usize;
         let data_waitstates = self.data_waitstates[index][1] as u64;
         self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
+    /// Adds the time of `cycles` non-sequential 16-bit data accesses at `address`.
     pub const fn add_n16_data(&mut self, address: u32, cycles: i32) {
         let index = ((address & 0x0F000000) >> 24) as usize;
         let data_waitstates = self.data_waitstates[index][2] as u64;
         self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
+    /// Adds the time of `cycles` sequential 16-bit data accesses at `address`.
     pub const fn add_s16_data(&mut self, address: u32, cycles: i32) {
         let index = ((address & 0x0F000000) >> 24) as usize;
         let data_waitstates = self.data_waitstates[index][3] as u64;
@@ -700,6 +735,7 @@ impl ArmCpu {
         self.timestamp += cycles as u64;
     }
 
+    /// Adds coprocessor (CP15) access cycles.
     pub const fn add_cop_cycles(&mut self, cycles: i32) {
         self.timestamp += cycles as u64;
     }
@@ -726,6 +762,7 @@ impl ArmCpu {
         }
     }
 
+    /// AND: `Rd = Rn & op` (flags N/Z when S).
     pub fn andd(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
         let result = (src & operand) as u32;
         if self.alu_writeback(dst as u32, result, set_condition_codes) {
@@ -733,6 +770,7 @@ impl ArmCpu {
         }
     }
 
+    /// ORR: `Rd = Rn | op`.
     pub fn orr(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
         let result = (src | operand) as u32;
         if self.alu_writeback(dst as u32, result, set_condition_codes) {
@@ -748,6 +786,7 @@ impl ArmCpu {
         }
     }
 
+    /// ADD: `Rd = Rn + op` (N/Z/C/V when S).
     pub fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let result = src.wrapping_add(operand);
         if self.alu_writeback(dst, result, set_condition_codes) {
@@ -756,6 +795,7 @@ impl ArmCpu {
         }
     }
 
+    /// SUB: `Rd = Rn - op` (N/Z/C/V when S).
     pub fn sub(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let result = src.wrapping_sub(operand);
         if self.alu_writeback(dst, result, set_condition_codes) {
@@ -786,19 +826,23 @@ impl ArmCpu {
         }
     }
 
+    /// CMP: flags of `x - y`.
     pub const fn cmp(&mut self, x: u32, y: u32) {
         let result = x.wrapping_sub(y);
         self.set_zero_neg_flags(result);
         self.set_cv_sub_flags(x, y, result);
     }
+    /// CMN: flags of `x + y`.
     pub const fn cmn(&mut self, x: u32, y: u32) {
         let result = x.wrapping_add(y);
         self.set_zero_neg_flags(result);
         self.set_cv_add_flags(x, y, result);
     }
+    /// TST: N/Z of `x & y`.
     pub const fn tst(&mut self, x: u32, y: u32) {
         self.set_zero_neg_flags(x & y);
     }
+    /// TEQ: N/Z of `x ^ y`.
     pub const fn teq(&mut self, x: u32, y: u32) {
         self.set_zero_neg_flags(x ^ y);
     }
@@ -810,6 +854,7 @@ impl ArmCpu {
         }
     }
 
+    /// MUL: `Rd = Rm * Rs` (N/Z when S).
     pub const fn mul(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let result = src.wrapping_mul(operand);
         self.set_register(dst as i32, result);
@@ -819,6 +864,7 @@ impl ArmCpu {
         }
     }
 
+    /// BIC: `Rd = Rn & !op`.
     pub fn bic(&mut self, dst: u32, src: u32, operand: u32, alter_flags: bool) {
         let result = src & !operand;
         if self.alu_writeback(dst, result, alter_flags) {
@@ -826,12 +872,14 @@ impl ArmCpu {
         }
     }
 
+    /// MVN: `Rd = !op`.
     pub fn mvn(&mut self, dst: u32, operand: u32, alter_flags: bool) {
         if self.alu_writeback(dst, !operand, alter_flags) {
             self.set_zero_neg_flags(!operand);
         }
     }
 
+    /// MRS: copies CPSR or the current SPSR to a register.
     pub const fn mrs(&mut self, instruction: u32) {
         let using_cpsr = (instruction & (1 << 22)) == 0;
         let dst = (instruction >> 12) & 0xF;
@@ -843,6 +891,7 @@ impl ArmCpu {
         }
     }
 
+    /// MSR: writes CPSR/SPSR fields (mode change re-banks registers).
     pub fn msr(&mut self, instruction: u32) {
         let is_imm = (instruction & (1 << 25)) != 0;
         let using_cpsr = (instruction & (1 << 22)) == 0;
@@ -900,10 +949,12 @@ impl ArmCpu {
         psr.set(value);
     }
 
+    /// Sets or clears CPSR.Z.
     pub const fn set_zero(&mut self, cond: bool) {
         self.cpsr.zero = cond;
     }
 
+    /// Sets or clears CPSR.N.
     pub const fn set_neg(&mut self, cond: bool) {
         self.cpsr.negative = cond;
     }
@@ -914,16 +965,19 @@ impl ArmCpu {
         self.cpsr.negative = (value & (1 << 31)) != 0;
     }
 
+    /// C and V of an addition.
     pub const fn set_cv_add_flags(&mut self, a: u32, b: u32, result: u32) {
         self.cpsr.carry = carry_add(a, b);
         self.cpsr.overflow = add_overflow(a, b, result);
     }
 
+    /// C and V of a subtraction (C = no borrow).
     pub const fn set_cv_sub_flags(&mut self, a: u32, b: u32, result: u32) {
         self.cpsr.carry = a >= b;
         self.cpsr.overflow = sub_overflow(a, b, result);
     }
 
+    /// Exception return: CPSR = SPSR of the current mode (re-banks registers).
     pub fn spsr_to_cpsr(&mut self) {
         let new_cpsr = self.spsr[self.cpsr.mode as usize].get();
 
@@ -978,6 +1032,7 @@ impl ArmCpu {
         result
     }
 
+    /// Logical shift right by 32 (`LSR #0` encoding).
     pub const fn lsr_32(&mut self, value: u32, alter_flags: bool) -> u32 {
         self.lsr(value, 32, alter_flags)
     }
@@ -996,10 +1051,12 @@ impl ArmCpu {
         result
     }
 
+    /// Arithmetic shift right by 32 (`ASR #0` encoding).
     pub const fn asr_32(&mut self, value: u32, alter_flags: bool) -> u32 {
         self.asr(value, 32, alter_flags)
     }
 
+    /// Rotate right by one through carry (`ROR #0` encoding).
     pub const fn rrx(&mut self, value: u32, alter_flags: bool) -> u32 {
         let mut result = value;
         result >>= 1;

@@ -6,6 +6,21 @@ use ds_mem_addr::*;
 use ds_peripherals::ipc::Side;
 
 impl Emulator {
+    /// ARM7 32-bit write: the ARM7 memory map.
+    ///
+    /// ```text
+    /// from: write_word(Arm7) / ARM7 DMA (dma_handle_event)
+    ///   |
+    ///   v
+    /// arm7_write_word(address, word)
+    ///   0x0400_0400..0x0400_051F  SPU registers  -> spu.write32
+    ///   main RAM / shared WRAM / ARM7 WRAM
+    ///   DMA 4-7 -> dma_write_len_cnt, timers 0-3, IPC (may raise IRQ),
+    ///   cartridge (AUXSPI, ROMCTRL, KEY2 seeds), IE/IF/IME,
+    ///   POWCNT2 -> wifi.set_power_cnt, BIOS protection
+    ///   0x0480_0000..0x0480_FFFF  Wi-Fi -> wifi.write -> raise_wifi_irq
+    ///   VRAM banks C/D mapped to the ARM7
+    /// ```
     /// # Panics
     #[expect(clippy::match_same_arms)]
     pub fn arm7_write_word(&mut self, address: u32, word: u32) {
@@ -93,6 +108,15 @@ impl Emulator {
             0x040001B4 => self.cart.set_lo_key2_seed1(word),
 
             0x04000208 => self.int7_reg.ime = word & 0x1,
+            0x04000304 => {
+                self.pow_cnt2.set_value(word as u16);
+                self.wifi.set_power_cnt(self.pow_cnt2.wifi);
+            }
+            0x04800000..0x04810000 => {
+                self.wifi.write(address, word as u16);
+                self.wifi.write(address + 2, (word >> 16) as u16);
+                self.raise_wifi_irq();
+            }
             0x04000210 => self.int7_reg.irq_enable = word,
             0x04000214 => self.int7_reg.irq_flags &= !word,
 
@@ -118,6 +142,9 @@ impl Emulator {
         }
     }
 
+    /// ARM7 16-bit write (same map as [`Self::arm7_write_word`]; adds
+    /// SPICNT/SPIDATA -> spi bus (touch screen, firmware, power), RTC,
+    /// POSTFLG and the Wi-Fi ports).
     #[expect(clippy::match_same_arms)]
     pub fn arm7_write_halfword(&mut self, address: u32, halfword: u16) {
         if (0x0400_0400..0x0400_0520).contains(&address) {
@@ -225,7 +252,10 @@ impl Emulator {
             0x04000208 => self.int7_reg.ime = (halfword & 0x1) as u32,
 
             0x04000300 => self.postflg7 = (halfword & 1) as u8,
-            0x04000304 => self.pow_cnt2.set_value(halfword),
+            0x04000304 => {
+                self.pow_cnt2.set_value(halfword);
+                self.wifi.set_power_cnt(self.pow_cnt2.wifi);
+            }
 
             0x04000514 => {}
             0x0400051C => {}
@@ -233,18 +263,12 @@ impl Emulator {
             // Debug port (DS Lite firmware)
             0x04001080 => {}
 
-            // WiFi registers
-            0x04808036 => self.wifi.set_w_power_us(halfword),
-            0x04808158 => self.wifi.set_w_bb_cnt(halfword),
-            0x0480815A => self.wifi.set_w_bb_write(halfword),
-            0x04808160 => self.wifi.set_w_bb_mode(halfword),
-            0x04808168 => self.wifi.set_w_bb_power(halfword),
-            0x04808184 => self.wifi.set_w_rf_cnt(halfword),
-
-            // SPU channel writes
-
-            // WiFi block (ignored)
-            0x04800000..0x04900000 => {}
+            // Wi-Fi ports and RAM
+            0x04800000..0x04810000 => {
+                self.wifi.write(address, halfword);
+                self.raise_wifi_irq();
+            }
+            0x04810000..0x04900000 => {}
 
             // Default
             _ => {
@@ -258,6 +282,8 @@ impl Emulator {
         }
     }
 
+    /// ARM7 8-bit write (RAM, IPCSYNC, RTC, AUXSPI, cartridge command
+    /// bytes, SPI data, IME, HALTCNT...).
     pub fn arm7_write_byte(&mut self, address: u32, byte: u8) {
         if (0x0400_0400..0x0400_0520).contains(&address) {
             return self.spu.write8(address, byte);

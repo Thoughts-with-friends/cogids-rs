@@ -6,7 +6,24 @@ use ds_mem_addr::*;
 use ds_peripherals::ipc::Side;
 
 impl Emulator {
-    /// ARM7 read 32-bit word
+    /// ARM7 32-bit read: the ARM7 memory map.
+    ///
+    /// ```text
+    /// from: read_word(Arm7) / ARM7 DMA (dma_handle_event)
+    ///   |
+    ///   v
+    /// arm7_read_word(address)
+    ///   0x0400_0400..0x0400_051F  SPU registers         -> spu.read32
+    ///   0x02xx_xxxx               main RAM (4 MB mirrored)
+    ///   0x03xx_xxxx               shared WRAM (WRAMCNT) / ARM7 WRAM
+    ///   0x0400_01xx               IPC, cartridge, SPI, IE/IF/IME
+    ///   0x0410_0000               IPC FIFO receive (may raise IRQ)
+    ///   0x0410_0010               cartridge data    -> cart_read_data()
+    ///   0x0480_0000..0x0480_FFFF  Wi-Fi ports / RAM -> wifi.read
+    ///   0x0000_0000..0x0000_3FFF  ARM7 BIOS (protected outside it)
+    ///   0x06xx_xxxx               VRAM banks C/D mapped to the ARM7
+    ///   anything else             0 (logged with the `log` feature)
+    /// ```
     ///
     /// FIXME: return Result?
     ///
@@ -53,6 +70,9 @@ impl Emulator {
                 word
             }
             0x04100010 => self.cart_read_data(),
+            0x04800000..0x04810000 => {
+                u32::from(self.wifi.read(address)) | (u32::from(self.wifi.read(address + 2)) << 16)
+            }
 
             ..0x4000 => {
                 let arm7_pc = self.arm7.get_pc();
@@ -75,10 +95,12 @@ impl Emulator {
         }
     }
 
-    /// ARM7 read 16-bit halfword
+    /// ARM7 16-bit read (same map as [`Self::arm7_read_word`]; adds
+    /// DISPSTAT/VCOUNT, DMA, timers, KEYINPUT/EXTKEYIN, RTC, SPI data,
+    /// POWCNT2).
     /// # Panics
     #[expect(clippy::unwrap_used, clippy::match_same_arms)]
-    pub fn arm7_read_halfword(&self, address: u32) -> u16 {
+    pub fn arm7_read_halfword(&mut self, address: u32) -> u16 {
         if (0x0400_0400..0x0400_0520).contains(&address) {
             return self.spu.read16(address);
         }
@@ -155,12 +177,9 @@ impl Emulator {
             0x04001080 => 0,
             0x04004700 => 0,
 
-            0x0480815C => self.wifi.get_w_bb_read(),
-            0x0480815E => self.wifi.get_w_bb_busy() as u16,
-            0x04808180 => self.wifi.get_w_rf_busy() as u16,
-
-            // WiFi block
-            0x04800000..0x04900000 => 0,
+            // Wi-Fi ports and RAM (mirrors above 0x04810000 read as 0)
+            0x04800000..0x04810000 => self.wifi.read(address),
+            0x04810000..0x04900000 => 0,
 
             // GPU
             0x06000000..0x07000000 => self.gpu.read_arm7_u16(address),
@@ -179,7 +198,8 @@ impl Emulator {
         }
     }
 
-    pub fn arm7_read_byte(&self, address: u32) -> u8 {
+    /// ARM7 8-bit read (RAM, BIOS, VRAM and the byte-accessible I/O ports).
+    pub fn arm7_read_byte(&mut self, address: u32) -> u8 {
         if (0x0400_0400..0x0400_0520).contains(&address) {
             return self.spu.read8(address);
         }
@@ -215,6 +235,7 @@ impl Emulator {
             0x04000218 | 0x0400021C => 0, // DSi IE2 | DSi IF2
             0x04000241 => self.wram_cnt & 0x3,
             0x04000300 => self.postflg7,
+            0x04800000..0x04810000 => (self.wifi.read(address & !1) >> ((address & 1) * 8)) as u8,
 
             // BIOS (0x00000000..0x00003FFF)
             ..0x4000 => {

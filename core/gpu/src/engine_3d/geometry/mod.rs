@@ -29,6 +29,7 @@ const fn sext10(v: u32, shift: u32) -> i16 {
     ((((v >> shift) & 0x3FF) << 6) as u16 as i16) >> 6
 }
 
+/// 32x32 -> 64-bit product (fixed-point helper).
 #[inline]
 pub(super) fn mul(a: i32, b: i32) -> i64 {
     i64::from(a) * i64::from(b)
@@ -41,6 +42,7 @@ impl Default for Gpu3D {
 }
 
 impl Gpu3D {
+    /// Geometry engine with identity matrices and the reset viewport.
     pub fn new() -> Self {
         let mut s = Self {
             cycles: 0,
@@ -130,10 +132,12 @@ impl Gpu3D {
         s
     }
 
+    /// Resets the geometry engine to its power-on state.
     pub fn power_on(&mut self) {
         *self = Self::new();
     }
 
+    /// Recomputes the clip matrix (projection * position) when dirty.
     fn update_clip_matrix(&mut self) {
         if self.clip_matrix_dirty {
             self.clip_matrix = self.current_clip_matrix();
@@ -151,6 +155,7 @@ impl Gpu3D {
         m
     }
 
+    /// VIEWPORT (0x60): x1,y1,x2,y2 with Y flipped to screen space.
     fn set_viewport(&mut self, param: u32) {
         let v = &mut self.viewport;
         v.x0 = (param & 0xFF) as i32;
@@ -163,6 +168,26 @@ impl Gpu3D {
 
     /// Executes one complete GX command whose parameters are in
     /// `cmd_params`.
+    ///
+    /// ```text
+    /// from: ds_emu exec_command() once all parameters are collected
+    ///   |
+    ///   v
+    /// execute_command(cmd)
+    ///   0x10-0x1C  matrix mode, push/pop/store/restore, identity,
+    ///              load/multiply 4x4/4x3/3x3, scale, translate
+    ///   0x20-0x2B  color, normal (lighting), texcoord, VTX_16/10/XY/
+    ///              XZ/YZ/DIFF -> submit_vertex(), polygon/texture attrs
+    ///   0x30-0x34  material, light vectors/colors, shininess table
+    ///   0x40-0x41  BEGIN_VTXS / END_VTXS
+    ///   0x50       SWAP_BUFFERS (waits for VBlank: end_of_frame)
+    ///   0x60       VIEWPORT
+    ///   0x70-0x72  BOX_TEST, POS_TEST, VEC_TEST
+    ///   |
+    ///   v
+    /// to:   submit_vertex() -> submit_polygon() -> polygon/vertex RAM of
+    ///       the current bank
+    /// ```
     #[expect(clippy::too_many_lines)]
     pub fn execute_command(&mut self, cmd: u8) {
         let p = self.cmd_params;

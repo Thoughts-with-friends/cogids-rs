@@ -35,6 +35,7 @@ pub(super) struct LineLayers {
     pub(super) obj_window: [bool; W],
 }
 
+/// BGR555 -> 0xFFRRGGBB with 5-to-8-bit expansion.
 #[inline]
 const fn rgb555_to_888(c: u16) -> u32 {
     let r = (c & 0x1F) as u32;
@@ -46,6 +47,7 @@ const fn rgb555_to_888(c: u16) -> u32 {
         | ((b << 3) | (b >> 2))
 }
 
+/// BLDALPHA blend `(a * eva + b * evb) / 16` per channel, saturated.
 #[inline]
 fn blend(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
@@ -67,6 +69,7 @@ fn blend32(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
     ch(0) | ch(5) | ch(10)
 }
 
+/// BLDY brightness increase `c + (31 - c) * evy / 16`.
 #[inline]
 fn brighten(c: u16, evy: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
@@ -76,6 +79,7 @@ fn brighten(c: u16, evy: u32) -> u16 {
     ch(0) | ch(5) | ch(10)
 }
 
+/// BLDY brightness decrease `c - c * evy / 16`.
 #[inline]
 fn darken(c: u16, evy: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
@@ -86,6 +90,7 @@ fn darken(c: u16, evy: u32) -> u16 {
 }
 
 impl Gpu {
+    /// OBJ palette entry `index` of engine A/B (standard palette).
     pub(super) fn obj_palette_color(&self, a: bool, index: u32) -> u16 {
         let pal = if a {
             &self.palette_upper
@@ -96,6 +101,7 @@ impl Gpu {
         u16::from_le_bytes([pal[i], pal[i + 1]])
     }
 
+    /// BG palette entry `index` of engine A/B (0 = backdrop).
     pub(super) fn bg_palette_color(&self, a: bool, index: u32) -> u16 {
         let pal = if a {
             &self.palette_upper
@@ -106,6 +112,7 @@ impl Gpu {
         u16::from_le_bytes([pal[i], pal[i + 1]])
     }
 
+    /// Engine A (upper field) or B.
     pub(super) fn engine(&self, a: bool) -> &crate::engine_2d::Gpu2DEngine {
         if a {
             &self.engine_upper
@@ -114,6 +121,7 @@ impl Gpu {
         }
     }
 
+    /// Mutable engine A or B.
     fn engine_mut(&mut self, a: bool) -> &mut crate::engine_2d::Gpu2DEngine {
         if a {
             &mut self.engine_upper
@@ -124,6 +132,23 @@ impl Gpu {
 
     /// Renders and composites the current scanline of one engine into its
     /// `framebuffer` (pre-display-mode) row.
+    ///
+    /// ```text
+    /// from: draw_scanline_for_engine() step 1
+    ///   |
+    ///   v
+    /// compose_scanline(engine)
+    ///   1. per enabled BG, by BG mode (DISPCNT bits 0-2):
+    ///        BG0 + 3D on (engine A) -> render_bg_3d   (3D raster line)
+    ///        text / affine / extended / large -> render_bg_* (bg.rs)
+    ///   2. OBJ enabled -> render_objs()                (obj.rs)
+    ///   3. composite()   window masks (window.rs), top two layers by
+    ///                    priority, BLDCNT alpha / brighten / darken
+    ///   4. advance_affine_refs()   BG2/BG3 reference point += PB/PD
+    ///   |
+    ///   v
+    /// to:   draw_scanline_for_engine() applies the display mode
+    /// ```
     pub fn compose_scanline(&mut self, a: bool) {
         let line = self.get_vcount() as usize;
         if line >= SCANLINES {

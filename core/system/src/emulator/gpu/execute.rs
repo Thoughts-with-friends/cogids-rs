@@ -6,6 +6,25 @@ use crate::Emulator;
 use ds_gpu::engine_3d::gxfifo::{CMD_CYCLE_AMOUNTS, CMD_PARAM_AMOUNTS};
 
 impl Emulator {
+    /// Pops one GXPIPE entry and, once all parameters of its command are
+    /// collected, runs the command on the geometry engine.
+    ///
+    /// ```text
+    /// from: gpu3d_run() (normal path) / write_command() when GXFIFO is
+    ///       full (the CPU stalls until a slot frees up)
+    ///   |
+    ///   v
+    /// exec_command()
+    ///   1. read_command()            pop GXPIPE, refill it from GXFIFO,
+    ///                                re-check FIFO DMA / IRQ
+    ///   2. store the parameter; return until CMD_PARAM_AMOUNTS are in
+    ///   3. cycles += CMD_CYCLE_AMOUNTS[cmd]
+    ///   4. engine_3d.execute_command(cmd)
+    ///   5. cycles += geometry_pipeline_cycles()   vertex/lighting setup
+    ///   |
+    ///   v
+    /// to:   back to gpu3d_run(), which waits until these cycles elapse
+    /// ```
     pub fn exec_command(&mut self) {
         let Some(cmd) = self.read_command() else {
             return;
@@ -28,7 +47,8 @@ impl Emulator {
         self.gpu.engine_3d.cycles += extra;
     }
 
-    /// Extra geometry engine time not covered by the per-command table:
+    /// Extra geometry engine time not covered by the per-command table
+    /// (called by exec_command() step 5):
     /// the vertex, normal (lighting) and polygon setup pipelines
     /// (melonDS `GPU3D::SubmitVertex`/`SubmitPolygon`/`CalculateLighting`).
     ///
