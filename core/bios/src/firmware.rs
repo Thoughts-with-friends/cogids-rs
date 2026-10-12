@@ -48,6 +48,12 @@ pub static FIRMWARE_DS_IQUE: [u8; 0x80000] = default_firmware::<0x80000>(DSType:
 /// `OS_Terminate`.
 const MAC_ADDRESS: [u8; 6] = [0x00, 0x09, 0xBF, 0x11, 0x22, 0x33];
 
+/// User settings 0x58..0x63: ADC (x1, y1) = (0x200, 0x200) at pixel
+/// (32, 32) and ADC (x2, y2) = (0xE00, 0xA00) at pixel (224, 160).
+const TOUCH_CALIBRATION: [u8; 12] = [
+    0x00, 0x02, 0x00, 0x02, 32, 32, 0x00, 0x0E, 0x00, 0x0A, 224, 160,
+];
+
 /// Length of the Wi-Fi config block at 0x2C (GBATEK "DS Firmware Header").
 const WIFI_CONFIG_LEN: usize = 0x138;
 
@@ -160,6 +166,17 @@ const fn default_firmware<const N: usize>(model: DSType) -> [u8; N] {
         firmware[start + 0x0B] = 0;
         firmware[start + 0x0C] = b'a';
         firmware[start + 0x0D] = 0;
+
+        // 0x58..0x63: touch screen calibration (GBATEK "DS Firmware User
+        // Settings"): two points as 12-bit ADC values plus the screen pixel
+        // they correspond to. The emulated TSC reports `pixel << 4`, so the
+        // points match that mapping. All-zero calibration (as before) gives
+        // the SDK's TP_CalcCalibrateParam nothing to work with.
+        let mut c = 0;
+        while c < TOUCH_CALIBRATION.len() {
+            firmware[start + 0x58 + c] = TOUCH_CALIBRATION[c];
+            c += 1;
+        }
 
         // CRC16
         let mut crc: [u8; 112] = [0; 0x70];

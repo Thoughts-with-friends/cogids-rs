@@ -16,8 +16,14 @@ impl Emulator {
             let slice = (self.system_timestamp - before) as i32;
             while self.arm9.get_timestamp() < (self.system_timestamp << 1) {
                 self.execute(CpuType::Arm9);
-                self.run_timers9((self.arm9.cycles_ran() >> 1) as i32);
-                self.run_3d(self.arm9.cycles_ran() >> 1);
+                // ARM9 timestamps count 66 MHz cycles. Halve the timestamps
+                // rather than the difference: `cycles_ran() >> 1` truncates
+                // one-cycle steps to 0, so a tight GXSTAT/timer polling
+                // loop never let the 3D engine or the timers advance
+                // (Pokemon Ranger waited forever on GXSTAT busy).
+                let ran = (self.arm9.timestamp >> 1).wrapping_sub(self.arm9.last_timestamp >> 1) as i64;
+                self.run_timers9(ran as i32);
+                self.run_3d(ran);
             }
 
             // Now handle ARM7

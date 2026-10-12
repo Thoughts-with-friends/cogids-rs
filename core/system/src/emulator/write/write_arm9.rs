@@ -122,11 +122,14 @@ impl Emulator {
                 self.int9_reg.irq_flags &= !word;
                 self.check_gxfifo_irq();
             }
-            0x0400_0240 => {
-                self.gpu.set_vramcnt_a((word & 0xFF) as u8);
-                self.gpu.set_vramcnt_b(((word >> 8) & 0xFF) as u8);
-                self.gpu.set_vramcnt_c(((word >> 16) & 0xFF) as u8);
-                self.gpu.set_vramcnt_d((word >> 24) as u8);
+            // VRAMCNT_A..G, WRAMCNT, VRAMCNT_H/I: byte registers that games
+            // also write 16/32 bits at a time.
+            0x0400_0240 | 0x0400_0244 | 0x0400_0248 => {
+                for (i, byte) in word.to_le_bytes().into_iter().enumerate() {
+                    if address + (i as u32) <= 0x0400_0249 {
+                        self.arm9_write_byte(address + i as u32, byte);
+                    }
+                }
             }
             0x0400_0280 => {
                 self.divcnt = (self.divcnt & 0xC000) | (word as u16 & 0x3);
@@ -328,9 +331,13 @@ impl Emulator {
             0x040001A2 => self.cart.set_auxspidata(halfword as u8),
             0x04000204 => self.ex_mem_cnt = halfword,
             0x04000208 => self.int9_reg.ime = (halfword & 0x1) as u32,
-            0x04000248 => {
-                self.gpu.set_vramcnt_h(halfword as u8);
-                self.gpu.set_vramcnt_i((halfword >> 8) as u8);
+            // VRAMCNT_A..I and WRAMCNT are byte registers; 16-bit writes
+            // set two of them (Kirby Super Star Ultra writes 0x04000240 and
+            // 0x04000242 this way; dropping them left all VRAM unmapped).
+            0x04000240 | 0x04000242 | 0x04000244 | 0x04000246 | 0x04000248 => {
+                let [lo, hi] = halfword.to_le_bytes();
+                self.arm9_write_byte(address, lo);
+                self.arm9_write_byte(address + 1, hi);
             }
             0x04000280 => {
                 self.divcnt = (self.divcnt & 0xC000) | (halfword & 0x3);
