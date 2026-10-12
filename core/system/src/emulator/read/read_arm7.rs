@@ -52,7 +52,7 @@ impl Emulator {
                 self.raise_ipc(irq);
                 word
             }
-            0x04100010 => self.cart.get_output(),
+            0x04100010 => self.cart_read_data(),
 
             ..0x4000 => {
                 let arm7_pc = self.arm7.get_pc();

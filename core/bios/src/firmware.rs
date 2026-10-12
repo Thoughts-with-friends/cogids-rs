@@ -39,12 +39,29 @@ pub static FIRMWARE_DSI: [u8; 0x20000] = default_firmware::<0x20000>(DSType::Dsi
 /// DS firmware for iQue DS (512KB)
 pub static FIRMWARE_DS_IQUE: [u8; 0x80000] = default_firmware::<0x80000>(DSType::Ique);
 
+/// Wi-Fi MAC address of the built-in firmware (melonDS' default; 00:09:BF
+/// is Nintendo's OUI).
+///
+/// It must not be all zeros: the SDK copies it to 0x027FFCF4 at boot
+/// (`OS_GetMacAddress`), and the anti-piracy code of later games (e.g.
+/// Pokemon + Nobunaga's Ambition) treats a zero MAC as an emulator and calls
+/// `OS_Terminate`.
+const MAC_ADDRESS: [u8; 6] = [0x00, 0x09, 0xBF, 0x11, 0x22, 0x33];
+
+/// Length of the Wi-Fi config block at 0x2C (GBATEK "DS Firmware Header").
+const WIFI_CONFIG_LEN: usize = 0x138;
+
 // CRC16 calculation using while loop, const compatible
 const fn crc16(user: [u8; 0x70]) -> u16 {
-    let mut crc: u16 = 0xFFFF;
-    let mut i = 0;
-    while i < 0x70 {
-        crc ^= user[i] as u16;
+    crc16_range(&user, 0, 0x70, 0xFFFF)
+}
+
+/// CRC16 (poly 0xA001) of `data[start..start + len]`, const compatible.
+const fn crc16_range(data: &[u8], start: usize, len: usize, init: u16) -> u16 {
+    let mut crc = init;
+    let mut i = start;
+    while i < start + len {
+        crc ^= data[i] as u16;
         let mut j = 0;
         while j < 8 {
             if crc & 1 != 0 {
@@ -94,6 +111,20 @@ const fn default_firmware<const N: usize>(model: DSType) -> [u8; N] {
     // 0x1E..0x1F
     firmware[0x1E] = 0xFF;
     firmware[0x1F] = 0xFF;
+
+    // 0x2C..0x163: Wi-Fi config (length, MAC, enabled channels), CRC at 0x2A
+    firmware[0x2C] = (WIFI_CONFIG_LEN & 0xFF) as u8;
+    firmware[0x2D] = (WIFI_CONFIG_LEN >> 8) as u8;
+    let mut i = 0;
+    while i < 6 {
+        firmware[0x36 + i] = MAC_ADDRESS[i];
+        i += 1;
+    }
+    firmware[0x3C] = 0xFE;
+    firmware[0x3D] = 0x3F;
+    let wifi_crc = crc16_range(&firmware, 0x2C, WIFI_CONFIG_LEN, 0x0000);
+    firmware[0x2A] = (wifi_crc & 0xFF) as u8;
+    firmware[0x2B] = (wifi_crc >> 8) as u8;
 
     // 0x20..0x28 values
     let values: [u16; 5] = [((N - 0x200) >> 3) as u16, 0x0B51, 0x0DB3, 0x4F5D, 0xFFFF];

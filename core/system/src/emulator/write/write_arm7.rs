@@ -309,16 +309,13 @@ impl Emulator {
             0x04000300 => self.postflg7 = byte & 0x1,
 
             0x04000301 => {
-                match byte {
-                    0x80 => {
-                        // ARM7 halt request
-                        self.arm7.halt();
-                    }
-                    _ => {
-                        #[cfg(feature = "log")]
-                        log::error!("Unrecognized HALTCNT value {:02X} for ARM7", byte);
-                        // original code exits, but emulator should not crash
-                    }
+                if byte == 0x80 {
+                    // ARM7 halt request
+                    self.arm7.halt();
+                } else {
+                    #[cfg(feature = "log")]
+                    log::error!("Unrecognized HALTCNT value {:02X} for ARM7", byte);
+                    // original code exits, but emulator should not crash
                 }
             }
 

@@ -183,6 +183,48 @@ impl NDSCart {
         lo | (hi << 16)
     }
 
+    /// Size of the card's ROM chip: the image size rounded up to a power of
+    /// two (melonDS `PadToPowerOf2`).
+    fn chip_size(&self) -> u32 {
+        (self.rom.len().max(0x10_0000) as u32).next_power_of_two()
+    }
+
+    /// Chip ID returned by command B8 and stored by the firmware at
+    /// 0x027FF800/0x027FFC00: Macronix (0xC2) plus a size code, the chip size
+    /// in MiB - 1 up to 128 MiB and `0x100 - size / 256 MiB` above that
+    /// (melonDS `ParseROM`, GBATEK "DS Cartridge Protocol").
+    pub fn chip_id(&self) -> u32 {
+        let size = self.chip_size();
+        let size_code = if size <= 128 << 20 {
+            (size >> 20) - 1
+        } else {
+            0x100 - (size >> 28)
+        };
+        0xC2 | size_code << 8
+    }
+
+    /// Reads a word for the KEY2 "Get Data" command (B7).
+    ///
+    /// The address wraps at the chip size, and the first 32 KiB (secure
+    /// area) is not readable: it returns 0x8000-0x81FF instead (melonDS
+    /// `CartRetail::ReadROM_B7`). Bytes past the end of a trimmed image read
+    /// as 0xFF, like erased chip space. Anti-piracy code in later games
+    /// reads past the chip size (e.g. 0x1000_1000 on a 256 MiB card) and
+    /// terminates unless the data matches the wrapped address.
+    pub fn read_rom_b7_word(&self, address: u32) -> u32 {
+        let mut address = address & (self.chip_size() - 1);
+        if address < 0x8000 {
+            address = 0x8000 + (address & 0x1FF);
+        }
+        let byte = |a: u32| self.rom.get(a as usize).copied().unwrap_or(0xFF);
+        u32::from_le_bytes([
+            byte(address),
+            byte(address + 1),
+            byte(address + 2),
+            byte(address + 3),
+        ])
+    }
+
     /// Returns ROM CTRL register value.
     pub const fn get_romctrl(&self) -> u32 {
         self.romctrl.get()
@@ -263,6 +305,8 @@ impl NDSCart {
             }
 
             self.command_id = CartCommand::Empty;
+            #[cfg(feature = "log")]
+            log::trace!(target: "card", "cmd {:02X?} len {:X}", self.command_buffer, self.bytes_left);
 
             match self.command_buffer[0] {
                 0x9F => self.command_id = CartCommand::Dummy,

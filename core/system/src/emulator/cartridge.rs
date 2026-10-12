@@ -257,6 +257,7 @@ impl Emulator {
             }
 
             self.cart.cycles_left = 8;
+            let has_data = self.cart.bytes_left > 0;
 
             match self.cart.command_id {
                 CartCommand::Dummy => {
@@ -276,8 +277,7 @@ impl Emulator {
                 }
 
                 CartCommand::GetChipId => {
-                    // Macronix 64MB ROM compatible ID
-                    self.cart.data_output = 0x0000_3FC2;
+                    self.cart.data_output = self.cart.chip_id();
                     self.cart.romctrl.word_ready = true;
                 }
 
@@ -292,13 +292,8 @@ impl Emulator {
                 }
 
                 CartCommand::ReadRom => {
-                    if self.cart.rom_data_index < 0x8000 {
-                        let addr = 0x8000 + (self.cart.rom_data_index & 0x1FF);
-                        self.cart.data_output = self.cart.direct_read_word(addr as u32);
-                    } else {
-                        self.cart.data_output =
-                            self.cart.direct_read_word(self.cart.rom_data_index as u32);
-                    }
+                    self.cart.data_output =
+                        self.cart.read_rom_b7_word(self.cart.rom_data_index as u32);
 
                     // #[cfg(feature = "log")]
                     // log::debug!(
@@ -321,16 +316,39 @@ impl Emulator {
 
             self.gamecart_dma_request();
 
-            if self.cart.bytes_left <= 0 {
-                self.cart.romctrl.block_busy = false;
+            // A transfer with data ends once its last word has been read
+            // (see `cart_read_data`); one without data ends right away.
+            if self.cart.bytes_left <= 0 && (!has_data || !self.cart.romctrl.word_ready) {
+                self.cart_end_transfer();
+            }
+        }
+    }
 
-                if self.cart.transfer_irq_enabled() {
-                    if self.arm7_has_cart_rights() {
-                        self.request_interrupt7(ds_interrupt::Interrupt::CartTransfer);
-                    } else {
-                        self.request_interrupt9(ds_interrupt::Interrupt::CartTransfer);
-                    }
-                }
+    /// Reads the card data port (0x04100010).
+    ///
+    /// ROMCTRL stays busy (bit 31) until the last word of the block has been
+    /// read, not merely made ready (melonDS `NDSCartSlot::ReadROMData`).
+    /// Polling loops check "word ready" and then "busy"; clearing busy early
+    /// made them drop the final word, which the anti-piracy code of later
+    /// games (e.g. Pokemon + Nobunaga's Ambition) detects.
+    pub fn cart_read_data(&mut self) -> u32 {
+        let was_ready = self.cart.romctrl.word_ready;
+        let data = self.cart.get_output();
+        if was_ready && self.cart.romctrl.block_busy && self.cart.bytes_left <= 0 {
+            self.cart_end_transfer();
+        }
+        data
+    }
+
+    /// Clears ROMCTRL busy and raises the transfer-complete IRQ if enabled.
+    fn cart_end_transfer(&mut self) {
+        self.cart.romctrl.block_busy = false;
+
+        if self.cart.transfer_irq_enabled() {
+            if self.arm7_has_cart_rights() {
+                self.request_interrupt7(ds_interrupt::Interrupt::CartTransfer);
+            } else {
+                self.request_interrupt9(ds_interrupt::Interrupt::CartTransfer);
             }
         }
     }

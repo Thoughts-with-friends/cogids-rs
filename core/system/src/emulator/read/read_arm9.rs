@@ -109,7 +109,7 @@ impl Emulator {
                 self.raise_ipc(irq);
                 word
             }
-            0x04100010 => self.cart.get_output(),
+            0x04100010 => self.cart_read_data(),
             PALETTE_START..VRAM_BGA_START => {
                 if (address & 0x7FF) < 0x400 {
                     let lo = self.gpu.read_palette_a(address) as u32;

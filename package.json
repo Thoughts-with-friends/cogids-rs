@@ -11,15 +11,15 @@
     "build:icons": "tauri icon ./gui/tauri/src-tauri/icons/icon.svg",
     "dev": "tauri dev",
     "dev:front": "npm --workspace gui/tauri run dev:front",
-    "fmt:back": "cargo fmt --all",
-    "fmt:front": "prettier --cache --write \"**/*.{yaml,yml}\" --ignore-path ./.gitignore",
     "fmt": "npm run fmt:front && npm run fmt:back",
+    "fmt:front": "prettier --cache --write \"**/*.{yaml,yml}\" --ignore-path ./.gitignore",
+    "fmt:back": "cargo fmt --all",
     "lint": "cargo clippy --workspace",
     "lint:fix-front": "npm --workspace gui/tauri run lint:fix",
     "lint:fix": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
     "tauri": "tauri",
-    "test:back": "cargo nextest run --workspace",
-    "test:front": "npm --workspace gui/tauri run test"
+    "test:front": "npm --workspace gui/tauri run test",
+    "test:back": "cargo nextest run --workspace"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.9.6",

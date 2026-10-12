@@ -469,10 +469,11 @@ impl Emulator {
         self.arm9.set_high_vectors(self.arm9_cp15.high_vectors());
 
         // Write the ROM chip-id into main RAM
-        self.arm7_write_word(0x027FF800, 0x00003FC2);
-        self.arm7_write_word(0x027FF804, 0x00003FC2);
-        self.arm7_write_word(0x027FFC00, 0x00003FC2);
-        self.arm7_write_word(0x027FFC04, 0x00003FC2);
+        let chip_id = self.cart.chip_id();
+        self.arm7_write_word(0x027FF800, chip_id);
+        self.arm7_write_word(0x027FF804, chip_id);
+        self.arm7_write_word(0x027FFC00, chip_id);
+        self.arm7_write_word(0x027FFC04, chip_id);
 
         // other bullshit
         self.arm7_write_halfword(0x027FF808, self.cart.direct_read_halfword(0x015E));

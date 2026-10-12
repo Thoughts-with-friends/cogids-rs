@@ -224,6 +224,7 @@ impl App {
         });
     }
 
+    /// Runs one emulated frame
     fn ui_emulator(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.is_running && self.emu.is_some() {
@@ -248,13 +249,17 @@ impl App {
             Self::flush_save(&mut old);
         }
 
+        // New emulator instance
         let mut emu = Emulator::new();
+
         // emu.config.test = true; // enable disassemble
         self.settings.apply(&mut emu);
+
         // Saves live in instances/instance1/saves; bring over one kept next to the ROM.
         emu.config.save_dir = Some(self.instance.saves_dir());
         self.instance.import_legacy_save(path);
 
+        // Load the ROM and start running.
         match emu.load_rom(path) {
             Ok(_) => {
                 self.emu = Some(emu);
