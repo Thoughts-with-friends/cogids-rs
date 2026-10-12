@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "A Nintendo DS emulator - Rust-based",
-  "homepage": "https://github.com/Thoughts-with-friends/lunaris",
+  "homepage": "https://github.com/Thoughts-with-friends/cogids-rs",
   "license": "GPL-3.0",
   "scripts": {
     "build": "rimraf ./gui/tauri/dist && tauri build --no-bundle -- --profile release",

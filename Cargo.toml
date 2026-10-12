@@ -6,7 +6,7 @@ edition = "2024"
 keywords = ["emulator", "rust"]
 license = "GPL-3.0"
 readme = "README.md"
-repository = "https://github.com/Thoughts-with-friends/lunaris"                     # NOTE: Without it, CLI & CI build will error.
+repository = "https://github.com/Thoughts-with-friends/cogids-rs"                     # NOTE: Without it, CLI & CI build will error.
 rust-version = "1.91"
 version = "0.1.0"
 

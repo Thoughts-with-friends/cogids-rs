@@ -1,50 +1,50 @@
 # CogiDS-rs
 
 <div align="center">
-  <a href="https://github.com/Thoughts-with-friends/lunaris/releases">
+  <a href="https://github.com/Thoughts-with-friends/cogids-rs/releases">
     <img src="./docs/icons/icon.svg" alt="Lunaris"/>
   </a>
 
   <!-- Release Badges -->
   <p>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/releases/latest">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/releases/latest">
       <img src="https://img.shields.io/github/v/release/Thoughts-with-friends/lunaris?style=flat-square" alt="Latest Release">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/releases">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/releases">
       <img src="https://img.shields.io/github/downloads/Thoughts-with-friends/lunaris/total?style=flat-square" alt="Total Downloads">
     </a>
-    <!-- <a href="https://github.com/Thoughts-with-friends/lunaris/actions/workflows/release-gui.yaml">
-      <img src="https://github.com/Thoughts-with-friends/lunaris/actions/workflows/release-gui.yaml/badge.svg?style=flat-square" alt="Release GUI Status">
+    <!-- <a href="https://github.com/Thoughts-with-friends/cogids-rs/actions/workflows/release-gui.yaml">
+      <img src="https://github.com/Thoughts-with-friends/cogids-rs/actions/workflows/release-gui.yaml/badge.svg?style=flat-square" alt="Release GUI Status">
     </a> -->
     <a href="https://opensource.org/licenses/GPL-3.0">
       <img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square" alt="License: GPL v3">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/stargazers">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/stargazers">
       <img src="https://img.shields.io/github/stars/Thoughts-with-friends/lunaris?style=social" alt="GitHub Stars">
     </a>
   </p>
 
   <!-- Development Badges -->
   <p>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/actions/workflows/build-emu.yaml">
-      <img src="https://github.com/Thoughts-with-friends/lunaris/actions/workflows/build-emu.yaml/badge.svg?style=flat-square" alt="Build & Test Status">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/actions/workflows/build-emu.yaml">
+      <img src="https://github.com/Thoughts-with-friends/cogids-rs/actions/workflows/build-emu.yaml/badge.svg?style=flat-square" alt="Build & Test Status">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/issues">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/issues">
       <img src="https://img.shields.io/github/issues/Thoughts-with-friends/lunaris?style=flat-square" alt="Open Issues">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/pulls">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/pulls">
       <img src="https://img.shields.io/github/issues-pr/Thoughts-with-friends/lunaris?style=flat-square" alt="Open PRs">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/commits/main">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/commits/main">
       <img src="https://img.shields.io/github/last-commit/Thoughts-with-friends/lunaris?style=flat-square" alt="Last Commit">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris/graphs/contributors">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs/graphs/contributors">
       <img src="https://img.shields.io/github/contributors/Thoughts-with-friends/lunaris?style=flat-square" alt="Contributors">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs">
       <img src="https://img.shields.io/github/languages/top/Thoughts-with-friends/lunaris?style=flat-square" alt="Top Language">
     </a>
-    <a href="https://github.com/Thoughts-with-friends/lunaris">
+    <a href="https://github.com/Thoughts-with-friends/cogids-rs">
       <img src="https://img.shields.io/github/languages/code-size/Thoughts-with-friends/lunaris?style=flat-square" alt="Code Size">
     </a>
   </p>
@@ -90,7 +90,7 @@ cargo run -p lunaris_ds_egui --release
 - [x] **Phase 4 (100%)**: GPU Infrastructure
 - [x] **Phase 5 (100%)**: BIOS / ROM Loading
 - [x] **Phase 6 (100%)**: UI / Threading
-- [ ] **Phase 7 ( 40%)**: Audio System
+- [x] **Phase 7 (100%)**: Audio System
 - [x] **Phase 8 (100%)**: Interrupt System
 - [x] **Phase 9 (100%)**: Instruction Set Completion (ARM9)
 - [x] **Phase 10 (100%)**: ARM7 Implementation
@@ -114,7 +114,7 @@ cargo run -p lunaris_ds_egui --release
 
 ## CI Tests
 
-- [Lunaris CI](https://github.com/Thoughts-with-friends/lunaris/actions)
+- [Lunaris CI](https://github.com/Thoughts-with-friends/cogids-rs/actions)
 
 ## References
 
