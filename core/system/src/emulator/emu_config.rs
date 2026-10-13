@@ -41,6 +41,11 @@ pub struct Config {
     /// Test mode
     pub test: bool,
 
+    /// Wi-Fi MAC address patched into the firmware at power-on. Two
+    /// consoles playing together must not share one (the built-in
+    /// firmware's is fixed). `None` keeps the firmware's.
+    pub mac_address: Option<[u8; 6]>,
+
     /// Debugging aid: print every executed instruction of the selected CPU
     /// (bit 0 = ARM9, bit 1 = ARM7) to stderr.
     pub trace_cpus: u8,
@@ -78,6 +83,7 @@ impl Config {
             enable_framelimiter: Default::default(),
             hle_bios: true,
             test: Default::default(),
+            mac_address: None,
             trace_cpus: 0,
             trace_trigger: None,
             watch_addr: None,

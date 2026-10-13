@@ -1580,6 +1580,26 @@ name = "ds_mem_addr"
 version = "0.1.0"
 
 [[package]]
+name = "ds_net"
+version = "0.1.0"
+dependencies = [
+ "ds_bios",
+ "ds_emu",
+ "ds_peripherals",
+ "image",
+ "log",
+ "melonds_net",
+]
+
+[[package]]
+name = "ds_net_gui"
+version = "0.1.0"
+dependencies = [
+ "ds_net",
+ "log",
+]
+
+[[package]]
 name = "ds_peripherals"
 version = "0.1.0"
 dependencies = [
@@ -3435,6 +3455,8 @@ dependencies = [
  "ds_common",
  "ds_emu",
  "ds_mem_addr",
+ "ds_net",
+ "ds_net_gui",
  "eframe",
  "egui",
  "log",
@@ -3480,6 +3502,15 @@ checksum = "8ea1f30cedd69f0a2954655f7188c6a834246d2bcf1e315e2ac40c4b24dc9519"
 dependencies = [
  "cfg-if",
  "rayon",
+]
+
+[[package]]
+name = "melonds_net"
+version = "0.1.0"
+source = "git+https://github.com/Thoughts-with-friends/MelonDS-net?rev=5e6b69d#5e6b69dbc4bc38faaf2a2f3ecebde5e3241a0f84"
+dependencies = [
+ "cc",
+ "log",
 ]
 
 [[package]]

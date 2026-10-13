@@ -25,6 +25,11 @@ pub struct Config {
     pub layout: ScreenLayout,
     /// Output volume in percent (0-100).
     pub volume: u8,
+    /// Multiplayer: player name shown to the others, the host address last
+    /// joined, and whether the panel is open.
+    pub lan_name: String,
+    pub lan_address: String,
+    pub multiplayer_open: bool,
 }
 
 impl Default for Config {
@@ -36,6 +41,9 @@ impl Default for Config {
             show_fps: true,
             layout: ScreenLayout::default(),
             volume: 80,
+            lan_name: "Player".to_owned(),
+            lan_address: String::new(),
+            multiplayer_open: false,
         }
     }
 }

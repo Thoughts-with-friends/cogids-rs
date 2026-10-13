@@ -15,6 +15,7 @@ members = [
   "core/*", #
   "gui/common",
   "gui/egui",
+  "gui/net",
   "gui/tauri/src-tauri"
 ]
 resolver = "3"
@@ -23,6 +24,11 @@ default-members = ["gui/egui"]
 [workspace.dependencies]
 log = "0.4.34"
 snafu = "0.9.0"
+
+# Nintendo DS networking (melonDS LocalMP / LAN) over FFI. Its build compiles
+# melonDS's C++ net layer; on Windows that needs clang (LLVM or Visual
+# Studio's "C++ Clang tools", or LLVM_ROOT).
+melonds_net = { git = "https://github.com/Thoughts-with-friends/MelonDS-net", rev = "5e6b69d" }
 
 # workspace members
 ds_bios = { path = "./core/bios" }
@@ -33,6 +39,8 @@ ds_emu = { path = "./core/system" }
 ds_gpu = { path = "./core/gpu" }
 ds_interrupt = { path = "./core/interrupt" }
 ds_mem_addr = { path = "./core/mem_addr" }
+ds_net = { path = "./core/net" }
+ds_net_gui = { path = "./gui/net" }
 ds_peripherals = { path = "./core/peripherals" }
 ds_spu = { path = "./core/spu" }
 

@@ -29,6 +29,8 @@ log = { workspace = true }
 ds_emu = { workspace = true, features = ["log"] }
 ds_mem_addr = { workspace = true }
 ds_common = { workspace = true }
+ds_net = { workspace = true }
+ds_net_gui = { workspace = true }
 
 
 [lints]

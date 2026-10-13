@@ -1,4 +1,4 @@
-//! Per-instance data folder (`./instances/instance1`):
+//! Per-instance data folder (`./instances/instanceN`):
 //!
 //! ```text
 //! instances/instance1/
@@ -7,13 +7,24 @@
 //! ├── saves/          <rom name>.sav
 //! ├── states/         (reserved for save states)
 //! ├── config.json     GUI state: ROM folder, selected ROM, scale, layout
-//! └── settings.json   emulator settings: log level, BIOS/firmware, ...
+//! ├── settings.json   emulator settings: log level, BIOS/firmware, MAC, ...
+//! └── instance.lock   held while a process uses the folder
 //! ```
+//!
+//! Each running process takes the first folder whose `instance.lock` is not
+//! held by another process (instance1, instance2, ...), so two emulators on
+//! one machine — e.g. both ends of a multiplayer test — never share saves or
+//! settings (and get different Wi-Fi MACs, see [`Settings::ensure_mac`]).
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-/// Name of the instance folder, relative to the working directory.
-const INSTANCE_DIR: &str = "instances/instance1";
+/// Folder holding the instance folders, relative to the working directory.
+const INSTANCES_DIR: &str = "instances";
+
+/// Instance folders tried before giving up on locking (`instance1..=N`).
+const MAX_INSTANCES: u32 = 8;
 
 /// Sub folders created on start-up.
 const SUB_DIRS: [&str; 4] = ["cheats", "logs", "saves", "states"];
@@ -21,24 +32,57 @@ const SUB_DIRS: [&str; 4] = ["cheats", "logs", "saves", "states"];
 #[derive(Debug, Clone)]
 pub struct Instance {
     root: PathBuf,
+    number: u32,
+    /// Keeps `instance.lock` locked for the life of the process.
+    _lock: Option<Arc<File>>,
 }
 
 impl Instance {
-    /// Opens (and creates, if needed) `instances/instance1` below the
-    /// working directory.
+    /// Opens (and creates, if needed) the first free `instances/instanceN`
+    /// below the working directory.
     pub fn open() -> Self {
         Self::open_in(Path::new("."))
     }
 
-    /// Opens (and creates, if needed) `instances/instance1` below `base`.
+    /// Opens (and creates, if needed) the first `instances/instanceN` below
+    /// `base` that no other process is using. Falls back to `instance1`
+    /// (unlocked) if none can be locked.
     pub fn open_in(base: &Path) -> Self {
-        let root = base.join(INSTANCE_DIR);
-        for dir in SUB_DIRS {
-            if let Err(e) = std::fs::create_dir_all(root.join(dir)) {
-                eprintln!("Failed to create {}: {e}", root.join(dir).display());
+        let dir = |n: u32| base.join(INSTANCES_DIR).join(format!("instance{n}"));
+        let locked = (1..=MAX_INSTANCES).find_map(|n| {
+            let root = dir(n);
+            std::fs::create_dir_all(&root).ok()?;
+            let lock = File::options()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(root.join("instance.lock"))
+                .ok()?;
+            lock.try_lock().ok()?;
+            Some((n, lock))
+        });
+        let (number, lock) = if let Some((n, lock)) = locked {
+            (n, Some(Arc::new(lock)))
+        } else {
+            eprintln!("No free instance folder; sharing instance1");
+            (1, None)
+        };
+        let root = dir(number);
+        for sub in SUB_DIRS {
+            if let Err(e) = std::fs::create_dir_all(root.join(sub)) {
+                eprintln!("Failed to create {}: {e}", root.join(sub).display());
             }
         }
-        Self { root }
+        Self {
+            root,
+            number,
+            _lock: lock,
+        }
+    }
+
+    /// `N` of `instanceN` (1 for the first process).
+    pub const fn number(&self) -> u32 {
+        self.number
     }
 
     pub fn root(&self) -> &Path {
@@ -94,6 +138,10 @@ pub struct Settings {
     pub firmware_path: Option<PathBuf>,
     /// Frames skipped between rendered frames.
     pub frameskip: u32,
+    /// Wi-Fi MAC address (`00:09:BF:xx:xx:xx`) patched into the firmware.
+    /// Generated once per instance folder: consoles playing together must
+    /// not share one.
+    pub mac_address: Option<String>,
 }
 
 impl Default for Settings {
@@ -105,6 +153,7 @@ impl Default for Settings {
             arm7_bios_path: None,
             firmware_path: None,
             frameskip: 0,
+            mac_address: None,
         }
     }
 }
@@ -130,9 +179,28 @@ impl Settings {
         }
     }
 
+    /// Makes sure [`Self::mac_address`] holds a valid MAC, generating a
+    /// random one (Nintendo's `00:09:BF` prefix) if not. Returns `true` if
+    /// it changed (so the caller can save the settings).
+    pub fn ensure_mac(&mut self) -> bool {
+        if self.mac().is_some() {
+            return false;
+        }
+        let [a, b, c, ..] = random_u64().to_le_bytes();
+        let mac = [0x00, 0x09, 0xBF, a, b, c];
+        self.mac_address = Some(format_mac(mac));
+        true
+    }
+
+    /// The configured MAC address, if valid.
+    pub fn mac(&self) -> Option<[u8; 6]> {
+        parse_mac(self.mac_address.as_deref()?)
+    }
+
     /// Applies the settings to a freshly created emulator (before `load_rom`).
     pub fn apply(&self, emu: &mut ds_emu::Emulator) {
         emu.config.hle_bios = self.hle_bios;
+        emu.config.mac_address = self.mac();
         emu.config.frameskip = self.frameskip;
         if let Some(path) = &self.firmware_path {
             emu.config.firmware_path = path.to_string_lossy().into_owned();
@@ -149,5 +217,66 @@ impl Settings {
         if let Some(bin) = read(&self.arm7_bios_path) {
             emu.load_bios7(&bin);
         }
+    }
+}
+
+/// `00:09:BF:12:34:56`.
+pub fn format_mac(mac: [u8; 6]) -> String {
+    mac.map(|b| format!("{b:02X}")).join(":")
+}
+
+/// Parses `00:09:BF:12:34:56` (or `-` separated); a unicast address only.
+pub fn parse_mac(text: &str) -> Option<[u8; 6]> {
+    let mut mac = [0; 6];
+    let mut parts = text.split([':', '-']);
+    for byte in &mut mac {
+        *byte = u8::from_str_radix(parts.next()?.trim(), 16).ok()?;
+    }
+    (parts.next().is_none() && mac[0] & 1 == 0).then_some(mac)
+}
+
+/// Seeded by the OS (`RandomState`), the time and the process id.
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u32(std::process::id());
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
+    h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_round_trip() {
+        let mac = [0x00, 0x09, 0xBF, 0x12, 0xAB, 0x05];
+        assert_eq!(parse_mac(&format_mac(mac)), Some(mac));
+        assert_eq!(parse_mac("01:00:00:00:00:00"), None, "multicast");
+        assert_eq!(parse_mac("00:09:BF:12:34"), None);
+        let mut settings = Settings::default();
+        assert!(settings.ensure_mac());
+        assert!(!settings.ensure_mac());
+        assert_eq!(
+            settings.mac().map(|m| m[..3].to_vec()),
+            Some(vec![0, 9, 0xBF])
+        );
+    }
+
+    #[test]
+    fn second_process_gets_another_folder() {
+        let base = std::env::temp_dir().join(format!("ds_common_instance_{}", std::process::id()));
+        let first = Instance::open_in(&base);
+        let second = Instance::open_in(&base);
+        assert_eq!((first.number(), second.number()), (1, 2));
+        drop(first);
+        let third = Instance::open_in(&base);
+        assert_eq!(third.number(), 1, "released on drop");
+        drop((second, third));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -373,8 +373,9 @@ impl Emulator {
     /// power_on()
     ///   1. CPUs, CP15, DMA, cartridge, GPU, SPU, timers, RTC reset
     ///   2. add_gpu_event(0, 256 * 6)      first HBlank of line 0
-    ///   3. POWCNT2 (speakers on, Wi-Fi off); wifi.reset() from the
-    ///      firmware header (console type 0x1D, RF chip 0x40)
+    ///   3. POWCNT2 (speakers on, Wi-Fi off); config.mac_address patched
+    ///      into the firmware; wifi.reset() from the firmware header
+    ///      (console type 0x1D, RF chip 0x40, RF channel tables)
     ///   4. scheduler, IPC, 2D I/O copies, keys, IE/IF/IME cleared
     ///   5. direct_boot()                  (skips BIOS/firmware boot code)
     ///   |
@@ -399,9 +400,10 @@ impl Emulator {
         self.total_timestamp = 20; //Give the processors some time to run
         self.pow_cnt2.speakers = true;
         self.pow_cnt2.wifi = false;
-        let fw = &self.spi.firmware;
-        self.wifi
-            .reset((fw.read_u16(0x1C) >> 8) as u8, fw.read_u16(0x40) as u8);
+        if let Some(mac) = self.config.mac_address {
+            self.spi.firmware.set_mac_address(mac);
+        }
+        self.wifi.reset(&self.spi.firmware);
         self.wifi.set_power_cnt(false);
 
         self.system_timestamp = 0;
@@ -465,6 +467,18 @@ impl Emulator {
     /// # Errors
     pub fn flush_save(&mut self) -> Result<(), ds_cartridge::CartridgeError> {
         self.cart.flush_save()
+    }
+
+    /// Connects the Wi-Fi controller to other consoles (local wireless /
+    /// LAN play, see `ds_net::NetLink`); `None` leaves nobody in range.
+    /// Kept across `load_rom` / `power_on`.
+    ///
+    /// ```text
+    /// from: frontend, after Emulator::new()
+    /// to:   wifi.set_link -> link.begin() once the game powers Wi-Fi on
+    /// ```
+    pub fn set_mp_link(&mut self, link: Option<Box<dyn ds_peripherals::wifi::MpLink>>) {
+        self.wifi.set_link(link);
     }
 
     /// Sets the machine up as the firmware leaves it before jumping to the

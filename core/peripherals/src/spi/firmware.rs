@@ -173,6 +173,26 @@ impl Firmware {
         self.raw_firmware.copy_within(base..base + 0x100, other);
     }
 
+    /// Replaces the Wi-Fi MAC address (header 0x36..0x3B) and fixes the
+    /// Wi-Fi config CRC (0x2A). Consoles playing together need distinct
+    /// MACs, or the host cannot tell its clients apart.
+    pub fn set_mac_address(&mut self, mac: [u8; 6]) {
+        if self.raw_firmware.len() < 0x200 {
+            return;
+        }
+        self.raw_firmware[0x36..0x3C].copy_from_slice(&mac);
+        let len = usize::from(self.read_u16(0x2C)).min(self.raw_firmware.len() - 0x2C);
+        let crc = Self::create_crc(&self.raw_firmware[0x2C..], len, 0x0000);
+        self.write_u16(0x2A, crc);
+    }
+
+    /// The Wi-Fi MAC address (header 0x36..0x3B).
+    pub fn mac_address(&self) -> [u8; 6] {
+        let mut mac = [0; 6];
+        mac.copy_from_slice(&self.raw_firmware[0x36..0x3C]);
+        mac
+    }
+
     /// Read a little-endian u16 from firmware
     pub fn read_u16(&self, offset: usize) -> u16 {
         u16::from_le_bytes([self.raw_firmware[offset], self.raw_firmware[offset + 1]])

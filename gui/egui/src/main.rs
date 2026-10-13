@@ -3,9 +3,11 @@
 mod config;
 mod font;
 mod input;
+mod multiplayer;
 
 use self::config::{Config, ScreenLayout, load_config, save_config, set_config_path};
 use self::input::Touch;
+use self::multiplayer::Multiplayer;
 use ds_common::{AudioOutput, DS_FPS, Gamepads, Instance, Settings};
 use ds_emu::Emulator;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
@@ -64,6 +66,7 @@ struct App {
 
     instance: Instance,
     settings: Settings,
+    multiplayer: Multiplayer,
 
     audio: AudioOutput,
     audio_buf: Vec<i16>,
@@ -73,8 +76,12 @@ struct App {
 }
 
 impl App {
-    fn new(instance: Instance, settings: Settings) -> Self {
-        let config = load_config();
+    fn new(ctx: &egui::Context, instance: Instance, settings: Settings) -> Self {
+        let mut config = load_config();
+        if config.lan_name.trim().is_empty() || config.lan_name == "Player" {
+            // Distinct default names, so players can tell each other apart.
+            config.lan_name = format!("Player{}", instance.number());
+        }
         let config_volume = config.volume.min(100);
         let rom_list = list_nds_files(&config.rom_dir);
 
@@ -97,6 +104,7 @@ impl App {
             last_tick: Instant::now(),
             instance,
             settings,
+            multiplayer: Multiplayer::new(ctx),
         }
     }
 
@@ -120,7 +128,27 @@ impl App {
             ui.separator();
 
             self.ui_run_button(ui);
+
+            ui.separator();
+
+            self.ui_multiplayer(ui);
         });
+    }
+
+    fn ui_multiplayer(&mut self, ui: &mut egui::Ui) {
+        let label = if self.config.multiplayer_open {
+            "Multiplayer ▼"
+        } else {
+            "Multiplayer ▶"
+        };
+        if ui.button(label).clicked() {
+            self.config.multiplayer_open = !self.config.multiplayer_open;
+        }
+        if self.config.multiplayer_open {
+            let mac = self.settings.mac_address.clone().unwrap_or_default();
+            self.multiplayer
+                .ui(ui, &mut self.config, &mac, self.instance.number());
+        }
     }
 
     fn ui_run_button(&mut self, ui: &mut egui::Ui) {
@@ -255,8 +283,12 @@ impl App {
         // emu.config.test = true; // enable disassemble
         self.settings.apply(&mut emu);
 
-        // Saves live in instances/instance1/saves; bring over one kept next to the ROM.
+        // Saves live in instances/instanceN/saves; bring over one kept next to the ROM.
         emu.config.save_dir = Some(self.instance.saves_dir());
+
+        // Local wireless / LAN play (the Wi-Fi joins a session once the game
+        // powers it on).
+        emu.set_mp_link(Some(self.multiplayer.link()));
         self.instance.import_legacy_save(path);
 
         // Load the ROM and start running.
@@ -311,8 +343,11 @@ impl App {
         if self.frame_debt > 4.0 {
             self.frame_debt = 1.0; // stalled (e.g. window dragged): don't race
         }
-        let frames = self.frame_debt.floor() as u32;
+        let mut frames = self.frame_debt.floor() as u32;
         self.frame_debt -= f64::from(frames);
+        if self.multiplayer.busy() {
+            frames = 0; // joining a LAN session: the backend is the worker's
+        }
 
         self.gamepads.poll();
         for _ in 0..frames {
@@ -413,6 +448,9 @@ impl App {
 // ===== eframe =====
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let running = self.is_running;
+        self.multiplayer
+            .tick(self.emu.as_mut(), running, &mut self.config);
         self.ui_top(ctx);
         self.ui_emulator(ctx);
         ctx.request_repaint();
@@ -430,20 +468,27 @@ impl eframe::App for App {
 fn main() -> eframe::Result<()> {
     let instance = Instance::open();
     set_config_path(instance.config_path());
-    let settings = Settings::load(&instance.settings_path());
+    let mut settings = Settings::load(&instance.settings_path());
+    if settings.ensure_mac() {
+        settings.save(&instance.settings_path());
+    }
 
     if let Err(err) = ds_common::log::setup_logging_in(&instance.logs_dir()) {
         log::error!("Failed to start logging: {err}");
     }
-    log::info!("Started (logs, saves and settings in ./instances/instance1)");
+    log::info!(
+        "Started (logs, saves and settings in {}, Wi-Fi MAC {})",
+        instance.root().display(),
+        settings.mac_address.as_deref().unwrap_or("-")
+    );
 
     let options = eframe::NativeOptions::default();
     eframe::run_native(
-        "NDS Emulator",
+        &format!("NDS Emulator (instance{})", instance.number()),
         options,
         Box::new(|cc| {
             self::font::setup_custom_fonts::<&std::path::Path>(&cc.egui_ctx, None);
-            Ok(Box::new(App::new(instance, settings)))
+            Ok(Box::new(App::new(&cc.egui_ctx, instance, settings)))
         }),
     )
 }
