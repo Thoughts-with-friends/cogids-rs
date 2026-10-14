@@ -17,7 +17,10 @@ fn open_instance() -> Instance {
 #[allow(clippy::expect_used, clippy::large_stack_frames)]
 pub(crate) fn run() {
     let instance = open_instance();
-    let settings = Settings::load(&instance.settings_path());
+    let mut settings = Settings::load(&instance.settings_path());
+    if settings.ensure_mac() {
+        settings.save(&instance.settings_path());
+    }
 
     if let Err(err) = ds_common::log::setup_logging_in(&instance.logs_dir()) {
         log::error!("Failed to start logging: {err}");
@@ -40,6 +43,13 @@ pub(crate) fn run() {
             commands::set_touch,
             commands::get_frame,
             commands::get_status,
+            commands::get_menu,
+            commands::menu_action,
+            commands::import_savefile,
+            commands::rom_info,
+            commands::get_settings,
+            commands::set_settings,
+            commands::layout_screens,
         ])
         .on_window_event(|window, event| {
             // Write the save before the process exits.

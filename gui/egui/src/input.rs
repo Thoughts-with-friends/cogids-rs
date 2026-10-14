@@ -1,6 +1,6 @@
 //! Host input: keyboard and the touch screen (gamepads: `ds_common`).
+use ds_common::view::ScreenRect;
 use ds_emu::Emulator;
-use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use eframe::egui;
 
 /// Frames a touch is kept down after the pointer is released, so that a
@@ -53,20 +53,32 @@ impl Touch {
         }
     }
 
-    /// Reads this frame's pointer input against the lower screen widget.
+    /// Reads this frame's pointer input against the lower screen.
     ///
-    /// A press inside the screen starts a touch. While the button stays down
-    /// the stylus follows the pointer (clamped to the screen edges when
-    /// dragged outside). Press events are scanned too, so taps shorter than
-    /// a host frame are not lost.
-    pub fn update(&mut self, ctx: &egui::Context, resp: &egui::Response) {
-        let rect = resp.rect;
-        let to_ds = |pos: egui::Pos2| {
-            let rel = (pos - rect.min) / rect.size();
-            (
-                (rel.x * PIXELS_PER_LINE as f32).clamp(0.0, (PIXELS_PER_LINE - 1) as f32) as i32,
-                (rel.y * SCANLINES as f32).clamp(0.0, (SCANLINES - 1) as f32) as i32,
-            )
+    /// `screen` is where the bottom screen is drawn, relative to `origin`
+    /// (it may be rotated or scaled; `None` when hidden). A press inside the
+    /// screen starts a touch. While the button stays down the stylus follows
+    /// the pointer (clamped to the screen edges when dragged outside). Press
+    /// events are scanned too, so taps shorter than a host frame are not
+    /// lost.
+    pub fn update(
+        &mut self,
+        ctx: &egui::Context,
+        resp: &egui::Response,
+        screen: Option<&ScreenRect>,
+        origin: egui::Pos2,
+    ) {
+        let Some(screen) = screen else {
+            return;
+        };
+        let r = screen.rect;
+        let to_ds = |pos: egui::Pos2, clamp: bool| {
+            let (mut x, mut y) = (pos.x - origin.x, pos.y - origin.y);
+            if clamp {
+                x = x.clamp(r.x, r.x + r.w - 0.01);
+                y = y.clamp(r.y, r.y + r.h - 0.01);
+            }
+            screen.to_ds(x, y)
         };
 
         let tapped = ctx.input(|i| {
@@ -76,18 +88,23 @@ impl Touch {
                     button: egui::PointerButton::Primary,
                     pressed: true,
                     ..
-                } if rect.contains(*pos) => Some(*pos),
+                } => to_ds(*pos, false),
                 _ => None,
             })
         });
 
+        // Dragging may leave the screen, but only a press on it starts one.
         let held = resp
             .is_pointer_button_down_on()
             .then(|| resp.interact_pointer_pos())
-            .flatten();
+            .flatten()
+            .and_then(|pos| {
+                let started_inside = self.hold > 0 || to_ds(pos, false).is_some();
+                started_inside.then(|| to_ds(pos, true)).flatten()
+            });
 
         if let Some(pos) = held.or(tapped) {
-            self.pos = Some(to_ds(pos));
+            self.pos = Some(pos);
             self.hold = TOUCH_MIN_FRAMES;
         }
     }

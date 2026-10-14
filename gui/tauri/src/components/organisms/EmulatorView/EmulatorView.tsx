@@ -1,43 +1,69 @@
-import FolderOpenIcon from "@mui/icons-material/FolderOpen";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import StopIcon from "@mui/icons-material/Stop";
-import {
-  Box,
-  Button,
-  FormControlLabel,
-  IconButton,
-  MenuItem,
-  Radio,
-  RadioGroup,
-  Slider,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Alert, Box, Button, Stack, Typography } from "@mui/material";
+import { isTauri } from "@tauri-apps/api/core";
+import { LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type React from "react";
+import { DsDialogs } from "@/components/organisms/DsDialogs/DsDialogs";
+import { DsMenuBar } from "@/components/organisms/DsMenuBar/DsMenuBar";
 import { useGamepads } from "@/components/hooks/useGamepads";
 import { openPath } from "@/services/api/dialog";
 import {
+  type Action,
+  type DialogKind,
   EMU,
   type EmuStatus,
   type GuiConfig,
   KEYMAP,
+  type Menu,
+  type Placement,
   SCREEN_H,
   SCREEN_W,
+  SHORTCUTS,
+  type ScreenRect,
+  toDs,
 } from "@/services/api/emulator";
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 const reportError = (error: unknown) => console.error(error);
 
-/** Nintendo DS screens, ROM selection and emulator controls. */
+/** CSS for a screen canvas placed by `layout_screens`. */
+const screenStyle = (
+  screen: ScreenRect | null,
+  filtering: boolean,
+): React.CSSProperties => {
+  if (!screen) return { display: "none" };
+  const { x, y, w, h } = screen.rect;
+  // The canvas is laid out unrotated, centred on the box, then turned.
+  const quarter = screen.rotation % 180 !== 0;
+  const [cw, ch] = quarter ? [h, w] : [w, h];
+  return {
+    position: "absolute",
+    left: x + (w - cw) / 2,
+    top: y + (h - ch) / 2,
+    width: cw,
+    height: ch,
+    aspectRatio: `${SCREEN_W} / ${SCREEN_H}`,
+    transform: `rotate(${screen.rotation}deg)`,
+    imageRendering: filtering ? "auto" : "pixelated",
+    background: "#000",
+  };
+};
+
+/**
+ * Nintendo DS screens under melonDS's menu bar (File / System / View /
+ * Config / Help, the same tree as the egui GUI).
+ */
 export const EmulatorView = () => {
   const [config, setConfig] = useState<GuiConfig | null>(null);
-  const [roms, setRoms] = useState<string[]>([]);
+  const [menus, setMenus] = useState<Menu[]>([]);
   const [status, setStatus] = useState<EmuStatus | null>(null);
+  const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [area, setArea] = useState({ width: 0, height: 0 });
+  const [placement, setPlacement] = useState<Placement | null>(null);
 
+  const areaRef = useRef<HTMLDivElement>(null);
   const upperRef = useRef<HTMLCanvasElement>(null);
   const lowerRef = useRef<HTMLCanvasElement>(null);
   /** Pressed DS buttons from the keyboard and from gamepads. */
@@ -45,75 +71,145 @@ export const EmulatorView = () => {
   const gamepadKeysRef = useRef(0);
   const touchingRef = useRef(false);
 
-  // ===== Config =====
+  // ===== Backend state =====
+
+  /** Config, menu and status from the backend (after any action). */
+  const refresh = useCallback(
+    () =>
+      Promise.all([EMU.getConfig(), EMU.menu(), EMU.status()])
+        .then(([nextConfig, nextMenus, nextStatus]) => {
+          setConfig(nextConfig);
+          setMenus(nextMenus);
+          setStatus(nextStatus);
+        })
+        .catch(reportError),
+    [],
+  );
 
   useEffect(() => {
-    const loadConfig = async () => {
-      try {
-        setConfig(await EMU.getConfig());
-      } catch (e) {
-        reportError(e);
-      }
-    };
+    void refresh();
+  }, [refresh]);
 
-    void loadConfig();
+  // Status (fps) twice a second; the menu follows game / pause changes.
+  const statusKey = `${status?.rom}|${status?.paused}`;
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      EMU.status().then(setStatus).catch(reportError);
+    }, 500);
+    return () => window.clearInterval(id);
   }, []);
+  useEffect(() => {
+    EMU.menu().then(setMenus).catch(reportError);
+  }, [statusKey]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const title = status?.rom
+      ? `${status.rom} - cogids (instance${status.instance})`
+      : `cogids (instance${status?.instance ?? 1})`;
+    getCurrentWindow().setTitle(title).catch(reportError);
+  }, [status?.rom, status?.instance]);
 
   const updateConfig = useCallback((patch: Partial<GuiConfig>) => {
     setConfig((prev) => {
       if (!prev) return prev;
-
       const next = { ...prev, ...patch };
-      EMU.setConfig(next).catch(reportError);
+      EMU.setConfig(next)
+        .then(() => EMU.menu().then(setMenus))
+        .catch(reportError);
       return next;
     });
   }, []);
 
-  const loadRoms = useCallback(async (romDir: string) => {
-    try {
-      setRoms(await EMU.listRoms(romDir));
-    } catch (e) {
-      reportError(e);
-    }
-  }, []);
+  // ===== Menu actions =====
+
+  const romDir = config?.romDir ?? "";
+  const handleAction = useCallback(
+    async (action: Action) => {
+      setError(null);
+      try {
+        switch (action.type) {
+          case "openRom": {
+            const path = await openPath(romDir, {
+              filters: [{ name: "Nintendo DS ROM", extensions: ["nds"] }],
+            });
+            if (typeof path === "string") {
+              await EMU.menuAction({ type: "openRomPath", value: path });
+            }
+            break;
+          }
+          case "importSavefile": {
+            const path = await openPath("", {
+              filters: [{ name: "DS save", extensions: ["sav", "dsv", "bin"] }],
+            });
+            if (typeof path === "string") await EMU.importSavefile(path);
+            break;
+          }
+          case "quit":
+            // CloseRequested stops the game and writes its save.
+            await getCurrentWindow().close();
+            return;
+          case "open":
+            setDialog(action.value);
+            return;
+          case "screenSize": {
+            await EMU.menuAction(action);
+            const box = areaRef.current?.getBoundingClientRect();
+            const natural = await EMU.layout(1, 1);
+            if (box && isTauri()) {
+              // Keep whatever the page puts around the screens.
+              const chromeW = window.innerWidth - box.width;
+              const chromeH = window.innerHeight - box.height;
+              await getCurrentWindow().setSize(
+                new LogicalSize(
+                  natural.natural_w * action.value + chromeW,
+                  natural.natural_h * action.value + chromeH,
+                ),
+              );
+            }
+            break;
+          }
+          default:
+            await EMU.menuAction(action);
+        }
+      } catch (e) {
+        setError(String(e));
+      }
+      await refresh();
+    },
+    [romDir, refresh],
+  );
+
+  // ===== Screen placement =====
+
+  // The area exists once the config has loaded (before, "Loading...").
+  const loaded = config !== null;
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setArea({ width, height });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loaded]);
 
   useEffect(() => {
-    if (!config?.romDir) {
-      setRoms([]);
-      return;
-    }
-
-    void loadRoms(config.romDir);
-  }, [config?.romDir, loadRoms]);
-
-  // ===== Emulator status =====
-
-  const fetchStatus = useCallback(async () => {
-    try {
-      setStatus(await EMU.status());
-    } catch (e) {
-      reportError(e);
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchStatus();
-
-    const id = window.setInterval(() => {
-      void fetchStatus();
-    }, 500);
-
-    return () => window.clearInterval(id);
-  }, [fetchStatus]);
+    if (!config || area.width === 0) return;
+    EMU.layout(area.width, area.height).then(setPlacement).catch(reportError);
+  }, [
+    area,
+    config,
+    config?.rotation,
+    config?.layout,
+    config?.gap,
+    config?.swap,
+    config?.sizing,
+    config?.integerScaling,
+  ]);
 
   // ===== Frame rendering =====
-
-  const drawFrame = useCallback(() => {
-    const upper = upperRef.current?.getContext("2d");
-    const lower = lowerRef.current?.getContext("2d");
-
-    return { upper, lower };
-  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -123,53 +219,37 @@ export const EmulatorView = () => {
 
     const tick = () => {
       if (!alive) return;
-
-      const { upper, lower } = drawFrame();
+      const upper = upperRef.current?.getContext("2d");
+      const lower = lowerRef.current?.getContext("2d");
 
       if (!pending && upper && lower) {
         pending = true;
-
         EMU.frame(lastSeq)
           .then((frame) => {
             if (!alive || !frame) return;
-
             lastSeq = frame.seq;
-
-            upper.putImageData(
-              new ImageData(frame.upper, SCREEN_W, SCREEN_H),
-              0,
-              0,
-            );
-
-            lower.putImageData(
-              new ImageData(frame.lower, SCREEN_W, SCREEN_H),
-              0,
-              0,
-            );
+            upper.putImageData(new ImageData(frame.upper, SCREEN_W, SCREEN_H), 0, 0);
+            lower.putImageData(new ImageData(frame.lower, SCREEN_W, SCREEN_H), 0, 0);
           })
           .catch(reportError)
           .finally(() => {
             pending = false;
           });
       }
-
       animationId = requestAnimationFrame(tick);
     };
 
     animationId = requestAnimationFrame(tick);
-
     return () => {
       alive = false;
       cancelAnimationFrame(animationId);
     };
-  }, [drawFrame]);
+  }, []);
 
-  // ===== Input (keyboard + gamepads) =====
+  // ===== Input (keyboard + gamepads + shortcuts) =====
 
   const sendKeys = useCallback(() => {
-    EMU.setKeys(keyboardKeysRef.current | gamepadKeysRef.current).catch(
-      reportError,
-    );
+    EMU.setKeys(keyboardKeysRef.current | gamepadKeysRef.current).catch(reportError);
   }, []);
 
   const gamepads = useGamepads((keys) => {
@@ -177,15 +257,11 @@ export const EmulatorView = () => {
     sendKeys();
   });
 
-
   const handleKey = useCallback(
     (pressed: boolean) => (e: KeyboardEvent) => {
-      const bit = KEYMAP[e.code];
       const target = e.target as HTMLElement | null;
-
       // Do not intercept text input.
       if (
-        bit === undefined ||
         target?.tagName === "INPUT" ||
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable
@@ -193,18 +269,25 @@ export const EmulatorView = () => {
         return;
       }
 
+      if (pressed && (e.ctrlKey || e.metaKey) && !e.repeat) {
+        const action = SHORTCUTS[e.key.toLowerCase()];
+        if (action) {
+          e.preventDefault();
+          void handleAction(action);
+          return;
+        }
+      }
+
+      const bit = KEYMAP[e.code];
+      if (bit === undefined) return;
       e.preventDefault();
 
-      const next = pressed
-        ? keyboardKeysRef.current | bit
-        : keyboardKeysRef.current & ~bit;
-
+      const next = pressed ? keyboardKeysRef.current | bit : keyboardKeysRef.current & ~bit;
       if (next === keyboardKeysRef.current) return;
-
       keyboardKeysRef.current = next;
       sendKeys();
     },
-    [sendKeys],
+    [handleAction, sendKeys],
   );
 
   const releaseAllKeys = useCallback(() => {
@@ -215,11 +298,9 @@ export const EmulatorView = () => {
   useEffect(() => {
     const down = handleKey(true);
     const up = handleKey(false);
-
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", releaseAllKeys);
-
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
@@ -230,275 +311,137 @@ export const EmulatorView = () => {
   // ===== Touch screen =====
 
   const touchAt = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-
-      const x = Math.floor(
-        ((e.clientX - rect.left) / rect.width) * SCREEN_W,
-      );
-      const y = Math.floor(
-        ((e.clientY - rect.top) / rect.height) * SCREEN_H,
-      );
-
-      EMU.setTouch({ x, y }).catch(reportError);
+    (e: React.PointerEvent<HTMLDivElement>, clamp: boolean) => {
+      const bottom = placement?.screens[1];
+      if (!bottom) return null;
+      const box = e.currentTarget.getBoundingClientRect();
+      return toDs(bottom, e.clientX - box.left, e.clientY - box.top, clamp);
     },
-    [],
+    [placement],
   );
 
   const handlePointerDown = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const pos = touchAt(e, false);
+      if (!pos) return; // only a press on the bottom screen starts a touch
       e.currentTarget.setPointerCapture(e.pointerId);
       touchingRef.current = true;
-      touchAt(e);
+      EMU.setTouch(pos).catch(reportError);
     },
     [touchAt],
   );
 
   const handlePointerMove = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (touchingRef.current) touchAt(e);
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!touchingRef.current) return;
+      const pos = touchAt(e, true);
+      if (pos) EMU.setTouch(pos).catch(reportError);
     },
     [touchAt],
   );
 
   const handlePointerUp = useCallback(() => {
+    if (!touchingRef.current) return;
     touchingRef.current = false;
     EMU.setTouch(null).catch(reportError);
   }, []);
 
-  // ===== Controls =====
-
-  const browseRomDirectory = useCallback(async () => {
-    try {
-      const dir = await openPath(config?.romDir ?? "", {
-        directory: true,
-      });
-
-      if (typeof dir === "string") {
-        updateConfig({ romDir: dir });
-      }
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [config?.romDir, updateConfig]);
-
-  const startEmulator = useCallback(async () => {
-    if (!config?.selectedRom) return;
-
-    setError(null);
-
-    try {
-      await EMU.start(config.selectedRom);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [config?.selectedRom]);
-
-  const stopEmulator = useCallback(async () => {
-    try {
-      await EMU.stop();
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  // ===== UI helpers =====
-
-  const renderRomControls = () => (
-    <>
-      <Stack direction="row" spacing={1} alignItems="center">
-        <TextField
-          label="ROM folder"
-          size="small"
-          fullWidth
-          value={config!.romDir}
-          onChange={(e) => updateConfig({ romDir: e.target.value })}
-        />
-        <IconButton onClick={browseRomDirectory} title="Browse">
-          <FolderOpenIcon />
-        </IconButton>
-      </Stack>
-
-      <Stack
-        direction="row"
-        spacing={1}
-        alignItems="center"
-        flexWrap="wrap"
-        useFlexGap
-      >
-        <TextField
-          select
-          label="ROM"
-          size="small"
-          sx={{ minWidth: 240, flex: "1 1 240px" }}
-          value={config!.selectedRom ?? ""}
-          onChange={(e) => updateConfig({ selectedRom: e.target.value })}
-        >
-          {roms.map((rom) => (
-            <MenuItem key={rom} value={rom}>
-              {fileName(rom)}
-            </MenuItem>
-          ))}
-        </TextField>
-
-        <Button
-          variant="contained"
-          startIcon={<PlayArrowIcon />}
-          onClick={startEmulator}
-          disabled={!config!.selectedRom}
-        >
-          Run
-        </Button>
-
-        <Button
-          variant="outlined"
-          startIcon={<StopIcon />}
-          onClick={stopEmulator}
-        >
-          Stop
-        </Button>
-      </Stack>
-    </>
-  );
-
-  const renderSettings = () => (
-    <Stack
-      direction="row"
-      spacing={3}
-      alignItems="center"
-      flexWrap="wrap"
-      useFlexGap
-    >
-      <Box sx={{ width: 200 }}>
-        <Typography variant="caption">
-          Scale: {config!.scale.toFixed(1)}x
-        </Typography>
-        <Slider
-          size="small"
-          min={1}
-          max={5}
-          step={0.1}
-          value={config!.scale}
-          onChange={(_, value) =>
-            updateConfig({ scale: value as number })
-          }
-        />
-      </Box>
-
-      <Box sx={{ width: 200 }}>
-        <Typography variant="caption">
-          Volume: {config!.volume}%
-        </Typography>
-        <Slider
-          size="small"
-          min={0}
-          max={100}
-          value={config!.volume}
-          onChange={(_, value) =>
-            updateConfig({ volume: value as number })
-          }
-        />
-      </Box>
-
-      <RadioGroup
-        row
-        value={config!.layout}
-        onChange={(e) =>
-          updateConfig({
-            layout: e.target.value as GuiConfig["layout"],
-          })
-        }
-      >
-        <FormControlLabel
-          value="vertical"
-          control={<Radio size="small" />}
-          label="Vertical"
-        />
-        <FormControlLabel
-          value="horizontal"
-          control={<Radio size="small" />}
-          label="Horizontal"
-        />
-      </RadioGroup>
-
-      <Typography variant="body2" color="text.secondary">
-        {status?.running ? `${status.fps.toFixed(1)} fps` : "Stopped"}
-      </Typography>
-    </Stack>
-  );
-
-  const renderScreens = () => {
-    // Native <canvas> elements: the bitmap must be exactly 256x192. (MUI
-    // `<Box component="canvas" width height>` treats width/height as CSS,
-    // leaving the default 300x150 bitmap: the frame was cropped and
-    // stretched vertically.) The on-screen size is CSS only.
-    const canvasStyle = {
-      width: `min(${SCREEN_W * config!.scale}px, 100%)`,
-      height: "auto",
-      aspectRatio: `${SCREEN_W} / ${SCREEN_H}`,
-      imageRendering: "pixelated",
-      background: "#000",
-      display: "block",
-      minWidth: 0,
-    } as const satisfies React.CSSProperties;
-
-    return (
-      <Stack
-        direction={config!.layout === "horizontal" ? "row" : "column"}
-        spacing={1}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <canvas
-          ref={upperRef}
-          width={SCREEN_W}
-          height={SCREEN_H}
-          style={canvasStyle}
-        />
-
-        <canvas
-          ref={lowerRef}
-          width={SCREEN_W}
-          height={SCREEN_H}
-          style={{
-            ...canvasStyle,
-            cursor: "crosshair",
-            touchAction: "none",
-          }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-        />
-      </Stack>
-    );
-  };
-
-  const renderControllerInfo = () => (
-    <Typography variant="caption" color="text.secondary">
-      Controller:{" "}
-      {gamepads.length
-        ? gamepads.join(", ")
-        : "none (press a button to detect one; keyboard: arrows, X=A, Z=B, S=X, A=Y, Q=L, W=R, Enter=START, Backspace=SELECT)"}
-      {status && ` | Data: ${status.instanceDir}`}
-    </Typography>
-  );
-
-  // ===== Main render =====
+  // ===== Render =====
 
   if (!config) {
     return <Typography>Loading...</Typography>;
   }
 
+  const running = !!status?.running;
+  const welcomeRoms = config.recentRoms.slice(0, 10);
+
   return (
-    <Stack spacing={2} sx={{ width: "100%", maxWidth: 1400, minWidth: 0 }}>
-      {renderRomControls()}
-      {renderSettings()}
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <DsMenuBar menus={menus} onAction={(action) => void handleAction(action)} />
 
-      {error && <Typography color="error">{error}</Typography>}
+      <Box
+        ref={areaRef}
+        data-test="screen-area"
+        sx={{
+          position: "relative",
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+          bgcolor: "#000",
+          touchAction: "none",
+          cursor: running ? "crosshair" : "default",
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      >
+        {/* Native canvases: the bitmap must be exactly 256x192 (the
+            on-screen size is CSS only). */}
+        <canvas
+          ref={upperRef}
+          width={SCREEN_W}
+          height={SCREEN_H}
+          style={running ? screenStyle(placement?.screens[0] ?? null, config.filtering) : { display: "none", aspectRatio: `${SCREEN_W} / ${SCREEN_H}` }}
+        />
+        <canvas
+          ref={lowerRef}
+          width={SCREEN_W}
+          height={SCREEN_H}
+          style={running ? screenStyle(placement?.screens[1] ?? null, config.filtering) : { display: "none", aspectRatio: `${SCREEN_W} / ${SCREEN_H}` }}
+        />
 
-      {renderScreens()}
-      {renderControllerInfo()}
-    </Stack>
+        {running && config.showFps && (
+          <Typography
+            variant="caption"
+            sx={{
+              position: "absolute",
+              left: 6,
+              top: 4,
+              color: "#8fe08f",
+              fontFamily: "monospace",
+              pointerEvents: "none",
+            }}
+          >
+            {status?.fps.toFixed(1)} fps{status?.paused ? "  (paused)" : ""}
+          </Typography>
+        )}
+
+        {!running && (
+          <Stack spacing={1} alignItems="center" sx={{ pt: 4, color: "#ddd" }}>
+            <Typography variant="h6">No game running</Typography>
+            <Typography variant="body2">
+              File &gt; Open ROM... (Ctrl+O), Open recent or ROM folder
+            </Typography>
+            {welcomeRoms.map((rom) => (
+              <Button
+                key={rom}
+                size="small"
+                variant="outlined"
+                title={rom}
+                onClick={() => void handleAction({ type: "openRomPath", value: rom })}
+              >
+                {fileName(rom)}
+              </Button>
+            ))}
+          </Stack>
+        )}
+      </Box>
+
+      {error && (
+        <Alert severity="error" onClose={() => setError(null)} sx={{ borderRadius: 0 }}>
+          {error}
+        </Alert>
+      )}
+
+      <DsDialogs
+        open={dialog}
+        onClose={() => setDialog(null)}
+        config={config}
+        updateConfig={updateConfig}
+        status={status}
+        gamepads={gamepads}
+      />
+    </Box>
   );
 };

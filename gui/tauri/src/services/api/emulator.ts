@@ -1,19 +1,185 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** GUI settings stored in `instances/instance1/config.json`. */
-export type GuiConfig = {
+export type ScreenLayout = "natural" | "vertical" | "horizontal";
+export type ScreenSizing =
+  | "even"
+  | "emphasizeTop"
+  | "emphasizeBottom"
+  | "topOnly"
+  | "bottomOnly";
+
+/** View menu settings (`ds_common::view::View`). */
+export type View = {
+  scale: number;
+  layout: ScreenLayout;
+  rotation: number;
+  gap: number;
+  swap: boolean;
+  sizing: ScreenSizing;
+  integerScaling: boolean;
+  filtering: boolean;
+  showFps: boolean;
+};
+
+/** GUI settings stored in `instances/instanceN/config.json`. */
+export type GuiConfig = View & {
   romDir: string;
   selectedRom: string | null;
-  scale: number;
-  layout: "vertical" | "horizontal";
   /** 0-100 */
   volume: number;
+  limitFramerate: boolean;
+  recentRoms: string[];
 };
 
 export type EmuStatus = {
   running: boolean;
+  paused: boolean;
   fps: number;
+  /** File name of the running game. */
+  rom: string | null;
   instanceDir: string;
+  instance: number;
+};
+
+/** An auxiliary window opened from the menus (`ds_common::menu::Window`). */
+export type DialogKind =
+  | "romInfo"
+  | "multiplayer"
+  | "emuSettings"
+  | "input"
+  | "audio"
+  | "wifi"
+  | "paths"
+  | "about";
+
+/** A menu action (`ds_common::menu::Action`, serde `type`/`value`). */
+export type Action =
+  | { type: "openRom" }
+  | { type: "openRomPath"; value: string }
+  | { type: "clearRecent" }
+  | { type: "eject" }
+  | { type: "importSavefile" }
+  | { type: "openDirectory" }
+  | { type: "quit" }
+  | { type: "togglePause" }
+  | { type: "reset" }
+  | { type: "stop" }
+  | { type: "frameStep" }
+  | { type: "launchInstance" }
+  | { type: "screenSize"; value: number }
+  | { type: "setRotation"; value: number }
+  | { type: "setGap"; value: number }
+  | { type: "setLayout"; value: ScreenLayout }
+  | { type: "toggleSwap" }
+  | { type: "setSizing"; value: ScreenSizing }
+  | { type: "toggleIntegerScaling" }
+  | { type: "toggleFiltering" }
+  | { type: "toggleShowFps" }
+  | { type: "toggleLimitFramerate" }
+  | { type: "open"; value: DialogKind };
+
+/** One menu entry (`ds_common::menu::Item`). */
+export type MenuItem =
+  | {
+      kind: "entry";
+      label: string;
+      action: Action | null;
+      enabled: boolean;
+      checked: boolean | null;
+      radio: boolean;
+      reason: string | null;
+      shortcut: string | null;
+      hint: string | null;
+    }
+  | { kind: "submenu"; label: string; enabled: boolean; items: MenuItem[] }
+  | { kind: "separator" }
+  | { kind: "label"; text: string };
+
+export type Menu = { label: string; items: MenuItem[] };
+
+export type Rect = { x: number; y: number; w: number; h: number };
+export type ScreenRect = { rect: Rect; rotation: number };
+/** `ds_common::view::Placement`: `[top, bottom]`, `null` when hidden. */
+export type Placement = {
+  screens: [ScreenRect | null, ScreenRect | null];
+  natural_w: number;
+  natural_h: number;
+};
+
+export type Binary = {
+  romOffset: number;
+  entry: number;
+  ramAddress: number;
+  size: number;
+};
+
+export type RomInfo = {
+  path: string;
+  title: string;
+  gameCode: string;
+  makerCode: string;
+  version: number;
+  fileSize: number;
+  capacity: number;
+  arm9: Binary;
+  arm7: Binary;
+  titleJa: string | null;
+  titleEn: string | null;
+  /** 32x32 RGBA, empty without a banner. */
+  iconRgba: number[];
+};
+
+/** `settings.json` (`ds_common::Settings`, snake_case). */
+export type EmuSettings = {
+  log_level: string;
+  hle_bios: boolean;
+  arm9_bios_path: string | null;
+  arm7_bios_path: string | null;
+  firmware_path: string | null;
+  frameskip: number;
+  mac_address: string | null;
+};
+
+/** Ctrl+letter shortcuts (`Action::from_shortcut`). */
+export const SHORTCUTS: Record<string, Action> = {
+  o: { type: "openRom" },
+  p: { type: "togglePause" },
+  r: { type: "reset" },
+  n: { type: "frameStep" },
+  q: { type: "quit" },
+};
+
+/**
+ * The DS pixel under `(px, py)` (relative to the screen area) for a screen
+ * drawn in `screen` (`ScreenRect::to_ds`); `clamp` keeps a drag that left
+ * the screen on its edge.
+ */
+export const toDs = (
+  screen: ScreenRect,
+  px: number,
+  py: number,
+  clamp = false,
+): { x: number; y: number } | null => {
+  const r = screen.rect;
+  let [x, y] = [px, py];
+  if (clamp) {
+    x = Math.min(Math.max(x, r.x), r.x + r.w - 0.01);
+    y = Math.min(Math.max(y, r.y), r.y + r.h - 0.01);
+  }
+  if (x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) return null;
+  const [u, v] = [(x - r.x) / r.w, (y - r.y) / r.h];
+  const [sx, sy] =
+    screen.rotation === 90
+      ? [v, 1 - u]
+      : screen.rotation === 180
+        ? [1 - u, 1 - v]
+        : screen.rotation === 270
+          ? [1 - v, u]
+          : [u, v];
+  return {
+    x: Math.min(Math.max(Math.floor(sx * 256), 0), 255),
+    y: Math.min(Math.max(Math.floor(sy * 192), 0), 191),
+  };
 };
 
 /** Width/height of one DS screen. */
@@ -97,6 +263,15 @@ export const EMU = {
   /** `null` lifts the stylus. */
   setTouch: (pos: { x: number; y: number } | null) =>
     invoke<void>("set_touch", { x: pos?.x ?? null, y: pos?.y ?? null }),
+  menu: () => invoke<Menu[]>("get_menu"),
+  menuAction: (action: Action) => invoke<void>("menu_action", { action }),
+  importSavefile: (path: string) => invoke<void>("import_savefile", { path }),
+  romInfo: () => invoke<RomInfo>("rom_info"),
+  getSettings: () => invoke<EmuSettings>("get_settings"),
+  setSettings: (settings: EmuSettings) =>
+    invoke<void>("set_settings", { settings }),
+  layout: (width: number, height: number) =>
+    invoke<Placement>("layout_screens", { width, height }),
 
   /**
    * Newest frame after `lastSeq`: `{ seq, upper, lower }` RGBA buffers, or

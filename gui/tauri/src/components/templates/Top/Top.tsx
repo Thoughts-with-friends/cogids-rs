@@ -17,13 +17,9 @@ export const Top = () => {
 };
 
 const pageSx: SxProps<Theme> = {
-  display: "flex",
-  justifyContent: "center",
-  overflowX: "hidden",
-  minHeight: "calc(100vh - 56px)",
-  pt: 2,
-  pb: 10,
-  px: 2,
+  // The screens fill the window above the bottom navigation (56px).
+  height: "calc(100vh - 56px)",
   width: "100%",
+  overflow: "hidden",
   boxSizing: "border-box",
 };

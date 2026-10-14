@@ -105,6 +105,30 @@ impl Instance {
         self.root.join("saves")
     }
 
+    /// Where the save of `rom` lives (`saves/<rom name>.sav`).
+    pub fn save_path(&self, rom: &Path) -> PathBuf {
+        self.saves_dir()
+            .join(rom.with_extension("sav").file_name().unwrap_or_default())
+    }
+
+    /// File > Import savefile: replaces the save of `rom` with `source`,
+    /// keeping the old one as `<name>.sav.bak`. Call it with the game
+    /// stopped (a running game would write its save back over the import).
+    ///
+    /// # Errors
+    /// If the backup or the copy fails.
+    pub fn import_save(&self, rom: &Path, source: &Path) -> std::io::Result<PathBuf> {
+        let target = self.save_path(rom);
+        if target.is_file() {
+            let backup = target.with_extension("sav.bak");
+            std::fs::copy(&target, &backup)?;
+            log::info!("Backed up {} -> {}", target.display(), backup.display());
+        }
+        std::fs::copy(source, &target)?;
+        log::info!("Imported save {} -> {}", source.display(), target.display());
+        Ok(target)
+    }
+
     /// Copies a save that an older version kept next to the ROM
     /// (`<rom>.sav`) into `saves/` the first time the ROM is started, so
     /// existing progress is not lost. The original file is left untouched.
@@ -248,6 +272,36 @@ fn random_u64() -> u64 {
     h.finish()
 }
 
+/// Shows `dir` in the system file manager.
+///
+/// # Errors
+/// If the file manager cannot be started.
+pub fn reveal(dir: &Path) -> std::io::Result<()> {
+    let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_owned());
+    let program = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(dir)
+        .spawn()
+        .map(drop)
+}
+
+/// System > Multiplayer > Launch new instance: starts this program again;
+/// the new process takes the next free instance folder (own saves, settings
+/// and Wi-Fi MAC).
+///
+/// # Errors
+/// If the executable cannot be found or started.
+pub fn launch_instance() -> std::io::Result<()> {
+    let exe = std::env::current_exe()?;
+    std::process::Command::new(exe).spawn().map(drop)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +319,28 @@ mod tests {
             settings.mac().map(|m| m[..3].to_vec()),
             Some(vec![0, 9, 0xBF])
         );
+    }
+
+    #[test]
+    fn import_save_keeps_a_backup() {
+        let base = std::env::temp_dir().join(format!("ds_common_import_{}", std::process::id()));
+        let instance = Instance::open_in(&base);
+        let rom = Path::new("D:/roms/game.nds");
+        let save = instance.save_path(rom);
+        assert!(save.ends_with("saves/game.sav"));
+        let _ = std::fs::write(&save, b"old");
+        let source = base.join("new.sav");
+        let _ = std::fs::write(&source, b"new");
+        assert!(instance.import_save(rom, &source).is_ok());
+        assert_eq!(std::fs::read(&save).ok().as_deref(), Some(&b"new"[..]));
+        assert_eq!(
+            std::fs::read(save.with_extension("sav.bak"))
+                .ok()
+                .as_deref(),
+            Some(&b"old"[..])
+        );
+        drop(instance);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use ds_common::view::View;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -5,31 +6,26 @@ use std::{
     sync::OnceLock,
 };
 
-/// How the two DS screens are arranged in the window.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ScreenLayout {
-    /// Upper screen above the lower screen (like the real console).
-    #[default]
-    Vertical,
-    /// Upper screen left of the lower screen.
-    Horizontal,
-}
-
+/// GUI state (`config.json`).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct Config {
     pub rom_dir: PathBuf,
     pub selected_rom: Option<PathBuf>,
-    pub scale: f32,
-    pub show_fps: bool,
-    pub layout: ScreenLayout,
+    /// Screen arrangement (View menu). Flattened: the old `scale`, `layout`
+    /// and `show_fps` keys are its fields.
+    #[serde(flatten)]
+    pub view: View,
     /// Output volume in percent (0-100).
     pub volume: u8,
-    /// Multiplayer: player name shown to the others, the host address last
-    /// joined, and whether the panel is open.
+    /// Run at the DS's 59.83 fps (off: as fast as possible).
+    pub limit_framerate: bool,
+    /// File > Open recent, newest first.
+    pub recent_roms: Vec<PathBuf>,
+    /// Multiplayer: player name shown to the others and the host address
+    /// last joined.
     pub lan_name: String,
     pub lan_address: String,
-    pub multiplayer_open: bool,
 }
 
 impl Default for Config {
@@ -37,13 +33,12 @@ impl Default for Config {
         Self {
             rom_dir: PathBuf::from(""),
             selected_rom: None,
-            scale: 2.0,
-            show_fps: true,
-            layout: ScreenLayout::default(),
+            view: View::default(),
             volume: 80,
+            limit_framerate: true,
+            recent_roms: Vec::new(),
             lan_name: "Player".to_owned(),
             lan_address: String::new(),
-            multiplayer_open: false,
         }
     }
 }

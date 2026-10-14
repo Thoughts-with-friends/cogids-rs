@@ -51,6 +51,12 @@ pub struct Shared {
     frame: Mutex<Vec<u8>>,
     frame_seq: AtomicU64,
     fps: AtomicU32,
+    /// System > Pause.
+    paused: AtomicBool,
+    /// System > Frame step: run one frame while paused.
+    step: AtomicBool,
+    /// Config > Limit framerate turned off.
+    unlimited: AtomicBool,
 }
 
 impl Shared {
@@ -92,6 +98,30 @@ impl Shared {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Pauses and runs exactly one frame.
+    pub fn frame_step(&self) {
+        self.paused.store(true, Ordering::Relaxed);
+        self.step.store(true, Ordering::Relaxed);
+    }
+
+    pub fn set_limit_framerate(&self, limit: bool) {
+        self.unlimited.store(!limit, Ordering::Relaxed);
+    }
+
+    /// Frames produced so far (the frame sequence number).
+    #[cfg(test)]
+    pub fn frames(&self) -> u64 {
+        self.frame_seq.load(Ordering::Acquire)
     }
 }
 
@@ -179,6 +209,13 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
     let (mut fps_start, mut fps_frames) = (Instant::now(), 0_u32);
 
     while shared.running.load(Ordering::Relaxed) {
+        if shared.paused.load(Ordering::Relaxed) && !shared.step.swap(false, Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(10));
+            next = Instant::now();
+            continue;
+        }
+        let unlimited = shared.unlimited.load(Ordering::Relaxed);
+
         // Keyboard and gamepads are both read by the frontend (Web Gamepad
         // API, see `useGamepads`), which sends the combined button bits.
         apply_keys(&mut emu, shared.keys.load(Ordering::Relaxed));
@@ -187,7 +224,10 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
         emu.run();
 
         emu.take_audio_samples(&mut samples);
-        audio.push(&samples);
+        // Fast-forwarding or stepping would only garble the sound.
+        if !unlimited && !shared.paused.load(Ordering::Relaxed) {
+            audio.push(&samples);
+        }
         samples.clear();
 
         emu.get_upper_frame(&mut pixels);
@@ -210,7 +250,9 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
         // Pace to ~59.83 fps; resync instead of racing after a stall.
         next += frame_time;
         let now = Instant::now();
-        if next > now {
+        if unlimited {
+            next = now;
+        } else if next > now {
             std::thread::sleep(next - now);
         } else if now - next > frame_time * 4 {
             next = now;
@@ -264,5 +306,35 @@ mod tests {
 
         thread.stop();
         assert!(!shared.is_running());
+    }
+
+    /// Pause stops the frames, a frame step makes exactly one.
+    /// `cargo test --release -p lunaris -- --ignored pause_and_step`
+    #[test]
+    #[ignore = "requires a ROM on disk"]
+    fn pause_and_step() {
+        let rom = std::env::var("LUNARIS_TEST_ROM")
+            .unwrap_or_else(|_| "D:/GAME/Emulator/DS/Roms/hello_world.nds".to_owned());
+        let mut emu = Emulator::new();
+        emu.config.save_dir = Some(std::env::temp_dir());
+        emu.load_rom(&rom).expect("ROM loads");
+
+        let shared = Arc::new(Shared::default());
+        let thread = EmuThread::start(emu, Arc::clone(&shared), AudioOutput::new(0.0));
+        std::thread::sleep(Duration::from_millis(300));
+        shared.set_paused(true);
+        std::thread::sleep(Duration::from_millis(100));
+        let paused_at = shared.frames();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(shared.frames(), paused_at, "no frames while paused");
+
+        shared.frame_step();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(shared.frames(), paused_at + 1, "one frame per step");
+
+        shared.set_paused(false);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(shared.frames() > paused_at + 5, "running again");
+        thread.stop();
     }
 }
