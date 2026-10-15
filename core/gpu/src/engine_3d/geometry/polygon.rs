@@ -193,8 +193,8 @@ impl Gpu3D {
         for vtx in &mut clipped[clip_start..nverts] {
             vtx.position[3] &= 0x00FF_FFFF;
             let w = vtx.position[3] as u32;
-            let (pos_x, pos_y) = if w == 0 {
-                (0, 0)
+            let (pos_x, pos_y, fine) = if w == 0 {
+                (0, 0, [0, 0])
             } else {
                 let mut px = (vtx.position[0] as u32).wrapping_add(w);
                 let mut py = (vtx.position[1] as u32).wrapping_neg().wrapping_add(w);
@@ -205,12 +205,20 @@ impl Gpu3D {
                     den >>= 1;
                 }
                 den <<= 1;
+                // The same position with 4 fractional bits (for rendering
+                // above the native resolution).
+                let fine = |p: u32, size: i32, base: i32| {
+                    ((i64::from(p) * i64::from(size) * 16) / i64::from(den) + i64::from(base) * 16)
+                        as i32
+                };
                 (
                     (px.wrapping_mul(vp.width as u32) / den).wrapping_add(vp.x0 as u32),
                     (py.wrapping_mul(vp.height as u32) / den).wrapping_add(vp.y1 as u32),
+                    [fine(px, vp.width, vp.x0), fine(py, vp.height, vp.y1)],
                 )
             };
             vtx.final_position = [(pos_x & 0x1FF) as i32, (pos_y & 0xFF) as i32];
+            vtx.hires_position = [fine[0] & 0x1FFF, fine[1] & 0xFFF];
         }
 
         // Zero-dot polygons far behind are rejected unless bit 13 is set.

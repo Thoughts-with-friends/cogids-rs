@@ -236,6 +236,14 @@ impl Gpu {
             }
         }
 
+        if is_engine_a && let Some(hd) = self.hd_lines.get_mut(self.vertical_count as usize) {
+            *hd = crate::display::hires::HdLine {
+                graphics: display_mode == 1,
+                master_bright: self.engine_upper.master_bright,
+                bg0_hofs: self.engine_upper.bghofs[0],
+            };
+        }
+
         let engine = match is_engine_a {
             true => &mut self.engine_upper,
             false => &mut self.engine_lower,

@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Screen images above the native resolution: the 2D picture upscaled
+//! (nearest neighbour or xBRZ), with engine A's 3D pixels replaced by the
+//! high-resolution 3D frame.
+//!
+//! ```text
+//!  compose.rs composite()  (engine A, per native pixel)
+//!     Hd3dInfo: top layer is 3D? + the layer below + how it was blended
+//!  output.rs draw_scanline_for_engine()  (engine A, per line)
+//!     HdLine: display mode, MASTER_BRIGHT, BG0HOFS
+//!       |
+//!       v
+//!  Gpu::screen_hd(upper, scale, xbrz)
+//!     1. native front framebuffer -> xBRZ / nearest  (scale x scale)
+//!     2. engine A's screen and Gpu::hires_3d() at that scale:
+//!          every 3D pixel's block re-blended from the hi-res 3D
+//!          (3D alpha blending / BLDY / master brightness as natively)
+//! ```
+//!
+//! Display capture and everything the game can read stay native.
+use super::super::engine_2d::compose::{blend32, brighten, darken, rgb555_to_888};
+use crate::Gpu;
+use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
+
+/// [`Hd3dInfo`] bit: the visible pixel is 3D (BG0 of engine A on top).
+pub(crate) const HD_3D: u32 = 1 << 31;
+/// The 3D pixel was alpha-blended with the layer below (bits 0-14).
+pub(crate) const HD_BLEND: u32 = 1 << 30;
+/// Bits 16-17: BLDCNT effect applied to the 3D pixel (2 brighten,
+/// 3 darken); bits 18-22: EVY.
+const HD_EFFECT_SHIFT: u32 = 16;
+const HD_EVY_SHIFT: u32 = 18;
+
+/// Encodes how a 3D pixel was composited (see the bit constants).
+pub(crate) const fn hd_3d_info(below: u16, blend: bool, effect: u32, evy: u32) -> u32 {
+    HD_3D
+        | (blend as u32) << 30
+        | (below as u32 & 0x7FFF)
+        | (effect & 3) << HD_EFFECT_SHIFT
+        | (evy & 0x1F) << HD_EVY_SHIFT
+}
+
+/// Engine A state of one line that the hi-res pass needs.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HdLine {
+    /// DISPCNT display mode 1 (graphics) on this line.
+    pub(crate) graphics: bool,
+    pub(crate) master_bright: u16,
+    pub(crate) bg0_hofs: u16,
+}
+
+/// MASTER_BRIGHT applied to a 0xAARRGGBB pixel (same math as the native
+/// output in `output.rs`).
+fn master_bright(px: u32, reg: u16) -> u32 {
+    let factor = f32::from((reg & 0x1F).min(16)) / 16.0;
+    let ch = |shift: u32| ((px >> shift) & 0xFF) as f32;
+    let (r, g, b) = (ch(16), ch(8), ch(0));
+    let (r, g, b) = match reg >> 14 {
+        1 => (
+            r + (255.0 - r) * factor,
+            g + (255.0 - g) * factor,
+            b + (255.0 - b) * factor,
+        ),
+        2 => (r - r * factor, g - g * factor, b - b * factor),
+        _ => return px,
+    };
+    0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+}
+
+/// Horizontal bands xBRZ works on in parallel.
+const XBRZ_BANDS: usize = 4;
+/// Rows of real neighbours given to each band above and below (xBRZ looks
+/// two rows away; more keeps the bands' edges identical to a whole-image
+/// pass).
+const XBRZ_OVERLAP: usize = 4;
+
+/// 0xAARRGGBB -> `scale`x upscaled 0xFFRRGGBB with xBRZ, in parallel bands.
+fn xbrz(src: &[u32], scale: usize) -> Vec<u32> {
+    let w = PIXELS_PER_LINE;
+    let rows = SCANLINES.div_ceil(XBRZ_BANDS);
+    let band = |y0: usize| -> Vec<u32> {
+        let y1 = (y0 + rows).min(SCANLINES);
+        let (p0, p1) = (
+            y0.saturating_sub(XBRZ_OVERLAP),
+            (y1 + XBRZ_OVERLAP).min(SCANLINES),
+        );
+        let rgba: Vec<u8> = src[p0 * w..p1 * w]
+            .iter()
+            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF])
+            .collect();
+        let out = xbrz::scale_rgba(&rgba, w, p1 - p0, scale);
+        let row_bytes = w * scale * 4;
+        let keep = &out[(y0 - p0) * scale * row_bytes..(y1 - p0) * scale * row_bytes];
+        keep.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| 0xFF00_0000 | u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]))
+            .collect()
+    };
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (1..XBRZ_BANDS)
+            .map(|i| s.spawn(move || band(i * rows)))
+            .collect();
+        let mut out = band(0);
+        for h in handles {
+            out.extend(h.join().unwrap_or_default());
+        }
+        out
+    })
+}
+
+/// 0xAARRGGBB -> `scale`x upscaled with nearest neighbour.
+fn nearest(src: &[u32], scale: usize, out: &mut Vec<u32>) {
+    let w = PIXELS_PER_LINE * scale;
+    out.clear();
+    out.reserve(w * SCANLINES * scale);
+    for row in src.as_chunks::<PIXELS_PER_LINE>().0 {
+        let start = out.len();
+        for &p in row {
+            out.extend(std::iter::repeat_n(p, scale));
+        }
+        for _ in 1..scale {
+            out.extend_from_within(start..start + w);
+        }
+    }
+}
+
+impl Gpu {
+    /// The upper (`upper`) or lower screen at `scale` x 256 x 192, with the
+    /// 2D graphics xBRZ-filtered when `xbrz` is set and 3D at the internal
+    /// resolution when it matches `scale` (see [`Gpu::set_render_scale`]).
+    /// Returns the width; `out` holds the 0xAARRGGBB pixels.
+    pub fn screen_hd(
+        &mut self,
+        upper: bool,
+        scale: usize,
+        xbrz_filter: bool,
+        out: &mut Vec<u32>,
+    ) -> usize {
+        let scale = scale.clamp(1, 6);
+        let mut native = vec![0; PIXELS_PER_LINE * SCANLINES];
+        if upper {
+            self.get_upper_frame(&mut native);
+        } else {
+            self.get_lower_frame(&mut native);
+        }
+        if scale == 1 {
+            *out = native;
+            return PIXELS_PER_LINE;
+        }
+        if xbrz_filter {
+            *out = xbrz(&native, scale);
+        } else {
+            nearest(&native, scale, out);
+        }
+        // Engine A drives the upper screen unless the screens are swapped.
+        if upper == self.display_swapped() && self.engine_upper.dispcnt.bg_3d {
+            self.overlay_hires_3d(scale, out);
+        }
+        PIXELS_PER_LINE * scale
+    }
+
+    /// Replaces the 3D pixels of `out` (engine A's screen, upscaled) with
+    /// the high-resolution 3D frame.
+    fn overlay_hires_3d(&mut self, scale: usize, out: &mut [u32]) {
+        let info = std::mem::take(&mut self.hd_3d);
+        let lines = self.hd_lines;
+        if let Some(hi) = self.hires_3d().filter(|r| r.scale() == scale) {
+            let w = PIXELS_PER_LINE * scale;
+            for (y, line) in lines.iter().enumerate() {
+                if !line.graphics {
+                    continue;
+                }
+                let xpos = usize::from(line.bg0_hofs & 0x1FF);
+                for x in 0..PIXELS_PER_LINE {
+                    let i = info[y * PIXELS_PER_LINE + x];
+                    if i & HD_3D == 0 {
+                        continue;
+                    }
+                    // Same scrolling as render_bg_3d.
+                    let sx = x + xpos;
+                    let sx = if xpos & 0x100 != 0 {
+                        sx.wrapping_sub(512)
+                    } else {
+                        sx
+                    };
+                    if sx >= PIXELS_PER_LINE {
+                        continue;
+                    }
+                    for j in 0..scale {
+                        let src = hi.line(y * scale + j);
+                        let dst = (y * scale + j) * w + x * scale;
+                        for k in 0..scale {
+                            let px = rgb555_to_888(shade_3d(src[sx * scale + k], i));
+                            out[dst + k] = master_bright(px, line.master_bright);
+                        }
+                    }
+                }
+            }
+        }
+        self.hd_3d = info;
+    }
+}
+
+/// One hi-res 3D pixel composited the way its native pixel was.
+fn shade_3d(c: u32, info: u32) -> u16 {
+    let below = (info & 0x7FFF) as u16;
+    let alpha = (c >> 24) & 0x1F;
+    if alpha == 0 {
+        return below;
+    }
+    let r = (c >> 1) & 0x1F;
+    let g = (c >> 9) & 0x1F;
+    let b = (c >> 17) & 0x1F;
+    let color = (r | (g << 5) | (b << 10)) as u16;
+    if info & HD_BLEND != 0 {
+        let eva = alpha + 1;
+        return blend32(color, below, eva, 32 - eva);
+    }
+    let evy = (info >> HD_EVY_SHIFT) & 0x1F;
+    match (info >> HD_EFFECT_SHIFT) & 3 {
+        2 => brighten(color, evy),
+        3 => darken(color, evy),
+        _ => color,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_scales_rows_and_columns() {
+        let mut src = vec![0; PIXELS_PER_LINE * SCANLINES];
+        src[1] = 7;
+        src[PIXELS_PER_LINE] = 9;
+        let mut out = Vec::new();
+        nearest(&src, 2, &mut out);
+        let w = PIXELS_PER_LINE * 2;
+        assert_eq!(out.len(), w * SCANLINES * 2);
+        assert_eq!(&out[..4], &[0, 0, 7, 7]);
+        assert_eq!(&out[w..w + 4], &[0, 0, 7, 7]);
+        assert_eq!(out[2 * w], 9);
+        assert_eq!(out[3 * w + 1], 9);
+    }
+
+    #[test]
+    fn xbrz_keeps_flat_areas() {
+        let src = vec![0xFF12_3456; PIXELS_PER_LINE * SCANLINES];
+        let out = xbrz(&src, 3);
+        assert_eq!(out.len(), PIXELS_PER_LINE * SCANLINES * 9);
+        // Away from the image border the color is untouched.
+        assert_eq!(out[100 * PIXELS_PER_LINE * 3 + 300], 0xFF12_3456);
+    }
+
+    #[test]
+    fn xbrz_bands_match_a_whole_image_pass() {
+        // A busy pattern: diagonals and blocks crossing the band borders.
+        let src: Vec<u32> = (0..PIXELS_PER_LINE * SCANLINES)
+            .map(|i| {
+                let (x, y) = (i % PIXELS_PER_LINE, i / PIXELS_PER_LINE);
+                if (x + y) % 7 < 3 || (x / 5 + y / 3) % 4 == 0 {
+                    0xFFFF_8040
+                } else {
+                    0xFF10_2030
+                }
+            })
+            .collect();
+        let rgba: Vec<u8> = src
+            .iter()
+            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF])
+            .collect();
+        let whole: Vec<u32> = xbrz::scale_rgba(&rgba, PIXELS_PER_LINE, SCANLINES, 4)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| 0xFF00_0000 | u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]))
+            .collect();
+        assert!(xbrz(&src, 4) == whole);
+    }
+
+    #[test]
+    fn shading_matches_native_rules() {
+        // Opaque white 3D (6-bit 63 -> 5-bit 31), alpha 31.
+        let white = 0x1F00_0000 | 0x3F | (0x3F << 8) | (0x3F << 16);
+        assert_eq!(shade_3d(white, hd_3d_info(0, false, 0, 0)), 0x7FFF);
+        // Transparent 3D shows the layer below.
+        assert_eq!(shade_3d(0, hd_3d_info(0x1234, false, 0, 0)), 0x1234);
+        // Darken by 16 -> black.
+        assert_eq!(shade_3d(white, hd_3d_info(0, false, 3, 16)), 0);
+        // Half alpha blends with black below.
+        let half = (white & 0x00FF_FFFF) | (15 << 24);
+        assert_eq!(shade_3d(half, hd_3d_info(0, true, 0, 0)) & 0x1F, 15);
+        assert_eq!(master_bright(0xFF00_0000, (2 << 14) | 16), 0xFF00_0000);
+        assert_eq!(master_bright(0xFF00_0000, (1 << 14) | 16), 0xFFFF_FFFF);
+    }
+}

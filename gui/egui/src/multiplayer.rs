@@ -84,6 +84,11 @@ impl Multiplayer {
         self.session.busy()
     }
 
+    /// In a LAN session: the speed stays at 1x so the peers keep in step.
+    pub const fn in_session(&self) -> bool {
+        self.session.state().in_session()
+    }
+
     /// The Wi-Fi link for a new console (instance 0: one console per
     /// process).
     pub fn link(&mut self) -> Box<dyn ds_emu::MpLink> {

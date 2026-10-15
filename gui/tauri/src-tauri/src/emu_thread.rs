@@ -1,8 +1,9 @@
 //! Runs the emulator on its own thread at the native DS frame rate.
 //!
-//! The UI talks to it through [`Shared`]: it writes the pressed keys and the
-//! stylus position, and reads the latest frame (RGBA, both screens).
-use ds_common::{AudioOutput, DS_FPS};
+//! The UI talks to it through [`Shared`]: it writes the pressed keys, the
+//! stylus position, the speed, the internal resolution and new cheat codes,
+//! and reads the latest frame (RGBA, both screens, possibly upscaled).
+use ds_common::{AudioOutput, speed};
 use ds_emu::Emulator;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -10,7 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Bytes of one screen in RGBA.
+/// Bytes of one native screen in RGBA.
+#[cfg(test)]
 pub const SCREEN_BYTES: usize = PIXELS_PER_LINE * SCANLINES * 4;
 
 /// Frames a touch is kept down after release, so quick taps register.
@@ -47,9 +49,12 @@ pub struct Shared {
     running: AtomicBool,
     keys: AtomicU32,
     touch: Mutex<TouchState>,
-    /// Upper then lower screen, RGBA.
+    /// Upper then lower screen, RGBA, `frame_width` pixels wide.
     frame: Mutex<Vec<u8>>,
+    frame_width: AtomicU32,
     frame_seq: AtomicU64,
+    /// The frontend fetched the last frame (the next one is worth making).
+    frame_taken: AtomicBool,
     fps: AtomicU32,
     /// System > Pause.
     paused: AtomicBool,
@@ -57,6 +62,12 @@ pub struct Shared {
     step: AtomicBool,
     /// Config > Limit framerate turned off.
     unlimited: AtomicBool,
+    /// Emulation speed in percent (0 = not set yet, 1x).
+    speed: AtomicU32,
+    /// Internal resolution factor (bits 0-7, 0 = 1x) and xBRZ (bit 8).
+    render: AtomicU32,
+    /// Cheat codes to hand to the emulator at the next frame.
+    cheats: Mutex<Option<Vec<Vec<u32>>>>,
 }
 
 impl Shared {
@@ -81,14 +92,38 @@ impl Shared {
         }
     }
 
-    /// The latest frame if it is newer than `last_seq`: `(seq, rgba)`.
-    pub fn frame_since(&self, last_seq: u64) -> Option<(u64, Vec<u8>)> {
+    /// The latest frame if it is newer than `last_seq`: `(seq, width,
+    /// rgba)` (both screens, upper first, `width` pixels wide each).
+    pub fn frame_since(&self, last_seq: u64) -> Option<(u64, u32, Vec<u8>)> {
         let seq = self.frame_seq.load(Ordering::Acquire);
         if seq == last_seq || seq == 0 {
             return None;
         }
-        let frame = self.frame.lock().ok()?.clone();
-        Some((seq, frame))
+        let frame = self.frame.lock().ok()?;
+        let width = self.frame_width.load(Ordering::Acquire);
+        let rgba = frame.clone();
+        drop(frame);
+        self.frame_taken.store(true, Ordering::Release);
+        Some((seq, width, rgba))
+    }
+
+    /// Emulation speed in percent (`speed::SPEEDS`).
+    pub fn set_speed(&self, percent: u16) {
+        self.speed
+            .store(u32::from(speed::valid(percent)), Ordering::Relaxed);
+    }
+
+    /// Internal resolution and the xBRZ filter of the frames made from now.
+    pub fn set_render(&self, scale: u8, xbrz: bool) {
+        let bits = u32::from(scale) | (u32::from(xbrz) << 8);
+        self.render.store(bits, Ordering::Relaxed);
+    }
+
+    /// Replaces the running game's cheat codes (from the next frame).
+    pub fn set_cheats(&self, codes: Vec<Vec<u32>>) {
+        if let Ok(mut cheats) = self.cheats.lock() {
+            *cheats = Some(codes);
+        }
     }
 
     /// Emulated frames per second over the last second.
@@ -189,23 +224,39 @@ fn apply_touch(emu: &mut Emulator, shared: &Shared) {
     }
 }
 
-/// 0xAARRGGBB -> RGBA bytes.
-fn to_rgba(src: &[u32], dst: &mut [u8]) {
-    for (px, out) in src.iter().zip(dst.as_chunks_mut::<4>().0) {
-        out[0] = (px >> 16) as u8;
-        out[1] = (px >> 8) as u8;
-        out[2] = *px as u8;
-        out[3] = 0xFF;
+/// 0xAARRGGBB -> RGBA bytes appended to `dst`.
+fn push_rgba(src: &[u32], dst: &mut Vec<u8>) {
+    dst.extend(
+        src.iter()
+            .flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8, 0xFF]),
+    );
+}
+
+/// Both screens at the current internal resolution into `shared.frame`.
+fn publish_frame(emu: &mut Emulator, shared: &Shared, pixels: &mut Vec<u32>, rgba: &mut Vec<u8>) {
+    let render = shared.render.load(Ordering::Relaxed);
+    let scale = (render & 0xFF).clamp(1, 4) as usize;
+    let xbrz = render & 0x100 != 0 && scale >= 2;
+    rgba.clear();
+    let mut width = PIXELS_PER_LINE;
+    for upper in [true, false] {
+        width = emu.gpu.screen_hd(upper, scale, xbrz, pixels);
+        push_rgba(pixels, rgba);
+    }
+    if let Ok(mut frame) = shared.frame.lock() {
+        std::mem::swap(&mut *frame, rgba);
+        shared.frame_width.store(width as u32, Ordering::Release);
     }
 }
 
 fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
     let mut pixels = vec![0_u32; PIXELS_PER_LINE * SCANLINES];
-    let mut rgba = vec![0_u8; SCREEN_BYTES * 2];
+    let mut rgba = Vec::new();
     let mut samples = Vec::with_capacity(4096);
+    let mut stretched = Vec::with_capacity(4096);
 
-    let frame_time = Duration::from_secs_f64(1.0 / DS_FPS);
     let mut next = Instant::now();
+    shared.frame_taken.store(true, Ordering::Release);
     let (mut fps_start, mut fps_frames) = (Instant::now(), 0_u32);
 
     while shared.running.load(Ordering::Relaxed) {
@@ -215,6 +266,14 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
             continue;
         }
         let unlimited = shared.unlimited.load(Ordering::Relaxed);
+        let percent = speed::valid(shared.speed.load(Ordering::Relaxed) as u16);
+        let frame_time = Duration::from_secs_f64(1.0 / speed::fps(percent));
+        let render = shared.render.load(Ordering::Relaxed);
+        emu.gpu
+            .set_render_scale((render & 0xFF).clamp(1, 4) as usize);
+        if let Some(codes) = shared.cheats.lock().ok().and_then(|mut c| c.take()) {
+            emu.set_cheats(codes);
+        }
 
         // Keyboard and gamepads are both read by the frontend (Web Gamepad
         // API, see `useGamepads`), which sends the combined button bits.
@@ -226,16 +285,20 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
         emu.take_audio_samples(&mut samples);
         // Fast-forwarding or stepping would only garble the sound.
         if !unlimited && !shared.paused.load(Ordering::Relaxed) {
-            audio.push(&samples);
+            speed::stretch_audio(&samples, percent, &mut stretched);
+            audio.push(&stretched);
         }
         samples.clear();
 
-        emu.get_upper_frame(&mut pixels);
-        to_rgba(&pixels, &mut rgba[..SCREEN_BYTES]);
-        emu.get_lower_frame(&mut pixels);
-        to_rgba(&pixels, &mut rgba[SCREEN_BYTES..]);
-        if let Ok(mut frame) = shared.frame.lock() {
-            frame.clone_from(&rgba);
+        // Faster than 1x, a frame the frontend has not fetched yet is not
+        // replaced (upscaling frames nobody sees is wasted work); at 1x and
+        // for single steps every frame is published.
+        let taken = shared.frame_taken.swap(false, Ordering::AcqRel);
+        if taken
+            || (percent <= speed::NORMAL && !unlimited)
+            || shared.paused.load(Ordering::Relaxed)
+        {
+            publish_frame(&mut emu, shared, &mut pixels, &mut rgba);
         }
         shared.frame_seq.fetch_add(1, Ordering::Release);
 
@@ -288,7 +351,8 @@ mod tests {
         shared.set_touch(None);
         std::thread::sleep(Duration::from_millis(2500));
 
-        let (seq, rgba) = shared.frame_since(0).expect("a frame was produced");
+        let (seq, width, rgba) = shared.frame_since(0).expect("a frame was produced");
+        assert_eq!(width, 256);
         assert_eq!(rgba.len(), SCREEN_BYTES * 2);
         assert!(
             rgba.as_chunks::<4>().0.iter().any(|p| p[..3] != [0, 0, 0]),
@@ -335,6 +399,33 @@ mod tests {
         shared.set_paused(false);
         std::thread::sleep(Duration::from_millis(300));
         assert!(shared.frames() > paused_at + 5, "running again");
+        thread.stop();
+    }
+
+    /// 2x speed doubles the frame rate; 2x resolution doubles the frame
+    /// size. `cargo test --release -p lunaris -- --ignored speed_and_resolution`
+    #[test]
+    #[ignore = "requires a ROM on disk"]
+    fn speed_and_resolution() {
+        let rom = std::env::var("LUNARIS_TEST_ROM")
+            .unwrap_or_else(|_| "D:/GAME/Emulator/DS/Roms/hello_world.nds".to_owned());
+        let mut emu = Emulator::new();
+        emu.config.save_dir = Some(std::env::temp_dir());
+        emu.load_rom(&rom).expect("ROM loads");
+
+        let shared = Arc::new(Shared::default());
+        shared.set_speed(200);
+        shared.set_render(2, true);
+        let thread = EmuThread::start(emu, Arc::clone(&shared), AudioOutput::new(0.0));
+        std::thread::sleep(Duration::from_millis(2500));
+        assert!(
+            shared.fps() > 105.0 && shared.fps() < 135.0,
+            "2x speed: fps {}",
+            shared.fps()
+        );
+        let (_, width, rgba) = shared.frame_since(0).expect("a frame");
+        assert_eq!(width, 512);
+        assert_eq!(rgba.len(), SCREEN_BYTES * 2 * 4);
         thread.stop();
     }
 }

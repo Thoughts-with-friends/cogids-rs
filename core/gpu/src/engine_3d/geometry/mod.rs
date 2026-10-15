@@ -126,6 +126,7 @@ impl Gpu3D {
             rend_poly_count: 0,
             rend_vert_count: 0,
             raster: Default::default(),
+            hires: Default::default(),
         };
         // Viewport 0,0-255,191 (melonDS reset value).
         s.set_viewport(0xBFFF_0000);

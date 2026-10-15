@@ -48,6 +48,9 @@ pub struct Vertex {
     pub clipped: bool,
     /// Screen coordinates (x: 0-511, y: 0-255).
     pub final_position: [i32; 2],
+    /// Screen coordinates in 1/16 pixels, for high-resolution rendering
+    /// (melonDS `HiresPosition`).
+    pub hires_position: [i32; 2],
 }
 
 /// One polygon in polygon RAM.
@@ -230,4 +233,6 @@ pub struct Gpu3D {
 
     /// Rasterizer output and work buffers.
     pub raster: crate::engine_3d::raster::Raster,
+    /// Display-only high-resolution copy of the 3D frame.
+    pub hires: crate::engine_3d::raster::hires::Hires,
 }

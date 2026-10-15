@@ -10,6 +10,9 @@ const STICK_THRESHOLD: f32 = 0.5;
 /// plugged in (and dropped when unplugged) through `gilrs`.
 pub struct Gamepads {
     gilrs: Option<Gilrs>,
+    /// Left stick presses (L3) not yet taken: they cycle the emulation
+    /// speed.
+    speed_presses: u32,
 }
 
 impl Gamepads {
@@ -21,7 +24,10 @@ impl Gamepads {
                 None
             }
         };
-        Self { gilrs }
+        Self {
+            gilrs,
+            speed_presses: 0,
+        }
     }
 
     /// Drains pending events; this also refreshes the cached button states.
@@ -31,6 +37,9 @@ impl Gamepads {
         };
         while let Some(event) = gilrs.next_event() {
             match event.event {
+                gilrs::EventType::ButtonPressed(Button::LeftThumb, _) => {
+                    self.speed_presses += 1;
+                }
                 gilrs::EventType::Connected => {
                     log::info!("Gamepad connected: {}", gilrs.gamepad(event.id).name());
                 }
@@ -40,6 +49,12 @@ impl Gamepads {
                 _ => {}
             }
         }
+    }
+
+    /// Times the left stick was pressed in since the last call (each press
+    /// steps to the next emulation speed).
+    pub fn take_speed_presses(&mut self) -> u32 {
+        std::mem::take(&mut self.speed_presses)
     }
 
     /// Names of the connected gamepads.

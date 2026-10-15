@@ -20,6 +20,7 @@ import {
   SCREEN_W,
   SHORTCUTS,
   type ScreenRect,
+  speedLabel,
   toDs,
 } from "@/services/api/emulator";
 
@@ -27,10 +28,14 @@ const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 const reportError = (error: unknown) => console.error(error);
 
-/** CSS for a screen canvas placed by `layout_screens`. */
+/**
+ * CSS for a screen canvas placed by `layout_screens`. `scale` is the
+ * internal resolution (the bitmap is 256x192 times it).
+ */
 const screenStyle = (
   screen: ScreenRect | null,
   filtering: boolean,
+  scale = 1,
 ): React.CSSProperties => {
   if (!screen) return { display: "none" };
   const { x, y, w, h } = screen.rect;
@@ -45,7 +50,9 @@ const screenStyle = (
     height: ch,
     aspectRatio: `${SCREEN_W} / ${SCREEN_H}`,
     transform: `rotate(${screen.rotation}deg)`,
-    imageRendering: filtering ? "auto" : "pixelated",
+    // "pixelated" also applies when shrinking, which would throw away a
+    // bitmap larger than its box: smooth then.
+    imageRendering: filtering || cw < SCREEN_W * scale ? "auto" : "pixelated",
     background: "#000",
   };
 };
@@ -228,8 +235,15 @@ export const EmulatorView = () => {
           .then((frame) => {
             if (!alive || !frame) return;
             lastSeq = frame.seq;
-            upper.putImageData(new ImageData(frame.upper, SCREEN_W, SCREEN_H), 0, 0);
-            lower.putImageData(new ImageData(frame.lower, SCREEN_W, SCREEN_H), 0, 0);
+            // The bitmap follows the internal resolution.
+            for (const ctx of [upper, lower]) {
+              if (ctx.canvas.width !== frame.width || ctx.canvas.height !== frame.height) {
+                ctx.canvas.width = frame.width;
+                ctx.canvas.height = frame.height;
+              }
+            }
+            upper.putImageData(new ImageData(frame.upper, frame.width, frame.height), 0, 0);
+            lower.putImageData(new ImageData(frame.lower, frame.width, frame.height), 0, 0);
           })
           .catch(reportError)
           .finally(() => {
@@ -252,10 +266,17 @@ export const EmulatorView = () => {
     EMU.setKeys(keyboardKeysRef.current | gamepadKeysRef.current).catch(reportError);
   }, []);
 
-  const gamepads = useGamepads((keys) => {
-    gamepadKeysRef.current = keys;
-    sendKeys();
-  });
+  const running = !!status?.running;
+  const gamepads = useGamepads(
+    (keys) => {
+      gamepadKeysRef.current = keys;
+      sendKeys();
+    },
+    // Left stick press: next emulation speed.
+    () => {
+      if (running) void handleAction({ type: "cycleSpeed" });
+    },
+  );
 
   const handleKey = useCallback(
     (pressed: boolean) => (e: KeyboardEvent) => {
@@ -352,7 +373,6 @@ export const EmulatorView = () => {
     return <Typography>Loading...</Typography>;
   }
 
-  const running = !!status?.running;
   const welcomeRoms = config.recentRoms.slice(0, 10);
 
   return (
@@ -376,19 +396,19 @@ export const EmulatorView = () => {
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        {/* Native canvases: the bitmap must be exactly 256x192 (the
-            on-screen size is CSS only). */}
+        {/* The bitmap is 256x192 times the internal resolution (resized
+            with each frame); the on-screen size is CSS only. */}
         <canvas
           ref={upperRef}
           width={SCREEN_W}
           height={SCREEN_H}
-          style={running ? screenStyle(placement?.screens[0] ?? null, config.filtering) : { display: "none", aspectRatio: `${SCREEN_W} / ${SCREEN_H}` }}
+          style={running ? screenStyle(placement?.screens[0] ?? null, config.filtering, config.renderScale) : { display: "none", aspectRatio: `${SCREEN_W} / ${SCREEN_H}` }}
         />
         <canvas
           ref={lowerRef}
           width={SCREEN_W}
           height={SCREEN_H}
-          style={running ? screenStyle(placement?.screens[1] ?? null, config.filtering) : { display: "none", aspectRatio: `${SCREEN_W} / ${SCREEN_H}` }}
+          style={running ? screenStyle(placement?.screens[1] ?? null, config.filtering, config.renderScale) : { display: "none", aspectRatio: `${SCREEN_W} / ${SCREEN_H}` }}
         />
 
         {running && config.showFps && (
@@ -403,7 +423,8 @@ export const EmulatorView = () => {
               pointerEvents: "none",
             }}
           >
-            {status?.fps.toFixed(1)} fps{status?.paused ? "  (paused)" : ""}
+            {status?.fps.toFixed(1)} fps
+            {status?.paused ? "  (paused)" : config.speed !== 100 ? `  [${speedLabel(config.speed)}]` : ""}
           </Typography>
         )}
 

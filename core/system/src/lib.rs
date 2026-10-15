@@ -9,4 +9,4 @@ mod error;
 
 pub use ds_cpu::arm_cpu::CpuType;
 pub use ds_peripherals::wifi::MpLink;
-pub use emulator::{Emulator, emu_config::Config};
+pub use emulator::{Emulator, cheats::parse_ar_code, emu_config::Config};

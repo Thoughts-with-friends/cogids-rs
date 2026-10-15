@@ -19,7 +19,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::view::{ROTATIONS, SCREEN_GAPS, ScreenLayout, ScreenSizing, View};
+use crate::speed::{self, SPEEDS};
+use crate::view::{MAX_RENDER_SCALE, ROTATIONS, SCREEN_GAPS, ScreenLayout, ScreenSizing, View};
 
 /// Remembered ROMs in File > Open recent.
 pub const RECENT_LIMIT: usize = 10;
@@ -36,6 +37,8 @@ pub enum Window {
     Wifi,
     Paths,
     About,
+    /// System > Setup cheat codes.
+    Cheats,
 }
 
 /// What a menu entry asks for.
@@ -71,6 +74,15 @@ pub enum Action {
     ToggleFiltering,
     ToggleShowFps,
     ToggleLimitFramerate,
+    /// Emulation speed in percent (one of `speed::SPEEDS`).
+    SetSpeed(u16),
+    /// The next speed (gamepad left stick button).
+    CycleSpeed,
+    /// Internal resolution factor (Config > Video settings).
+    SetRenderScale(u8),
+    ToggleXbrz,
+    /// System > Enable cheats.
+    ToggleCheats,
     Open(Window),
 }
 
@@ -145,13 +157,12 @@ pub mod reason {
         "This emulator boots games directly; booting the firmware menu is not supported";
     pub const GBA_SLOT: &str = "The GBA slot is not emulated";
     pub const SAVESTATE: &str = "Savestates are not supported by this emulator yet";
-    pub const CHEATS: &str = "Cheats (Action Replay) are not supported yet";
     pub const RAM_SEARCH: &str = "RAM search is not implemented yet";
     pub const DSI: &str = "DSi mode is not emulated";
     pub const CAMERA: &str = "The DSi cameras are not emulated";
     pub const POWER: &str = "The battery and the power button are not emulated yet";
     pub const DATE_TIME: &str = "The DS clock follows this PC's date and time";
-    pub const VIDEO: &str = "There is only the software renderer, with no options yet";
+    pub const XBRZ_SCALE: &str = "xBRZ needs an internal resolution of 2x or more";
     pub const FIRMWARE_SETTINGS: &str =
         "Firmware user settings (nickname, birthday, ...) are not editable yet";
     pub const INTERFACE: &str = "No interface options yet";
@@ -380,8 +391,13 @@ fn system_menu(s: &MenuState<'_>) -> Menu {
             unavailable("Power management", reason::POWER),
             unavailable("Date and time", reason::DATE_TIME),
             Item::Separator,
-            unavailable("Enable cheats", reason::CHEATS),
-            unavailable("Setup cheat codes", reason::CHEATS),
+            check(
+                "Enable cheats",
+                Action::ToggleCheats,
+                s.view.cheats_enabled,
+                true,
+            ),
+            entry("Setup cheat codes", Action::Open(Window::Cheats), loaded),
             Item::Separator,
             entry("ROM info", Action::Open(Window::RomInfo), loaded),
             unavailable("RAM search", reason::RAM_SEARCH),
@@ -476,7 +492,7 @@ fn config_menu(s: &MenuState<'_>) -> Menu {
             entry("Emu settings", Action::Open(Window::EmuSettings), true),
             Item::Separator,
             entry("Input and hotkeys", Action::Open(Window::Input), true),
-            unavailable("Video settings", reason::VIDEO),
+            submenu("Video settings", video_items(s.view)),
             unavailable("Camera settings", reason::CAMERA),
             entry("Audio settings", Action::Open(Window::Audio), true),
             multiplayer,
@@ -492,8 +508,60 @@ fn config_menu(s: &MenuState<'_>) -> Menu {
                 true,
             ),
             unavailable("Audio sync", reason::AUDIO_SYNC),
+            submenu("Emulation speed", speed_items(s.view)),
         ],
     }
+}
+
+/// Config > Emulation speed: one radio per speed.
+fn speed_items(v: &View) -> Vec<Item> {
+    let current = speed::valid(v.speed);
+    let mut items: Vec<Item> = SPEEDS
+        .iter()
+        .map(|&p| radio(&speed::label(p), Action::SetSpeed(p), p == current))
+        .collect();
+    items.push(Item::Separator);
+    items.push(Item::Entry {
+        label: "Next speed".to_owned(),
+        action: Some(Action::CycleSpeed),
+        enabled: true,
+        checked: None,
+        radio: false,
+        reason: None,
+        shortcut: Some("Left stick press".to_owned()),
+        hint: None,
+    });
+    items
+}
+
+/// Config > Video settings: internal resolution and the xBRZ filter.
+fn video_items(v: &View) -> Vec<Item> {
+    let scale = v.render_scale();
+    let mut items: Vec<Item> = (1..=MAX_RENDER_SCALE)
+        .map(|n| {
+            radio(
+                &format!(
+                    "Internal resolution {n}x ({}x{})",
+                    256 * u32::from(n),
+                    192 * u32::from(n)
+                ),
+                Action::SetRenderScale(n),
+                n == scale,
+            )
+        })
+        .collect();
+    items.push(Item::Separator);
+    let mut xbrz = check(
+        "xBRZ filter (2D)",
+        Action::ToggleXbrz,
+        v.xbrz && scale >= 2,
+        scale >= 2,
+    );
+    if let Item::Entry { reason, .. } = &mut xbrz {
+        *reason = (scale < 2).then(|| reason::XBRZ_SCALE.to_owned());
+    }
+    items.push(xbrz);
+    items
 }
 
 fn help_menu() -> Menu {
@@ -606,6 +674,7 @@ mod tests {
             "Path settings",
             "Limit framerate",
             "Audio sync",
+            "Emulation speed",
             "About...",
         ] {
             assert!(find(&menus, wanted).is_some(), "missing {wanted}");
@@ -648,6 +717,7 @@ mod tests {
             "Frame step",
             "Pause",
             "ROM info",
+            "Setup cheat codes",
             "Eject cart",
         ] {
             assert!(!enabled(None, label), "{label} without a game");
@@ -663,6 +733,8 @@ mod tests {
             Action::SetLayout(ScreenLayout::Natural),
             Action::Open(Window::RomInfo),
             Action::TogglePause,
+            Action::SetSpeed(150),
+            Action::Open(Window::Cheats),
         ] {
             let json = serde_json::to_string(&action).unwrap_or_default();
             assert_eq!(serde_json::from_str::<Action>(&json).ok(), Some(action));

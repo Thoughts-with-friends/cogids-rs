@@ -3,7 +3,7 @@
 //! Bands are rendered in parallel (see [`super::Raster::render`]).
 use super::pixel::DepthTest;
 use super::slope::{Interp, Slope};
-use super::{BUFFER_SIZE, Frame, Raster, SCANLINE_WIDTH};
+use super::{Dims, Frame, Raster};
 use crate::engine_3d::state::{Polygon, RenderState};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -33,6 +33,8 @@ pub(super) struct Span {
     pub(super) zr: i32,
     pub(super) interp_x: Interp<false>,
     pub(super) yedge: u32,
+    /// Visible width: pixels at or past it are not drawn.
+    pub(super) width: i32,
 }
 
 /// A horizontal band of the frame rendered by one thread: its rows of both
@@ -45,6 +47,11 @@ pub(super) struct Band {
     pub(super) attr: Vec<u32>,
     pub(super) y0: usize,
     pub(super) y1: usize,
+    /// Row pitch and layer size of the full buffers.
+    pub(super) pitch: usize,
+    pub(super) full_layer: usize,
+    /// Visible width (stencil row length).
+    pub(super) width: usize,
     /// Size of one layer of this band.
     pub(super) layer: usize,
     pub(super) stencil: Vec<u8>,
@@ -56,6 +63,7 @@ impl Band {
     /// Copies rows `y0..y1` of both layers out of the frame buffers.
     pub(super) fn load(
         &mut self,
+        d: Dims,
         color: &[u32],
         depth: &[i32],
         attr: &[u32],
@@ -64,16 +72,19 @@ impl Band {
     ) {
         self.y0 = y0;
         self.y1 = y1;
-        self.layer = (y1 - y0) * SCANLINE_WIDTH;
+        self.pitch = d.pitch;
+        self.full_layer = d.layer;
+        self.width = d.width;
+        self.layer = (y1 - y0) * d.pitch;
         let n = self.layer * 2;
         self.color.resize(n, 0);
         self.depth.resize(n, 0);
         self.attr.resize(n, 0);
         self.stencil.clear();
-        self.stencil.resize(512, 0);
+        self.stencil.resize(d.width * 2, 0);
         self.prev_is_shadow_mask = false;
         for k in 0..2 {
-            let src = k * BUFFER_SIZE + SCANLINE_WIDTH + y0 * SCANLINE_WIDTH;
+            let src = k * d.layer + d.pitch + y0 * d.pitch;
             let dst = k * self.layer;
             let len = self.layer;
             self.color[dst..dst + len].copy_from_slice(&color[src..src + len]);
@@ -85,7 +96,7 @@ impl Band {
     /// Writes the band's rows back.
     pub(super) fn store(&self, color: &mut [u32], depth: &mut [i32], attr: &mut [u32]) {
         for k in 0..2 {
-            let dst = k * BUFFER_SIZE + SCANLINE_WIDTH + self.y0 * SCANLINE_WIDTH;
+            let dst = k * self.full_layer + self.pitch + self.y0 * self.pitch;
             let src = k * self.layer;
             let len = self.layer;
             color[dst..dst + len].copy_from_slice(&self.color[src..src + len]);
@@ -97,7 +108,7 @@ impl Band {
     /// Index of pixel 0 of line `y` (layer 0).
     #[inline]
     pub(super) fn row(&self, y: i32) -> usize {
-        (y as usize - self.y0) * SCANLINE_WIDTH + 1
+        (y as usize - self.y0) * self.pitch + 1
     }
 
     /// Renders this band's rows (Raster::render_frame, one thread per band):
@@ -338,6 +349,7 @@ impl Band {
                 zr,
                 interp_x: Interp::new(xstart, xend + 1, wl, wr, p.w_buffer),
                 yedge,
+                width: f.width,
             },
             swapped,
         )
@@ -349,7 +361,9 @@ impl Band {
     pub(super) fn for_span(span: &Span, wireframe: bool, mut f: impl FnMut(i32, u32, u32)) {
         let mut x = span.xstart.max(0);
 
-        let mut xlimit = (span.xstart + span.l_edgelen).min(span.xend + 1).min(256);
+        let mut xlimit = (span.xstart + span.l_edgelen)
+            .min(span.xend + 1)
+            .min(span.width);
         if span.l_filledge {
             while x < xlimit {
                 f(x, span.yedge | 0x1, 0);
@@ -359,7 +373,9 @@ impl Band {
             x = x.max(xlimit);
         }
 
-        xlimit = (span.xend - span.r_edgelen + 1).min(span.xend + 1).min(256);
+        xlimit = (span.xend - span.r_edgelen + 1)
+            .min(span.xend + 1)
+            .min(span.width);
         if wireframe && span.yedge == 0 {
             x = x.max(xlimit);
         } else {
@@ -369,7 +385,7 @@ impl Band {
             }
         }
 
-        xlimit = (span.xend + 1).min(256);
+        xlimit = (span.xend + 1).min(span.width);
         if span.r_filledge {
             while x < xlimit {
                 f(x, span.yedge | 0x2, 2);
@@ -390,9 +406,9 @@ impl Band {
         let poly_alpha = (p.attr >> 16) & 0x1F;
         let wireframe = poly_alpha == 0;
 
-        let sbase = 256 * (y as usize & 1);
+        let sbase = self.width * (y as usize & 1);
         if !self.prev_is_shadow_mask {
-            self.stencil[sbase..sbase + 256].fill(0);
+            self.stencil[sbase..sbase + self.width].fill(0);
         }
         self.prev_is_shadow_mask = true;
 
@@ -484,7 +500,7 @@ impl Band {
         let aa = f.st.disp_cnt & (1 << 4) != 0;
         let alpha_ref = f.st.alpha_ref;
         let row = self.row(y);
-        let sbase = 256 * (y as usize & 1);
+        let sbase = self.width * (y as usize & 1);
         let (zl, zr) = (span.zl, span.zr);
         let mut ix = span.interp_x;
 

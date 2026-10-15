@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { KEY, gamepadKeys } from './emulator';
+import { KEY, SPEEDS, gamepadKeys, gamepadSpeedHeld, parseFrame, speedLabel } from './emulator';
 
 /** A "standard" mapping gamepad with the given buttons held. */
 const pad = (pressed: number[], axes: number[] = [0, 0, 0, 0]): Gamepad =>
@@ -40,5 +40,43 @@ describe('gamepadKeys', () => {
   it('combines pads and ignores empty / disconnected slots', () => {
     const gone = { ...pad([0]), connected: false } as Gamepad;
     expect(gamepadKeys([null, pad([1]), gone, pad([9])])).toBe(KEY.A | KEY.START);
+  });
+});
+
+describe('gamepadSpeedHeld', () => {
+  it('is the left stick press (button 10)', () => {
+    expect(gamepadSpeedHeld([pad([10])])).toBe(true);
+    expect(gamepadSpeedHeld([pad([11])])).toBe(false);
+    expect(gamepadSpeedHeld([null])).toBe(false);
+  });
+});
+
+describe('parseFrame', () => {
+  const frame = (seq: number, w: number, h: number) => {
+    const buf = new ArrayBuffer(16 + w * h * 8);
+    const view = new DataView(buf);
+    view.setBigUint64(0, BigInt(seq), true);
+    view.setUint32(8, w, true);
+    view.setUint32(12, h, true);
+    new Uint8Array(buf, 16 + w * h * 4)[0] = 7; // first lower-screen byte
+    return buf;
+  };
+
+  it('reads the size of upscaled frames', () => {
+    const f = parseFrame(frame(3, 512, 384));
+    expect(f?.seq).toBe(3);
+    expect([f?.width, f?.height]).toEqual([512, 384]);
+    expect(f?.upper.length).toBe(512 * 384 * 4);
+    expect(f?.lower[0]).toBe(7);
+  });
+
+  it('is null without a new frame', () => {
+    expect(parseFrame(new ArrayBuffer(0))).toBeNull();
+  });
+});
+
+describe('speedLabel', () => {
+  it('labels every speed', () => {
+    expect(SPEEDS.map(speedLabel)).toEqual(['0.5x', '1x', '1.5x', '2x', '3x', '4x']);
   });
 });

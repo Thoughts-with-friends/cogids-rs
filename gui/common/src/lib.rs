@@ -1,11 +1,13 @@
 //! Frontend pieces shared by the egui and Tauri GUIs: the instance data
 //! folder and settings, audio output and gamepad input.
 pub mod audio;
+pub mod cheats;
 pub mod gamepad;
 pub mod instance;
 pub mod log;
 pub mod menu;
 pub mod rom_info;
+pub mod speed;
 pub mod view;
 
 pub use audio::AudioOutput;

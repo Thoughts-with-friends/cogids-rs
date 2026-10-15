@@ -14,6 +14,7 @@
 //! See GBATEK "DS Video BG Modes / Control", "DS Video OBJs" and "LCD I/O
 //! Color Special Effects".
 use crate::Gpu;
+use crate::display::hires::hd_3d_info;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 
 pub(super) const W: usize = PIXELS_PER_LINE;
@@ -37,7 +38,7 @@ pub(super) struct LineLayers {
 
 /// BGR555 -> 0xFFRRGGBB with 5-to-8-bit expansion.
 #[inline]
-const fn rgb555_to_888(c: u16) -> u32 {
+pub(crate) const fn rgb555_to_888(c: u16) -> u32 {
     let r = (c & 0x1F) as u32;
     let g = ((c >> 5) & 0x1F) as u32;
     let b = ((c >> 10) & 0x1F) as u32;
@@ -60,7 +61,7 @@ fn blend(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
 
 /// Blend with 5-bit weights (`eva + evb == 32`), used by 3D pixels.
 #[inline]
-fn blend32(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
+pub(crate) fn blend32(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
         let ca = u32::from((a >> shift) & 0x1F);
         let cb = u32::from((b >> shift) & 0x1F);
@@ -71,7 +72,7 @@ fn blend32(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
 
 /// BLDY brightness increase `c + (31 - c) * evy / 16`.
 #[inline]
-fn brighten(c: u16, evy: u32) -> u16 {
+pub(crate) fn brighten(c: u16, evy: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
         let v = u32::from((c >> shift) & 0x1F);
         ((v + (((31 - v) * evy) >> 4)) as u16) << shift
@@ -81,7 +82,7 @@ fn brighten(c: u16, evy: u32) -> u16 {
 
 /// BLDY brightness decrease `c - c * evy / 16`.
 #[inline]
-fn darken(c: u16, evy: u32) -> u16 {
+pub(crate) fn darken(c: u16, evy: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
         let v = u32::from((c >> shift) & 0x1F);
         ((v - ((v * evy) >> 4)) as u16) << shift
@@ -228,6 +229,8 @@ impl Gpu {
         };
 
         let mut row = [0u32; W];
+        // Engine A: how each 3D pixel was composited (display::hires).
+        let mut hd = [0u32; W];
         for x in 0..W {
             let mask = masks[x];
             // (layer id, pixel); layer 5 = backdrop.
@@ -293,9 +296,22 @@ impl Gpu {
                 }
             };
             row[x] = rgb555_to_888(color);
+
+            if a && top_layer == 0 && top & BG_3D != 0 {
+                let blended = effects && second_target(second_layer);
+                let effect = if effects && !blended && bld.effect != 1 && first_target(0) {
+                    u32::from(bld.effect)
+                } else {
+                    0
+                };
+                hd[x] = hd_3d_info(second_color, blended, effect, evy);
+            }
         }
 
         let start = line * W;
         self.engine_mut(a).framebuffer[start..start + W].copy_from_slice(&row);
+        if a {
+            self.hd_3d[start..start + W].copy_from_slice(&hd);
+        }
     }
 }

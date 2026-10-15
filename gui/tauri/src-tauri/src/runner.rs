@@ -50,6 +50,9 @@ pub(crate) fn run() {
             commands::get_settings,
             commands::set_settings,
             commands::layout_screens,
+            commands::get_cheats,
+            commands::set_cheats,
+            commands::check_cheat_code,
         ])
         .on_window_event(|window, event| {
             // Write the save before the process exits.

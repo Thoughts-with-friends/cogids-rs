@@ -57,11 +57,12 @@ impl<const DIR: bool> Interp<DIR> {
         let x = x - self.x0;
         self.x = x;
         if self.xdiff != 0 && (!self.linear || self.wbuffer) {
-            let num = (x.wrapping_mul(self.w0n) as u32) << self.shift;
-            let den = x
-                .wrapping_mul(self.w0d)
-                .wrapping_add((self.xdiff - x).wrapping_mul(self.w1d)) as u32;
-            self.yfactor = num.checked_div(den).unwrap_or(0);
+            // 64-bit: at native size these fit in 32 bits (as on hardware),
+            // but edges of a scaled raster (raster::hires) are longer.
+            let num = (i64::from(x) * i64::from(self.w0n)) << self.shift;
+            let den = i64::from(x) * i64::from(self.w0d)
+                + i64::from(self.xdiff - x) * i64::from(self.w1d);
+            self.yfactor = (num as u64).checked_div(den as u64).unwrap_or(0) as u32;
         }
     }
 

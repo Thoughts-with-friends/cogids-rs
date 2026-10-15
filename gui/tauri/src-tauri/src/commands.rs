@@ -8,10 +8,11 @@
 //!  React screens --layout_screens(w, h)--> ds_common::view::place
 //! ```
 use crate::emu_thread::{EmuThread, Shared};
+use ds_common::cheats::{self, Cheat};
 use ds_common::menu::{Action, Menu, MenuState, menu_bar, remember};
 use ds_common::rom_info::RomInfo;
 use ds_common::view::{Placement, View, place};
-use ds_common::{AudioOutput, Instance, Settings};
+use ds_common::{AudioOutput, Instance, Settings, speed};
 use ds_emu::Emulator;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -83,6 +84,7 @@ impl AppState {
         let audio = AudioOutput::new(f32::from(config.volume.min(100)) / 100.0);
         let shared = Arc::new(Shared::default());
         shared.set_limit_framerate(config.limit_framerate);
+        Self::apply_view(&shared, &config.view);
         Self {
             instance,
             settings: Mutex::new(settings),
@@ -92,6 +94,22 @@ impl AppState {
             emu: Mutex::new(None),
             rom: Mutex::new(None),
         }
+    }
+
+    /// Speed and internal resolution of `view` to the emulator thread.
+    fn apply_view(shared: &Shared, view: &View) {
+        shared.set_speed(view.speed);
+        shared.set_render(view.render_scale(), view.xbrz);
+    }
+
+    /// The running game's enabled cheats to the emulator thread.
+    fn load_cheats(&self) {
+        let Some(rom) = lock(&self.rom).clone() else {
+            return;
+        };
+        let list = cheats::load(&cheats::cheats_path(&self.instance, &rom));
+        let on = lock(&self.config).view.cheats_enabled;
+        self.shared.set_cheats(cheats::enabled_codes(&list, on));
     }
 
     fn save_config(&self, config: &GuiConfig) {
@@ -130,6 +148,7 @@ impl AppState {
         let thread = EmuThread::start(emu, Arc::clone(&self.shared), self.audio.clone());
         *lock(&self.emu) = Some(thread);
         *lock(&self.rom) = Some(rom.to_owned());
+        self.load_cheats();
 
         let mut config = lock(&self.config);
         remember(&mut config.recent_roms, rom);
@@ -166,6 +185,10 @@ impl AppState {
             | Action::ToggleFiltering
             | Action::ToggleShowFps
             | Action::ToggleLimitFramerate
+            | Action::SetSpeed(_)
+            | Action::CycleSpeed
+            | Action::SetRenderScale(_)
+            | Action::ToggleXbrz
             | Action::ScreenSize(_) => {
                 let mut config = lock(&self.config);
                 let view = &mut config.view;
@@ -184,10 +207,22 @@ impl AppState {
                         config.limit_framerate ^= true;
                         self.shared.set_limit_framerate(config.limit_framerate);
                     }
+                    Action::SetSpeed(p) => view.speed = speed::valid(p),
+                    Action::CycleSpeed => view.speed = speed::next(view.speed),
+                    Action::SetRenderScale(n) => view.render_scale = n,
+                    Action::ToggleXbrz => view.xbrz ^= true,
                     _ => {}
                 }
+                Self::apply_view(&self.shared, &config.view);
                 self.save_config(&config);
                 drop(config);
+            }
+            Action::ToggleCheats => {
+                let mut config = lock(&self.config);
+                config.view.cheats_enabled ^= true;
+                self.save_config(&config);
+                drop(config);
+                self.load_cheats();
             }
             // Dialogs and the window are the frontend's.
             Action::OpenRom | Action::ImportSavefile | Action::Quit | Action::Open(_) => {}
@@ -226,6 +261,7 @@ pub fn set_config(state: State<'_, AppState>, config: GuiConfig) {
         .audio
         .set_volume(f32::from(config.volume.min(100)) / 100.0);
     state.shared.set_limit_framerate(config.limit_framerate);
+    AppState::apply_view(&state.shared, &config.view);
     state.save_config(&config);
     *lock(&state.config) = config;
 }
@@ -334,22 +370,53 @@ pub fn set_touch(state: State<'_, AppState>, x: Option<i32>, y: Option<i32>) {
     state.shared.set_touch(x.zip(y));
 }
 
-/// The newest frame after `last_seq` as binary: 8-byte little-endian frame
-/// number, then the upper and lower screen in RGBA (256x192 each). Empty if
-/// there is no new frame.
+/// The newest frame after `last_seq` as binary: 8-byte frame number, then
+/// 4-byte width and height of one screen (all little-endian), then the
+/// upper and lower screen in RGBA (256x192 each at 1x, larger at a higher
+/// internal resolution). Empty if there is no new frame.
 #[tauri::command]
 pub fn get_frame(state: State<'_, AppState>, last_seq: u64) -> tauri::ipc::Response {
     let body = state
         .shared
         .frame_since(last_seq)
-        .map(|(seq, rgba)| {
-            let mut out = Vec::with_capacity(8 + rgba.len());
+        .map(|(seq, width, rgba)| {
+            let height = (rgba.len() / 8).checked_div(width as usize).unwrap_or(0) as u32;
+            let mut out = Vec::with_capacity(16 + rgba.len());
             out.extend_from_slice(&seq.to_le_bytes());
+            out.extend_from_slice(&width.to_le_bytes());
+            out.extend_from_slice(&height.to_le_bytes());
             out.extend_from_slice(&rgba);
             out
         })
         .unwrap_or_default();
     tauri::ipc::Response::new(body)
+}
+
+/// System > Setup cheat codes: the running game's cheat list.
+#[tauri::command]
+pub fn get_cheats(state: State<'_, AppState>) -> Result<Vec<Cheat>, String> {
+    let rom = lock(&state.rom).clone().ok_or("No game is running")?;
+    Ok(cheats::load(&cheats::cheats_path(&state.instance, &rom)))
+}
+
+/// Saves the running game's cheat list and runs its enabled codes. Fails
+/// (saving nothing) if an enabled cheat's code is invalid.
+#[tauri::command]
+pub fn set_cheats(state: State<'_, AppState>, cheats: Vec<Cheat>) -> Result<(), String> {
+    let rom = lock(&state.rom).clone().ok_or("No game is running")?;
+    for cheat in cheats.iter().filter(|c| c.enabled) {
+        cheat.words().map_err(|e| format!("{}: {e}", cheat.name))?;
+    }
+    cheats::save(&cheats::cheats_path(&state.instance, &rom), &cheats)
+        .map_err(|e| format!("Cannot save the cheats: {e}"))?;
+    state.load_cheats();
+    Ok(())
+}
+
+/// Parses a cheat code (to validate it while it is typed).
+#[tauri::command]
+pub fn check_cheat_code(code: String) -> Result<(), String> {
+    ds_emu::parse_ar_code(&code).map(|_| ())
 }
 
 #[derive(Serialize)]

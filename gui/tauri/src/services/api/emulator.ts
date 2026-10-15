@@ -19,7 +19,20 @@ export type View = {
   integerScaling: boolean;
   filtering: boolean;
   showFps: boolean;
+  /** Emulation speed in percent (`SPEEDS`). */
+  speed: number;
+  /** Internal resolution factor, 1-4. */
+  renderScale: number;
+  /** xBRZ filter on the 2D graphics (render scale 2 or more). */
+  xbrz: boolean;
+  cheatsEnabled: boolean;
 };
+
+/** Emulation speeds offered, in percent (`ds_common::speed::SPEEDS`). */
+export const SPEEDS = [50, 100, 150, 200, 300, 400] as const;
+
+/** "0.5x", "1x", "1.5x", ... */
+export const speedLabel = (percent: number) => `${percent / 100}x`;
 
 /** GUI settings stored in `instances/instanceN/config.json`. */
 export type GuiConfig = View & {
@@ -50,7 +63,8 @@ export type DialogKind =
   | "audio"
   | "wifi"
   | "paths"
-  | "about";
+  | "about"
+  | "cheats";
 
 /** A menu action (`ds_common::menu::Action`, serde `type`/`value`). */
 export type Action =
@@ -76,7 +90,24 @@ export type Action =
   | { type: "toggleFiltering" }
   | { type: "toggleShowFps" }
   | { type: "toggleLimitFramerate" }
+  | { type: "setSpeed"; value: number }
+  | { type: "cycleSpeed" }
+  | { type: "setRenderScale"; value: number }
+  | { type: "toggleXbrz" }
+  | { type: "toggleCheats" }
   | { type: "open"; value: DialogKind };
+
+/** One cheat (`ds_common::cheats::Cheat`). */
+export type Cheat = {
+  name: string;
+  /** Free-text notes. */
+  memo: string;
+  /** Action Replay code: `XXXXXXXX YYYYYYYY` per line. */
+  code: string;
+  enabled: boolean;
+  /** Code format, "Action Replay". */
+  kind: string;
+};
 
 /** One menu entry (`ds_common::menu::Item`). */
 export type MenuItem =
@@ -252,6 +283,31 @@ export const gamepadKeys = (pads: readonly (Gamepad | null)[]): number => {
   return keys;
 };
 
+/** Gamepad button of the left stick press (L3, "standard" mapping). */
+export const SPEED_BUTTON = 10;
+
+/** Whether any connected gamepad holds the left stick in (L3). */
+export const gamepadSpeedHeld = (pads: readonly (Gamepad | null)[]): boolean =>
+  pads.some((pad) => pad?.connected && (pad.buttons[SPEED_BUTTON]?.pressed ?? false));
+
+/** Decodes `get_frame`'s binary answer (see `EMU.frame`). */
+export const parseFrame = (buf: ArrayBuffer) => {
+  if (buf.byteLength < 16) return null;
+  const view = new DataView(buf);
+  const seq = Number(view.getBigUint64(0, true));
+  const width = view.getUint32(8, true);
+  const height = view.getUint32(12, true);
+  const size = width * height * 4;
+  if (size === 0 || buf.byteLength < 16 + size * 2) return null;
+  return {
+    seq,
+    width,
+    height,
+    upper: new Uint8ClampedArray(buf, 16, size),
+    lower: new Uint8ClampedArray(buf, 16 + size, size),
+  };
+};
+
 export const EMU = {
   getConfig: () => invoke<GuiConfig>("get_config"),
   setConfig: (config: GuiConfig) => invoke<void>("set_config", { config }),
@@ -272,20 +328,19 @@ export const EMU = {
     invoke<void>("set_settings", { settings }),
   layout: (width: number, height: number) =>
     invoke<Placement>("layout_screens", { width, height }),
+  getCheats: () => invoke<Cheat[]>("get_cheats"),
+  /** Saves the list and runs its enabled codes. */
+  setCheats: (cheats: Cheat[]) => invoke<void>("set_cheats", { cheats }),
+  /** Rejects with the reason when `code` is not valid Action Replay. */
+  checkCheatCode: (code: string) => invoke<void>("check_cheat_code", { code }),
 
   /**
-   * Newest frame after `lastSeq`: `{ seq, upper, lower }` RGBA buffers, or
-   * `null` if no new frame was produced yet.
+   * Newest frame after `lastSeq`: `{ seq, width, height, upper, lower }`
+   * (RGBA, `width` x `height` each: 256x192 times the internal resolution),
+   * or `null` if no new frame was produced yet.
    */
   async frame(lastSeq: number) {
     const buf = await invoke<ArrayBuffer>("get_frame", { lastSeq });
-    if (buf.byteLength < 8) return null;
-    const seq = Number(new DataView(buf).getBigUint64(0, true));
-    const size = SCREEN_W * SCREEN_H * 4;
-    return {
-      seq,
-      upper: new Uint8ClampedArray(buf, 8, size),
-      lower: new Uint8ClampedArray(buf, 8 + size, size),
-    };
+    return parseFrame(buf);
   },
 };

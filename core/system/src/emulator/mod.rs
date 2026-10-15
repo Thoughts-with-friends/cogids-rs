@@ -6,6 +6,7 @@
 //! Handles the dual-CPU architecture of the Nintendo DS and system timing
 mod button;
 mod cartridge;
+pub mod cheats;
 mod dma;
 pub mod emu_config;
 mod gpu;
@@ -76,6 +77,10 @@ pub struct Emulator {
     /// Raw 2D engine registers (A, B) as last written by the ARM9; see
     /// [`gpu::io_2d`].
     pub io_2d: [[u8; gpu::io_2d::IO_2D_SIZE]; 2],
+
+    /// Action Replay codes run at the start of every frame (see
+    /// [`cheats`]).
+    pub cheats: Vec<Vec<u32>>,
 
     /// IPCSYNC / IPCFIFO registers and queues for both CPUs
     pub ipc: Ipc,
@@ -189,6 +194,7 @@ impl Emulator {
             gpu_event: Default::default(),
             dma_event: Default::default(),
             io_2d: [[0; gpu::io_2d::IO_2D_SIZE]; 2],
+            cheats: Vec::new(),
             spu_cycles: 0,
             ipc: Default::default(),
             aux_spi_cnt: Default::default(),

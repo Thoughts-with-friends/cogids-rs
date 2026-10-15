@@ -122,6 +122,16 @@ pub struct View {
     /// Frame rate on screen.
     #[serde(alias = "show_fps")]
     pub show_fps: bool,
+    /// Emulation speed in percent, one of [`crate::speed::SPEEDS`]
+    /// (Config > Emulation speed, or the left stick button).
+    pub speed: u16,
+    /// Internal resolution factor (1-4) of the 3D renderer and of the
+    /// screen images (Config > Video settings).
+    pub render_scale: u8,
+    /// xBRZ filter on the 2D graphics (needs `render_scale` >= 2).
+    pub xbrz: bool,
+    /// Run the enabled Action Replay codes (System > Enable cheats).
+    pub cheats_enabled: bool,
 }
 
 impl Default for View {
@@ -136,9 +146,23 @@ impl Default for View {
             integer_scaling: false,
             filtering: false,
             show_fps: true,
+            speed: 100,
+            render_scale: 1,
+            xbrz: false,
+            cheats_enabled: true,
         }
     }
 }
+
+impl View {
+    /// [`Self::render_scale`] limited to what the renderer supports.
+    pub fn render_scale(&self) -> u8 {
+        self.render_scale.clamp(1, MAX_RENDER_SCALE)
+    }
+}
+
+/// Highest internal resolution factor offered.
+pub const MAX_RENDER_SCALE: u8 = 4;
 
 /// An axis-aligned rectangle in GUI units.
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Default)]

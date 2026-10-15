@@ -22,6 +22,7 @@ impl Emulator {
     ///   1. gpu.start_frame()                  clear the frame-complete flag
     ///      wifi.new_frame()                   let the MP link pump its
     ///                                         transport (ds_net)
+    ///      run_cheats()                       Action Replay codes (cheats.rs)
     ///   2. loop until gpu.is_frame_complete() (set when line 192 starts
     ///                                         VBlank, gpu_handle_event)
     ///      a. calculate_system_timestamp()    system_timestamp += slice
@@ -43,6 +44,7 @@ impl Emulator {
     pub fn run(&mut self) {
         self.gpu.start_frame();
         self.wifi.new_frame();
+        self.run_cheats();
 
         while !self.gpu.is_frame_complete() {
             // Handle self.ARM9

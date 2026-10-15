@@ -20,6 +20,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
+import { CheatDialog } from "@/components/organisms/CheatDialog";
 import { openPath } from "@/services/api/dialog";
 import {
   type DialogKind,
@@ -48,6 +49,7 @@ const TITLES: Record<DialogKind, string> = {
   wifi: "Wifi settings",
   paths: "Path settings",
   about: "About",
+  cheats: "Cheats",
 };
 
 const MAC_RE = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i;
@@ -56,6 +58,7 @@ const MAC_RE = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i;
 export const DsDialogs = (props: Props) => {
   const { open, onClose } = props;
   if (!open) return null;
+  if (open === "cheats") return <CheatDialog onClose={onClose} />;
 
   return (
     <Dialog open onClose={onClose} maxWidth="md">
@@ -309,6 +312,7 @@ const HOTKEYS: [string, string][] = [
   ["Ctrl+P", "Pause / resume"],
   ["Ctrl+R", "Reset"],
   ["Ctrl+N", "Frame step"],
+  ["Left stick press (gamepad)", "Next emulation speed"],
   ["Ctrl+Q", "Quit"],
 ];
 

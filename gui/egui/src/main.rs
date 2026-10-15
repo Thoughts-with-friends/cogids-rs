@@ -14,6 +14,7 @@
 //!       stylus through the bottom screen's ScreenRect
 //!    6. dialogs.rs windows
 //! ```
+mod cheat_dialog;
 mod config;
 mod dialogs;
 mod font;
@@ -27,7 +28,7 @@ use self::input::Touch;
 use self::multiplayer::Multiplayer;
 use ds_common::menu::{Action, MenuState, menu_bar, remember};
 use ds_common::view::{ScreenRect, place};
-use ds_common::{AudioOutput, DS_FPS, Gamepads, Instance, Settings};
+use ds_common::{AudioOutput, DS_FPS, Gamepads, Instance, Settings, cheats, speed};
 use ds_emu::Emulator;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use eframe::egui;
@@ -38,8 +39,8 @@ use std::time::{Duration, Instant};
 /// size).
 const MENU_BAR_HEIGHT: f32 = 24.0;
 
-/// Longest a frame may take when the frame rate is not limited (keeps the
-/// window responsive while fast-forwarding).
+/// Longest emulation may take per GUI frame when running faster than 1x or
+/// unlimited (keeps the window responsive when the PC cannot keep up).
 const UNLIMITED_BUDGET: Duration = Duration::from_millis(15);
 
 // ===== util =====
@@ -96,6 +97,10 @@ struct App {
     /// Upper and lower screen.
     textures: [Option<egui::TextureHandle>; 2],
     pixels: Vec<u32>,
+    /// Frames ran since the textures were last filled, and the (scale,
+    /// xBRZ) they were made with.
+    new_frame: bool,
+    texture_mode: (usize, bool, bool),
 
     /// Emulated frames per second, measured.
     fps: f32,
@@ -116,6 +121,8 @@ struct App {
 
     audio: AudioOutput,
     audio_buf: Vec<i16>,
+    /// `audio_buf` fitted to the emulation speed.
+    audio_out: Vec<i16>,
     /// Emulated frames owed to real time (frame pacing).
     frame_debt: f64,
     last_tick: Instant,
@@ -144,6 +151,8 @@ impl App {
             step: false,
             textures: [None, None],
             pixels: vec![0; PIXELS_PER_LINE * SCANLINES],
+            new_frame: false,
+            texture_mode: (1, false, false),
             fps: 0.0,
             fps_frames: 0,
             fps_start: Instant::now(),
@@ -151,6 +160,7 @@ impl App {
             touch: Touch::default(),
             audio: AudioOutput::new(f32::from(volume) / 100.0),
             audio_buf: Vec::with_capacity(4096),
+            audio_out: Vec::with_capacity(4096),
             frame_debt: 0.0,
             last_tick: Instant::now(),
             instance,
@@ -243,9 +253,35 @@ impl App {
                 self.config.limit_framerate = !self.config.limit_framerate;
                 self.audio.clear();
             }
+            Action::SetSpeed(percent) => {
+                self.config.view.speed = speed::valid(percent);
+                self.audio.clear();
+            }
+            Action::CycleSpeed => {
+                self.config.view.speed = speed::next(self.config.view.speed);
+                self.audio.clear();
+            }
+            Action::SetRenderScale(n) => self.config.view.render_scale = n,
+            Action::ToggleXbrz => self.config.view.xbrz ^= true,
+            Action::ToggleCheats => {
+                self.config.view.cheats_enabled ^= true;
+                self.load_cheats();
+            }
             Action::Open(window) => self.dialogs.open(window),
         }
         save_config(&self.config);
+    }
+
+    /// Hands the running game's enabled cheats to the emulator (on start,
+    /// on the cheat dialog's OK and on System > Enable cheats).
+    fn load_cheats(&mut self) {
+        let (Some(emu), Some(rom)) = (self.emu.as_mut(), self.rom.as_deref()) else {
+            return;
+        };
+        let list = cheats::load(&cheats::cheats_path(&self.instance, rom));
+        let codes = cheats::enabled_codes(&list, self.config.view.cheats_enabled);
+        log::info!("Cheats: {} of {} enabled", codes.len(), list.len());
+        emu.set_cheats(codes);
     }
 
     /// Starts `path` (stopping the current game first so its save is
@@ -277,6 +313,7 @@ impl App {
                 self.config.selected_rom = Some(path.clone());
                 self.emu = Some(emu);
                 self.rom = Some(path);
+                self.load_cheats();
                 self.paused = false;
                 self.step = false;
                 self.frame_debt = 0.0;
@@ -408,23 +445,36 @@ impl App {
         action
     }
 
-    /// Runs the frames real time asks for (~59.83 per second): none while
+    /// The emulation speed in percent (1x while in a LAN session).
+    fn speed(&self) -> u16 {
+        if self.multiplayer.in_session() {
+            speed::NORMAL
+        } else {
+            speed::valid(self.config.view.speed)
+        }
+    }
+
+    /// Runs the frames real time asks for (~59.83 per second at 1x): none while
     /// paused, exactly one for a frame step, as many as fit in
-    /// [`UNLIMITED_BUDGET`] without the frame limiter.
+    /// [`UNLIMITED_BUDGET`] without the frame limiter (or above 1x).
     fn run_frames(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_tick).as_secs_f64();
         self.last_tick = now;
 
+        let percent = self.speed();
         let frames = if self.paused {
             self.frame_debt = 0.0;
             u32::from(std::mem::take(&mut self.step))
         } else if self.multiplayer.busy() {
             0 // joining a LAN session: the backend is the worker's
         } else if self.config.limit_framerate {
-            self.frame_debt = elapsed.mul_add(DS_FPS, self.frame_debt);
-            if self.frame_debt > 4.0 {
-                self.frame_debt = 1.0; // stalled (e.g. window dragged): don't race
+            let fps = speed::fps(percent);
+            self.frame_debt = elapsed.mul_add(fps, self.frame_debt);
+            // Stalled (e.g. window dragged): don't race. ~4 frames' worth at 1x.
+            let cap = 4.0 * fps / DS_FPS;
+            if self.frame_debt > cap {
+                self.frame_debt = cap / 4.0;
             }
             let frames = self.frame_debt.floor() as u32;
             self.frame_debt -= f64::from(frames);
@@ -436,7 +486,9 @@ impl App {
         let Some(emu) = self.emu.as_mut() else {
             return;
         };
-        self.gamepads.poll();
+        // The 3D of every rendered frame is kept for the internal resolution.
+        emu.gpu
+            .set_render_scale(usize::from(self.config.view.render_scale()));
         let start = Instant::now();
         let mut ran = 0;
         while ran < frames {
@@ -448,14 +500,21 @@ impl App {
 
             emu.take_audio_samples(&mut self.audio_buf);
             if self.config.limit_framerate && !self.paused {
-                self.audio.push(&self.audio_buf);
+                speed::stretch_audio(&self.audio_buf, percent, &mut self.audio_out);
+                self.audio.push(&self.audio_out);
             }
             self.audio_buf.clear();
-            if frames == u32::MAX && start.elapsed() >= UNLIMITED_BUDGET {
+            if (frames == u32::MAX || percent > speed::NORMAL)
+                && start.elapsed() >= UNLIMITED_BUDGET
+            {
+                // Too slow for this speed: run as fast as possible instead
+                // of piling up debt.
+                self.frame_debt = 0.0;
                 break;
             }
         }
 
+        self.new_frame |= ran > 0;
         self.fps_frames += ran;
         let window = self.fps_start.elapsed();
         if window >= Duration::from_secs(1) {
@@ -470,22 +529,37 @@ impl App {
         let area = ui.available_rect_before_wrap();
         let response = ui.allocate_rect(area, egui::Sense::click_and_drag());
         let placement = place(&self.config.view, area.width(), area.height());
-        let options = if self.config.view.filtering {
-            egui::TextureOptions::LINEAR
-        } else {
-            egui::TextureOptions::NEAREST
+        // Enlarging follows Screen filtering; shrinking (a high internal
+        // resolution in a small window) is always smooth.
+        let options = egui::TextureOptions {
+            minification: egui::TextureFilter::Linear,
+            ..if self.config.view.filtering {
+                egui::TextureOptions::LINEAR
+            } else {
+                egui::TextureOptions::NEAREST
+            }
         };
 
-        if let Some(emu) = self.emu.as_mut() {
+        // Internal resolution: 3D rendered larger, 2D upscaled (xBRZ or
+        // nearest). Refilled only when a frame ran or the mode changed.
+        let scale = usize::from(self.config.view.render_scale());
+        let mode = (
+            scale,
+            self.config.view.xbrz && scale >= 2,
+            self.config.view.filtering,
+        );
+        let stale = self.new_frame || mode != self.texture_mode || self.textures[0].is_none();
+        if let Some(emu) = self.emu.as_mut().filter(|_| stale) {
+            self.new_frame = false;
+            self.texture_mode = mode;
             for (index, name) in ["upper", "lower"].into_iter().enumerate() {
-                if index == 0 {
-                    emu.get_upper_frame(&mut self.pixels);
-                } else {
-                    emu.get_lower_frame(&mut self.pixels);
-                }
+                let width = emu
+                    .gpu
+                    .screen_hd(index == 0, mode.0, mode.1, &mut self.pixels);
+                let height = self.pixels.len() / width;
                 swap_red_blue(&mut self.pixels);
                 let image = egui::ColorImage::from_rgba_unmultiplied(
-                    [PIXELS_PER_LINE, SCANLINES],
+                    [width, height],
                     bytemuck::cast_slice(&self.pixels),
                 );
                 match &mut self.textures[index] {
@@ -503,10 +577,13 @@ impl App {
         }
 
         if self.config.view.show_fps {
+            let percent = self.speed();
             let text = if self.paused {
                 format!("{:.1} fps  (paused)", self.fps)
-            } else {
+            } else if percent == speed::NORMAL {
                 format!("{:.1} fps", self.fps)
+            } else {
+                format!("{:.1} fps  [{}]", self.fps, speed::label(percent))
             };
             ui.painter().text(
                 area.min + egui::vec2(6.0, 4.0),
@@ -547,6 +624,12 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut actions = Vec::new();
         actions.extend(Self::shortcut(ctx));
+        // Left stick presses step the emulation speed.
+        self.gamepads.poll();
+        let presses = self.gamepads.take_speed_presses();
+        if self.emu.is_some() {
+            actions.extend((0..presses).map(|_| Action::CycleSpeed));
+        }
 
         let running = self.emu.is_some() && !self.paused;
         self.multiplayer
@@ -567,6 +650,9 @@ impl eframe::App for App {
             gamepads,
         };
         self.dialogs.show(ctx, &mut parts);
+        if self.dialogs.take_cheats_applied() {
+            self.load_cheats();
+        }
 
         for action in actions {
             self.apply(ctx, action);

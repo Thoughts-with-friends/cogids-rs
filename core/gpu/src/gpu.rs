@@ -3,6 +3,7 @@
 //! gpu.hpp
 //!
 // Graphics Processing Unit (GPU) implementation for Nintendo DS
+use crate::display::hires::HdLine;
 use crate::display::regs::{DispStatReg, PowerCtrlReg};
 
 /// Handles 2D and 3D rendering, VRAM management, and display output
@@ -50,6 +51,12 @@ pub struct Gpu {
 
     /// Power control register
     pub(crate) power_control_reg: PowerCtrlReg,
+
+    /// Engine A, per pixel: how a visible 3D pixel was composited
+    /// (`display::hires`).
+    pub(crate) hd_3d: Vec<u32>,
+    /// Engine A, per line: display mode, brightness and BG0 scroll.
+    pub(crate) hd_lines: [HdLine; ds_mem_addr::SCANLINES],
 }
 
 impl Default for Gpu {
@@ -84,6 +91,9 @@ impl Gpu {
             vertical_count: 0,
 
             power_control_reg: PowerCtrlReg::new(),
+
+            hd_3d: vec![0; ds_mem_addr::PIXELS_PER_LINE * ds_mem_addr::SCANLINES],
+            hd_lines: [HdLine::default(); ds_mem_addr::SCANLINES],
         }
     }
 }

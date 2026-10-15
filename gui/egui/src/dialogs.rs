@@ -17,6 +17,7 @@ use ds_common::rom_info::{ICON_SIZE, RomInfo};
 use ds_common::{AudioOutput, Instance, Settings, format_mac, parse_mac};
 use eframe::egui;
 
+use crate::cheat_dialog::{CheatEditor, Outcome};
 use crate::config::Config;
 use crate::multiplayer::Multiplayer;
 
@@ -43,6 +44,10 @@ pub struct Dialogs {
     )>,
     /// The Wifi settings' MAC text box.
     mac_text: Option<String>,
+    /// System > Setup cheat codes, for the running game.
+    cheats: Option<CheatEditor>,
+    /// The cheat list was saved (OK); the app reloads the codes.
+    cheats_applied: bool,
 }
 
 /// A path text box with a Browse button; `true` if it changed.
@@ -90,7 +95,36 @@ impl Dialogs {
         self.open.insert(window);
     }
 
+    /// The cheat dialog's OK was pressed since the last call.
+    pub const fn take_cheats_applied(&mut self) -> bool {
+        std::mem::replace(&mut self.cheats_applied, false)
+    }
+
+    /// The cheat window (opened per game; Cancel drops its changes).
+    fn show_cheats(&mut self, ctx: &egui::Context, parts: &Parts<'_>) {
+        let Some(rom) = parts.rom.filter(|_| self.open.contains(&Window::Cheats)) else {
+            self.open.remove(&Window::Cheats);
+            self.cheats = None;
+            return;
+        };
+        if self.cheats.as_ref().is_none_or(|c| c.rom() != rom) {
+            self.cheats = Some(CheatEditor::new(ctx, parts.instance, rom));
+        }
+        let Some(editor) = self.cheats.as_mut() else {
+            return;
+        };
+        match editor.show(ctx) {
+            Outcome::Open => {}
+            outcome => {
+                self.cheats_applied |= outcome == Outcome::Applied;
+                self.open.remove(&Window::Cheats);
+                self.cheats = None;
+            }
+        }
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, parts: &mut Parts<'_>) {
+        self.show_cheats(ctx, parts);
         for window in [
             Window::RomInfo,
             Window::Multiplayer,
@@ -114,6 +148,7 @@ impl Dialogs {
                 Window::Wifi => "Wifi settings",
                 Window::Paths => "Path settings",
                 Window::About => "About",
+                Window::Cheats => continue,
             };
             egui::Window::new(title)
                 .open(&mut open)
@@ -133,6 +168,7 @@ impl Dialogs {
                     Window::Wifi => self.wifi(ui, parts),
                     Window::Paths => paths(ui, parts),
                     Window::About => about(ui),
+                    Window::Cheats => {}
                 });
             if !open {
                 self.open.remove(&window);
@@ -316,6 +352,7 @@ fn input(ui: &mut egui::Ui, gamepads: &[String]) {
         ("Pause / resume", "Ctrl+P"),
         ("Reset", "Ctrl+R"),
         ("Frame step", "Ctrl+N"),
+        ("Next emulation speed", "Left stick press (gamepad)"),
         ("Quit", "Ctrl+Q"),
     ] {
         ui.horizontal(|ui| {

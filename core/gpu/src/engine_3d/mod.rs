@@ -44,5 +44,25 @@ impl Gpu {
             e.render_dirty,
         );
         e.render_dirty = false;
+        e.hires.capture(
+            &e.raster,
+            &e.render,
+            &e.polygon_ram[bank],
+            &e.render_polygons,
+            &e.vertex_ram[bank],
+        );
+    }
+
+    /// Sets the internal resolution of the display-only 3D copy (1 = off,
+    /// see [`raster::hires`]).
+    pub fn set_render_scale(&mut self, scale: usize) {
+        self.engine_3d.hires.set_scale(scale);
+    }
+
+    /// The 3D frame at the internal resolution, if one is set and 3D was
+    /// rendered (renders it now if the native frame changed).
+    pub fn hires_3d(&mut self) -> Option<&raster::Raster> {
+        let e = &mut self.engine_3d;
+        e.hires.render(&e.raster)
     }
 }
