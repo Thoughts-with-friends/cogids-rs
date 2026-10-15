@@ -1,0 +1,33 @@
+[package]
+name = "lunaris_ds_freya"
+description = "Freya frontend of the Lunaris DS emulator"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+version.workspace = true
+# freya 0.5 needs a newer compiler than the workspace minimum.
+rust-version = "1.99"
+
+[dependencies]
+# Prerelease: pinned exactly, later release candidates may change the API.
+freya = { version = "=0.5.0-rc.10", features = ["engine", "borderless", "titlebar"] }
+async-io = "2"
+futures-lite = "2"
+bytes = "1"
+rfd = "0.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = { workspace = true }
+
+ds_common = { workspace = true }
+ds_emu = { workspace = true, features = ["log"] }
+
+[dev-dependencies]
+freya-testing = { version = "=0.5.0-rc.10" }
+
+[lints]
+workspace = true

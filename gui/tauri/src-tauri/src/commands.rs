@@ -7,248 +7,27 @@
 //!                  savefile, Quit, Screen size, dialogs)
 //!  React screens --layout_screens(w, h)--> ds_common::view::place
 //! ```
-use crate::emu_thread::{EmuThread, Shared};
+use ds_common::Settings;
 use ds_common::cheats::{self, Cheat};
-use ds_common::menu::{Action, Menu, MenuState, menu_bar, remember};
+pub use ds_common::frontend::GuiConfig;
+use ds_common::frontend::{Frontend, file_name, lock, rom_paths};
+use ds_common::menu::{Action, Menu, MenuState, menu_bar};
 use ds_common::rom_info::RomInfo;
-use ds_common::view::{Placement, View, place};
-use ds_common::{AudioOutput, Instance, Settings, speed};
-use ds_emu::Emulator;
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use ds_common::view::{Placement, place};
+use serde::Serialize;
+use std::path::Path;
 use tauri::State;
 
-/// Why the Tauri GUI's multiplayer entries are disabled.
-const NO_MULTIPLAYER: &str =
-    "LAN play is only available in the egui GUI for now (Launch new instance works)";
-
-/// GUI state saved as `config.json` in the instance folder.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(default, rename_all = "camelCase")]
-pub struct GuiConfig {
-    pub rom_dir: PathBuf,
-    pub selected_rom: Option<PathBuf>,
-    /// View menu settings; flattened, so the old `scale` / `layout` keys are
-    /// its fields.
-    #[serde(flatten)]
-    pub view: View,
-    /// 0-100.
-    pub volume: u8,
-    pub limit_framerate: bool,
-    /// File > Open recent, newest first.
-    pub recent_roms: Vec<PathBuf>,
-}
-
-impl Default for GuiConfig {
-    fn default() -> Self {
-        Self {
-            rom_dir: PathBuf::new(),
-            selected_rom: None,
-            view: View::default(),
-            volume: 80,
-            limit_framerate: true,
-            recent_roms: Vec::new(),
-        }
-    }
-}
-
-pub struct AppState {
-    pub instance: Instance,
-    pub settings: Mutex<Settings>,
-    pub config: Mutex<GuiConfig>,
-    pub audio: AudioOutput,
-    pub shared: Arc<Shared>,
-    pub emu: Mutex<Option<EmuThread>>,
-    /// The running game's ROM.
-    pub rom: Mutex<Option<PathBuf>>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    )
-}
-
-impl AppState {
-    pub fn new(instance: Instance, settings: Settings) -> Self {
-        let config: GuiConfig = std::fs::read_to_string(instance.config_path())
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default();
-        let audio = AudioOutput::new(f32::from(config.volume.min(100)) / 100.0);
-        let shared = Arc::new(Shared::default());
-        shared.set_limit_framerate(config.limit_framerate);
-        Self::apply_view(&shared, &config.view);
-        Self {
-            instance,
-            settings: Mutex::new(settings),
-            config: Mutex::new(config),
-            audio,
-            shared,
-            emu: Mutex::new(None),
-            rom: Mutex::new(None),
-        }
-    }
-
-    /// Speed and internal resolution of `view` to the emulator thread.
-    fn apply_view(shared: &Shared, view: &View) {
-        shared.set_speed(view.speed);
-        shared.set_render(view.render_scale(), view.xbrz);
-    }
-
-    /// The running game's enabled cheats to the emulator thread.
-    fn load_cheats(&self) {
-        let Some(rom) = lock(&self.rom).clone() else {
-            return;
-        };
-        let list = cheats::load(&cheats::cheats_path(&self.instance, &rom));
-        let on = lock(&self.config).view.cheats_enabled;
-        self.shared.set_cheats(cheats::enabled_codes(&list, on));
-    }
-
-    fn save_config(&self, config: &GuiConfig) {
-        if let Ok(text) = serde_json::to_string_pretty(config)
-            && let Err(e) = std::fs::write(self.instance.config_path(), text)
-        {
-            log::error!("Failed to write config: {e}");
-        }
-    }
-
-    /// Stops the running emulator (its save is written on stop).
-    pub fn stop(&self) {
-        let thread = lock(&self.emu).take();
-        if let Some(thread) = thread {
-            thread.stop();
-        }
-        *lock(&self.rom) = None;
-        self.shared.set_paused(false);
-    }
-
-    /// Loads `rom` and runs it (stopping a previous game first so its save
-    /// is flushed before the new one is read).
-    fn start(&self, rom: &Path) -> Result<(), String> {
-        self.stop();
-
-        let mut emu = Emulator::new();
-        lock(&self.settings).apply(&mut emu);
-        emu.config.save_dir = Some(self.instance.saves_dir());
-        self.instance.import_legacy_save(rom);
-        emu.load_rom(rom).map_err(|e| {
-            log::error!("Failed to load ROM {}: {e:?}", rom.display());
-            format!("Cannot load {}: {e}", file_name(rom))
-        })?;
-        log::info!("Started {}", rom.display());
-
-        let thread = EmuThread::start(emu, Arc::clone(&self.shared), self.audio.clone());
-        *lock(&self.emu) = Some(thread);
-        *lock(&self.rom) = Some(rom.to_owned());
-        self.load_cheats();
-
-        let mut config = lock(&self.config);
-        remember(&mut config.recent_roms, rom);
-        config.selected_rom = Some(rom.to_owned());
-        self.save_config(&config);
-        drop(config);
-        Ok(())
-    }
-
-    /// Applies a menu action the backend can carry out.
-    fn apply(&self, action: Action) -> Result<(), String> {
-        let rom = lock(&self.rom).clone();
-        match action {
-            Action::OpenRomPath(path) => return self.start(&path),
-            Action::Eject | Action::Stop => self.stop(),
-            Action::Reset => {
-                if let Some(rom) = rom {
-                    return self.start(&rom);
-                }
-            }
-            Action::TogglePause => self.shared.set_paused(!self.shared.is_paused()),
-            Action::FrameStep => self.shared.frame_step(),
-            Action::OpenDirectory => {
-                ds_common::reveal(self.instance.root()).map_err(|e| e.to_string())?;
-            }
-            Action::LaunchInstance => ds_common::launch_instance().map_err(|e| e.to_string())?,
-            Action::ClearRecent
-            | Action::SetRotation(_)
-            | Action::SetGap(_)
-            | Action::SetLayout(_)
-            | Action::ToggleSwap
-            | Action::SetSizing(_)
-            | Action::ToggleIntegerScaling
-            | Action::ToggleFiltering
-            | Action::ToggleShowFps
-            | Action::ToggleLimitFramerate
-            | Action::SetSpeed(_)
-            | Action::CycleSpeed
-            | Action::SetRenderScale(_)
-            | Action::ToggleXbrz
-            | Action::ScreenSize(_) => {
-                let mut config = lock(&self.config);
-                let view = &mut config.view;
-                match action {
-                    Action::SetRotation(r) => view.rotation = r,
-                    Action::SetGap(g) => view.gap = g,
-                    Action::SetLayout(l) => view.layout = l,
-                    Action::ToggleSwap => view.swap ^= true,
-                    Action::SetSizing(s) => view.sizing = s,
-                    Action::ToggleIntegerScaling => view.integer_scaling ^= true,
-                    Action::ToggleFiltering => view.filtering ^= true,
-                    Action::ToggleShowFps => view.show_fps ^= true,
-                    Action::ScreenSize(n) => view.scale = f32::from(n),
-                    Action::ClearRecent => config.recent_roms.clear(),
-                    Action::ToggleLimitFramerate => {
-                        config.limit_framerate ^= true;
-                        self.shared.set_limit_framerate(config.limit_framerate);
-                    }
-                    Action::SetSpeed(p) => view.speed = speed::valid(p),
-                    Action::CycleSpeed => view.speed = speed::next(view.speed),
-                    Action::SetRenderScale(n) => view.render_scale = n,
-                    Action::ToggleXbrz => view.xbrz ^= true,
-                    _ => {}
-                }
-                Self::apply_view(&self.shared, &config.view);
-                self.save_config(&config);
-                drop(config);
-            }
-            Action::ToggleCheats => {
-                let mut config = lock(&self.config);
-                config.view.cheats_enabled ^= true;
-                self.save_config(&config);
-                drop(config);
-                self.load_cheats();
-            }
-            // Dialogs and the window are the frontend's.
-            Action::OpenRom | Action::ImportSavefile | Action::Quit | Action::Open(_) => {}
-        }
-        Ok(())
-    }
-}
+/// The Tauri-managed state ([`Frontend`], shared with the freya GUI).
+pub type AppState = Frontend;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-/// `.nds` files in `dir`, sorted by name.
-fn rom_paths(dir: &Path) -> Vec<PathBuf> {
-    let mut roms: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("nds")))
-                .collect()
-        })
-        .unwrap_or_default();
-    roms.sort();
-    roms
-}
+/// Why the Tauri GUI's multiplayer entries are disabled.
+const NO_MULTIPLAYER: &str =
+    "LAN play is only available in the egui GUI for now (Launch new instance works)";
 
 #[tauri::command]
 pub fn get_config(state: State<'_, AppState>) -> GuiConfig {
@@ -257,13 +36,7 @@ pub fn get_config(state: State<'_, AppState>) -> GuiConfig {
 
 #[tauri::command]
 pub fn set_config(state: State<'_, AppState>, config: GuiConfig) {
-    state
-        .audio
-        .set_volume(f32::from(config.volume.min(100)) / 100.0);
-    state.shared.set_limit_framerate(config.limit_framerate);
-    AppState::apply_view(&state.shared, &config.view);
-    state.save_config(&config);
-    *lock(&state.config) = config;
+    state.set_config(config);
 }
 
 /// `.nds` files in `dir`, sorted by name.
@@ -449,6 +222,7 @@ pub fn get_status(state: State<'_, AppState>) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn old_config_keeps_loading() {

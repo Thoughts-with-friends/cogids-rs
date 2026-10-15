@@ -81,6 +81,18 @@ cargo build -p lunaris_ds_egui --release
 cargo run -p lunaris_ds_egui --release
 ```
 
+### freya
+
+Borderless, translucent window ([freya](https://github.com/marc2332/freya) 0.5, needs Rust 1.99+).
+
+```bash
+cargo run -p lunaris_ds_freya --release
+
+# headless snapshots of every screen into <temp>/lunaris_freya_snapshots
+# (the game ones need the ROMs under D:/GAME/Emulator/DS/Roms)
+cargo test --release -p lunaris_ds_freya -- --ignored
+```
+
 ## Todo List
 
 - [x] **Phase 0 (100%)**: FreeBIOS Development

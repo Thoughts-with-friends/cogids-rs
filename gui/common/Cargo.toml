@@ -19,6 +19,7 @@ serde_json = "1"
 log = { workspace = true, features = ["alloc"] }
 
 ds_spu = { workspace = true }
+ds_mem_addr = { workspace = true }
 ds_emu = { workspace = true, features = ["log"] }
 
 [lints]

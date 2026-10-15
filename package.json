@@ -17,7 +17,8 @@
     "lint": "cargo clippy --workspace",
     "lint:fix-front": "npm --workspace gui/tauri run lint:fix",
     "lint:fix": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
-    "tauri": "tauri",
+    "tauri": "npm run build",
+    "freya": "cargo run --package lunaris_ds_freya --release",
     "test:front": "npm --workspace gui/tauri run test",
     "test:back": "cargo nextest run --workspace"
   },

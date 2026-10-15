@@ -15,6 +15,7 @@ members = [
   "core/*", #
   "gui/common",
   "gui/egui",
+  "gui/freya",
   "gui/net",
   "gui/tauri/src-tauri"
 ]

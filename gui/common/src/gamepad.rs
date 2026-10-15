@@ -99,6 +99,49 @@ impl Gamepads {
     }
 }
 
+impl Gamepads {
+    /// The DS buttons held on any gamepad as [`crate::emu_thread::key`]
+    /// bits (same mapping as [`Self::apply`]), for GUIs that run the
+    /// emulator on its own thread.
+    pub fn key_bits(&self) -> u32 {
+        use crate::emu_thread::key;
+        let Some(gilrs) = &self.gilrs else {
+            return 0;
+        };
+        let mut bits = 0;
+        for (_, pad) in gilrs.gamepads() {
+            let down = |b: Button| pad.is_pressed(b);
+            let x = pad.value(Axis::LeftStickX);
+            let y = pad.value(Axis::LeftStickY);
+            for (on, bit) in [
+                (down(Button::East), key::A),
+                (down(Button::South), key::B),
+                (down(Button::North), key::X),
+                (down(Button::West), key::Y),
+                (
+                    down(Button::LeftTrigger) || down(Button::LeftTrigger2),
+                    key::L,
+                ),
+                (
+                    down(Button::RightTrigger) || down(Button::RightTrigger2),
+                    key::R,
+                ),
+                (down(Button::Start), key::START),
+                (down(Button::Select), key::SELECT),
+                (down(Button::DPadUp) || y > STICK_THRESHOLD, key::UP),
+                (down(Button::DPadDown) || y < -STICK_THRESHOLD, key::DOWN),
+                (down(Button::DPadLeft) || x < -STICK_THRESHOLD, key::LEFT),
+                (down(Button::DPadRight) || x > STICK_THRESHOLD, key::RIGHT),
+            ] {
+                if on {
+                    bits |= bit;
+                }
+            }
+        }
+        bits
+    }
+}
+
 impl Default for Gamepads {
     fn default() -> Self {
         Self::new()

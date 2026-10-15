@@ -3,7 +3,7 @@
 //! The UI talks to it through [`Shared`]: it writes the pressed keys, the
 //! stylus position, the speed, the internal resolution and new cheat codes,
 //! and reads the latest frame (RGBA, both screens, possibly upscaled).
-use ds_common::{AudioOutput, speed};
+use crate::{AudioOutput, speed};
 use ds_emu::Emulator;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -105,6 +105,11 @@ impl Shared {
         drop(frame);
         self.frame_taken.store(true, Ordering::Release);
         Some((seq, width, rgba))
+    }
+
+    /// Where the stylus is held, if it is (DS pixels).
+    pub fn touch_pos(&self) -> Option<(i32, i32)> {
+        self.touch.lock().ok().and_then(|t| t.pos)
     }
 
     /// Emulation speed in percent (`speed::SPEEDS`).
@@ -334,7 +339,7 @@ mod tests {
 
     /// Runs a real ROM on the emulator thread for a moment and checks that
     /// frames come out at roughly the DS rate.
-    /// `LUNARIS_TEST_ROM=<path> cargo test -p lunaris -- --ignored`
+    /// `LUNARIS_TEST_ROM=<path> cargo test -p ds_common -- --ignored`
     #[test]
     #[ignore = "requires a ROM on disk"]
     fn thread_produces_frames() {
@@ -373,7 +378,7 @@ mod tests {
     }
 
     /// Pause stops the frames, a frame step makes exactly one.
-    /// `cargo test --release -p lunaris -- --ignored pause_and_step`
+    /// `cargo test --release -p ds_common -- --ignored pause_and_step`
     #[test]
     #[ignore = "requires a ROM on disk"]
     fn pause_and_step() {
@@ -403,7 +408,7 @@ mod tests {
     }
 
     /// 2x speed doubles the frame rate; 2x resolution doubles the frame
-    /// size. `cargo test --release -p lunaris -- --ignored speed_and_resolution`
+    /// size. `cargo test --release -p ds_common -- --ignored speed_and_resolution`
     #[test]
     #[ignore = "requires a ROM on disk"]
     fn speed_and_resolution() {

@@ -2,6 +2,8 @@
 //! folder and settings, audio output and gamepad input.
 pub mod audio;
 pub mod cheats;
+pub mod emu_thread;
+pub mod frontend;
 pub mod gamepad;
 pub mod instance;
 pub mod log;
