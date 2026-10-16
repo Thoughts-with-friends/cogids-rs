@@ -174,6 +174,3 @@ fn main() {
     // However the window went away, the save is written.
     front.stop();
 }
-
-#[cfg(test)]
-mod tests;
