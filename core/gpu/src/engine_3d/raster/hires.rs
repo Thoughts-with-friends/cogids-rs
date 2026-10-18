@@ -5,28 +5,35 @@
 //! display capture). When an internal resolution above 1x is chosen, the
 //! inputs of every natively rendered frame are copied, and the frontend asks
 //! for the scaled frame when it draws, so fast-forwarded frames that are
-//! never shown cost only that copy.
+//! never shown cost only that copy. The copy ([`Snapshot`], with its
+//! textures) is shared, so the scaled frame can also be rendered on another
+//! thread with its own [`Renderer`] (see `display::hires::HdFrame`).
 //!
 //! ```text
 //!  Gpu::render_3d_frame (line 215)
-//!     native Raster::render ---> capture(): render state, polygons, vertices
-//!                                          (only when the native frame changed)
+//!     native Raster::render ---> capture(): render state, polygons, vertices,
+//!                                          textures (only when the native
+//!                                          frame changed)
 //!  frontend draws a frame
-//!     Gpu::hires_3d() ---> render(): vertices at hires_position * scale,
+//!     Renderer::render(): vertices at hires_position * scale,
 //!                          polygon bounds recomputed, same rasterizer at
 //!                          scale x 256 x 192, textures from the native raster
 //!     display::hires composites it over the upscaled 2D picture
 //! ```
 use super::Raster;
 use crate::engine_3d::state::{Polygon, RenderState, Vertex};
+use std::sync::Arc;
 
 /// Inputs of one native frame.
 #[derive(Debug)]
-struct Snapshot {
+pub struct Snapshot {
     st: RenderState,
     polys: Vec<Polygon>,
     verts: Vec<Vertex>,
     order: Vec<usize>,
+    /// Texture image and palette VRAM the native frame used.
+    tex: Vec<u8>,
+    pal: Vec<u8>,
     /// Native raster generation these inputs produced.
     generation: u64,
 }
@@ -35,10 +42,9 @@ struct Snapshot {
 #[derive(Debug)]
 pub struct Hires {
     scale: usize,
-    snapshot: Option<Snapshot>,
-    raster: Option<Raster>,
-    /// Snapshot generation the scaled raster holds.
-    rendered: Option<u64>,
+    snapshot: Option<Arc<Snapshot>>,
+    /// Renders for `Gpu::screen_hd` (other threads bring their own).
+    pub(crate) renderer: Renderer,
 }
 
 impl Default for Hires {
@@ -46,8 +52,7 @@ impl Default for Hires {
         Self {
             scale: 1,
             snapshot: None,
-            raster: None,
-            rendered: None,
+            renderer: Renderer::default(),
         }
     }
 }
@@ -65,8 +70,7 @@ impl Hires {
             return;
         }
         self.scale = scale;
-        self.raster = None;
-        self.rendered = None;
+        self.renderer = Renderer::default();
         if scale == 1 {
             self.snapshot = None;
         }
@@ -99,20 +103,39 @@ impl Hires {
             .max()
             .map_or(0, |&v| v + 1)
             .min(verts.len());
-        self.snapshot = Some(Snapshot {
+        self.snapshot = Some(Arc::new(Snapshot {
             st: st.clone(),
             polys: polys.to_vec(),
             verts: verts[..vert_end].to_vec(),
             order: order.to_vec(),
+            tex: native.tex().to_vec(),
+            pal: native.pal().to_vec(),
             generation: native.generation(),
-        });
+        }));
     }
 
-    /// The scaled 3D frame (rendered now if the native frame changed since).
-    /// `None` at 1x or before the first 3D frame.
-    pub(crate) fn render(&mut self, native: &Raster) -> Option<&Raster> {
-        let snap = self.snapshot.as_ref()?;
-        let scale = self.scale;
+    /// The inputs of the last native frame (`None` at 1x or before the
+    /// first 3D frame).
+    pub fn snapshot(&self) -> Option<Arc<Snapshot>> {
+        self.snapshot.clone()
+    }
+}
+
+/// Renders [`Snapshot`]s at a scale, keeping the last result.
+#[derive(Debug, Default)]
+pub struct Renderer {
+    raster: Option<Raster>,
+    /// Snapshot generation the scaled raster holds.
+    rendered: Option<u64>,
+}
+
+impl Renderer {
+    /// `snap` rendered at `scale` (re-rendered only if it is a new frame).
+    pub fn render(&mut self, snap: &Snapshot, scale: usize) -> &Raster {
+        if self.raster.as_ref().is_some_and(|r| r.scale() != scale) {
+            self.raster = None;
+            self.rendered = None;
+        }
         if self.rendered != Some(snap.generation) {
             let s = scale as i32;
             let verts: Vec<Vertex> = snap
@@ -132,17 +155,10 @@ impl Hires {
                 .map(|p| scaled_bounds(p, &verts, s))
                 .collect();
             let raster = self.raster.get_or_insert_with(|| Raster::with_scale(scale));
-            raster.render_with(
-                &snap.st,
-                &polys,
-                &snap.order,
-                &verts,
-                native.tex(),
-                native.pal(),
-            );
+            raster.render_with(&snap.st, &polys, &snap.order, &verts, &snap.tex, &snap.pal);
             self.rendered = Some(snap.generation);
         }
-        self.raster.as_ref()
+        self.raster.get_or_insert_with(|| Raster::with_scale(scale))
     }
 }
 

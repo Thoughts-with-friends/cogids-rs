@@ -1851,6 +1851,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "ds_emu",
+ "ds_gpu",
  "ds_mem_addr",
  "ds_spu",
  "gilrs",
@@ -1897,6 +1898,7 @@ dependencies = [
  "ds_interrupt",
  "ds_mem_addr",
  "log",
+ "rayon",
  "xbrz-rs",
 ]
 
@@ -4122,6 +4124,7 @@ dependencies = [
  "bytemuck",
  "ds_common",
  "ds_emu",
+ "ds_gpu",
  "ds_mem_addr",
  "ds_net",
  "ds_net_gui",

@@ -28,6 +28,7 @@ rfd = "0.16"
 
 # workspace dependencies
 ds_emu = { workspace = true, features = ["log"] }
+ds_gpu = { workspace = true }
 ds_mem_addr = { workspace = true }
 ds_common = { workspace = true }
 ds_net = { workspace = true }

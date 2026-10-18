@@ -20,7 +20,7 @@ docs/icon.drawio.svg
 
 config.json
 
-core/examples
+*/examples/
 core/tests/
 core/system/tests/
 core/system/examples/

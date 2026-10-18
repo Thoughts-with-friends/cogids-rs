@@ -62,7 +62,9 @@ impl Gpu {
     /// The 3D frame at the internal resolution, if one is set and 3D was
     /// rendered (renders it now if the native frame changed).
     pub fn hires_3d(&mut self) -> Option<&raster::Raster> {
-        let e = &mut self.engine_3d;
-        e.hires.render(&e.raster)
+        let hires = &mut self.engine_3d.hires;
+        let snap = hires.snapshot()?;
+        let scale = hires.scale();
+        Some(hires.renderer.render(&snap, scale))
     }
 }

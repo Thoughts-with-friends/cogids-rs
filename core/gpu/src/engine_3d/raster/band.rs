@@ -47,9 +47,8 @@ pub(super) struct Band {
     pub(super) attr: Vec<u32>,
     pub(super) y0: usize,
     pub(super) y1: usize,
-    /// Row pitch and layer size of the full buffers.
+    /// Row pitch of the full buffers.
     pub(super) pitch: usize,
-    pub(super) full_layer: usize,
     /// Visible width (stencil row length).
     pub(super) width: usize,
     /// Size of one layer of this band.
@@ -60,20 +59,22 @@ pub(super) struct Band {
 }
 
 impl Band {
-    /// Copies rows `y0..y1` of both layers out of the frame buffers.
+    /// Takes rows `y0..y1`: layer 0 cleared for a new frame, layer 1
+    /// copied from the frame buffers (`*1`: this band's rows of layer 1).
+    #[expect(clippy::too_many_arguments, reason = "one call site")]
     pub(super) fn load(
         &mut self,
         d: Dims,
-        color: &[u32],
-        depth: &[i32],
-        attr: &[u32],
+        f: &Frame,
+        color1: &[u32],
+        depth1: &[i32],
+        attr1: &[u32],
         y0: usize,
         y1: usize,
     ) {
         self.y0 = y0;
         self.y1 = y1;
         self.pitch = d.pitch;
-        self.full_layer = d.layer;
         self.width = d.width;
         self.layer = (y1 - y0) * d.pitch;
         let n = self.layer * 2;
@@ -83,25 +84,48 @@ impl Band {
         self.stencil.clear();
         self.stencil.resize(d.width * 2, 0);
         self.prev_is_shadow_mask = false;
+        let l = self.layer;
+        super::clear_rows(
+            f,
+            d,
+            &mut self.color[..l],
+            &mut self.depth[..l],
+            &mut self.attr[..l],
+            y0,
+        );
+        self.color[l..].copy_from_slice(color1);
+        self.depth[l..].copy_from_slice(depth1);
+        self.attr[l..].copy_from_slice(attr1);
+    }
+
+    /// Writes the band's rows back (`[layer 0, layer 1]` rows of the frame
+    /// buffers).
+    pub(super) fn store(
+        &self,
+        color: &mut [&mut [u32]; 2],
+        depth: &mut [&mut [i32]; 2],
+        attr: &mut [&mut [u32]; 2],
+    ) {
+        let l = self.layer;
         for k in 0..2 {
-            let src = k * d.layer + d.pitch + y0 * d.pitch;
-            let dst = k * self.layer;
-            let len = self.layer;
-            self.color[dst..dst + len].copy_from_slice(&color[src..src + len]);
-            self.depth[dst..dst + len].copy_from_slice(&depth[src..src + len]);
-            self.attr[dst..dst + len].copy_from_slice(&attr[src..src + len]);
+            color[k].copy_from_slice(&self.color[k * l..(k + 1) * l]);
+            depth[k].copy_from_slice(&self.depth[k * l..(k + 1) * l]);
+            attr[k].copy_from_slice(&self.attr[k * l..(k + 1) * l]);
         }
     }
 
-    /// Writes the band's rows back.
-    pub(super) fn store(&self, color: &mut [u32], depth: &mut [i32], attr: &mut [u32]) {
-        for k in 0..2 {
-            let dst = k * self.full_layer + self.pitch + self.y0 * self.pitch;
-            let src = k * self.layer;
-            let len = self.layer;
-            color[dst..dst + len].copy_from_slice(&self.color[src..src + len]);
-            depth[dst..dst + len].copy_from_slice(&self.depth[src..src + len]);
-            attr[dst..dst + len].copy_from_slice(&self.attr[src..src + len]);
+    /// Edge marking, fog and anti-aliasing of the band's lines that have
+    /// both neighbours in the band (the others are finished by the raster).
+    pub(super) fn final_pass(&mut self, st: &RenderState) {
+        let mut px = super::Pixels {
+            color: &mut self.color,
+            depth: &self.depth,
+            attr: &mut self.attr,
+            pitch: self.pitch,
+            layer: self.layer,
+        };
+        for y in self.y0 + 1..self.y1.saturating_sub(1) {
+            px.final_pass(st, (y - self.y0) * self.pitch + 1, self.width);
         }
     }
 

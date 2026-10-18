@@ -26,6 +26,7 @@ mod texture;
 use crate::engine_3d::state::{Polygon, RenderState, Vertex};
 use crate::vram::{Region, Vram};
 use band::Band;
+use rayon::prelude::*;
 
 const TEX_SIZE: usize = 512 * 1024;
 const PAL_SIZE: usize = 128 * 1024;
@@ -165,11 +166,13 @@ impl Raster {
     ///   1. snapshot texture image / palette VRAM; changed?
     ///   2. nothing changed -> keep the last frame
     ///   3. render_frame():
-    ///        clear_buffers()      clear color/depth/attr (or rear plane)
-    ///        bands in parallel    Band::render: polygon edges (slope.rs),
-    ///                             spans, texturing (texture.rs), depth
-    ///                             test, blending (pixel.rs)
-    ///        scanline_final_pass  edge marking, fog, anti-aliasing
+    ///        bands in parallel    clear_rows() (color/depth/attr or the
+    ///                             rear plane), Band::render: polygon
+    ///                             edges (slope.rs), spans, texturing
+    ///                             (texture.rs), depth test, blending
+    ///                             (pixel.rs), then the band's final pass
+    ///        border lines         edge marking, fog, anti-aliasing of the
+    ///                             first / last line of each band
     ///   |
     ///   v
     /// to:   line(y) is read by render_bg_3d() while composing BG0
@@ -246,89 +249,64 @@ impl Raster {
         self.render_frame(&f);
     }
 
-    /// Clears the buffers, renders the bands in parallel, then the final pass.
+    /// Clears the border rows, renders the bands in parallel, then the
+    /// final pass of the lines next to band borders.
     fn render_frame(&mut self, f: &Frame) {
-        self.clear_buffers(f);
+        let d = self.dims;
+        self.clear_borders(f.st);
 
         // Scanline bands rendered in parallel. Each band owns a copy of its
-        // rows; polygon edges are set up directly at the band's first line.
-        let threads = std::thread::available_parallelism()
-            .map_or(1, std::num::NonZero::get)
-            .clamp(1, 8);
-        let d = self.dims;
-        let lines = d.height.div_ceil(threads);
-        self.bands.resize_with(threads, Band::default);
-        for (i, band) in self.bands.iter_mut().enumerate() {
-            let y0 = (i * lines).min(d.height);
-            let y1 = ((i + 1) * lines).min(d.height);
-            band.load(d, &self.color, &self.depth, &self.attr, y0, y1);
-        }
-        std::thread::scope(|scope| {
-            let (first, rest) = self
-                .bands
-                .split_first_mut()
-                .unwrap_or_else(|| unreachable!());
-            for band in rest {
-                scope.spawn(|| band.render(f));
-            }
-            first.render(f);
-        });
-        for band in &self.bands {
-            band.store(&mut self.color, &mut self.depth, &mut self.attr);
-        }
+        // rows (cleared, rendered and finished there, then written back to
+        // its own part of the buffers); polygon edges are set up directly at
+        // the band's first line. Scaled rasters use more bands than threads
+        // so that bands crowded with polygons do not hold the others up.
+        let threads = rayon::current_num_threads();
+        let count = if d.scale == 1 {
+            threads.clamp(1, 8)
+        } else {
+            (threads * 2).clamp(1, 32)
+        };
+        let lines = d.height.div_ceil(count);
+        self.bands.resize_with(count, Band::default);
+        let rows: Vec<_> = band_rows(&mut self.color, d, count, lines)
+            .into_iter()
+            .zip(band_rows(&mut self.depth, d, count, lines))
+            .zip(band_rows(&mut self.attr, d, count, lines))
+            .collect();
+        self.bands.par_iter_mut().zip(rows).enumerate().for_each(
+            |(i, (band, ((mut color, mut depth), mut attr)))| {
+                let y0 = (i * lines).min(d.height);
+                let y1 = ((i + 1) * lines).min(d.height);
+                band.load(d, f, color[1], depth[1], attr[1], y0, y1);
+                band.render(f);
+                band.final_pass(f.st);
+                band.store(&mut color, &mut depth, &mut attr);
+            },
+        );
 
-        // Edge marking, fog and anti-aliasing only read the finished frame.
-        for y in 0..d.height {
-            self.scanline_final_pass(f.st, y);
+        // Edge marking reads the lines above and below: the first and last
+        // line of each band are finished here, with all bands in place.
+        for i in 0..self.bands.len() {
+            let (y0, y1) = (self.bands[i].y0, self.bands[i].y1);
+            if y1 > y0 {
+                self.scanline_final_pass(f.st, y0);
+                if y1 - 1 != y0 {
+                    self.scanline_final_pass(f.st, y1 - 1);
+                }
+            }
         }
     }
 
-    /// Clears color/depth/attributes to CLEAR_COLOR/DEPTH, or loads the rear-plane bitmap.
-    fn clear_buffers(&mut self, f: &Frame) {
-        let st = f.st;
+    /// Clears the rows above and below the visible area of layer 0 (read by
+    /// edge marking); the visible rows are cleared by the bands.
+    fn clear_borders(&mut self, st: &RenderState) {
         let d = self.dims;
         let clear_z = ((st.clear_attr2 & 0x7FFF) * 0x200 + 0x1FF) as i32;
         let poly_id = st.clear_attr1 & 0x3F00_0000;
-
-        // Borders (outside the visible area) only matter for edge marking.
-        self.color[..d.layer].fill(0);
-        self.depth[..d.layer].fill(clear_z);
-        self.attr[..d.layer].fill(poly_id);
-
-        if st.disp_cnt & (1 << 14) != 0 {
-            // Rear-plane bitmap from texture slots 2 (color) and 3 (depth),
-            // one DS pixel per scale x scale block.
-            let yoff0 = ((st.clear_attr2 >> 24) & 0xFF) as u8;
-            let xoff0 = ((st.clear_attr2 >> 16) & 0xFF) as u8;
-            for y in 0..d.height {
-                let yoff = yoff0.wrapping_add((y / d.scale) as u8);
-                for x in 0..d.width {
-                    let xoff = xoff0.wrapping_add((x / d.scale) as u8);
-                    let ofs = (u32::from(yoff) << 9) + (u32::from(xoff) << 1);
-                    let rd = |a: u32| {
-                        let a = a as usize;
-                        u32::from(u16::from_le_bytes([f.tex[a], f.tex[a + 1]]))
-                    };
-                    let val2 = rd(0x40000 + ofs);
-                    let val3 = rd(0x60000 + ofs);
-                    let (r, g, b) = expand6(val2);
-                    let a = if val2 & 0x8000 != 0 { 0x1F00_0000 } else { 0 };
-                    let addr = d.first + y * d.pitch + x;
-                    self.color[addr] = r | (g << 8) | (b << 16) | a;
-                    self.depth[addr] = ((val3 & 0x7FFF) * 0x200 + 0x1FF) as i32;
-                    self.attr[addr] = poly_id | (val3 & 0x8000);
-                }
-            }
-        } else {
-            let (r, g, b) = expand6(st.clear_attr1);
-            let a = (st.clear_attr1 >> 16) & 0x1F;
-            let color = r | (g << 8) | (b << 16) | (a << 24);
-            let attr = poly_id | (st.clear_attr1 & 0x8000);
-            for y in 0..d.height {
-                let start = d.first + y * d.pitch;
-                self.color[start..start + d.width].fill(color);
-                self.attr[start..start + d.width].fill(attr);
-            }
+        for range in [0..d.pitch, d.pitch * (d.height + 1)..d.layer] {
+            self.color[range.clone()].fill(0);
+            self.depth[range.clone()].fill(clear_z);
+            self.attr[range].fill(poly_id);
         }
     }
 
@@ -353,6 +331,111 @@ impl Raster {
         r | (g << 8) | (b << 16) | (dst_alpha << 24)
     }
 
+    /// Edge marking, fog and anti-aliasing of one finished line.
+    fn scanline_final_pass(&mut self, st: &RenderState, y: usize) {
+        let d = self.dims;
+        let mut px = Pixels {
+            color: &mut self.color,
+            depth: &self.depth,
+            attr: &mut self.attr,
+            pitch: d.pitch,
+            layer: d.layer,
+        };
+        px.final_pass(st, d.first + y * d.pitch, d.width);
+    }
+}
+
+/// Clears whole rows (`pitch` long, from the left border) of layer 0,
+/// starting at line `y0`: to CLEAR_COLOR/DEPTH, or the rear-plane bitmap.
+fn clear_rows(
+    f: &Frame,
+    d: Dims,
+    color: &mut [u32],
+    depth: &mut [i32],
+    attr: &mut [u32],
+    y0: usize,
+) {
+    let st = f.st;
+    let clear_z = ((st.clear_attr2 & 0x7FFF) * 0x200 + 0x1FF) as i32;
+    let poly_id = st.clear_attr1 & 0x3F00_0000;
+
+    // Borders (outside the visible area) only matter for edge marking.
+    color.fill(0);
+    depth.fill(clear_z);
+    attr.fill(poly_id);
+    let rows = color.len() / d.pitch;
+
+    if st.disp_cnt & (1 << 14) != 0 {
+        // Rear-plane bitmap from texture slots 2 (color) and 3 (depth),
+        // one DS pixel per scale x scale block.
+        let yoff0 = ((st.clear_attr2 >> 24) & 0xFF) as u8;
+        let xoff0 = ((st.clear_attr2 >> 16) & 0xFF) as u8;
+        for row in 0..rows {
+            let yoff = yoff0.wrapping_add(((y0 + row) / d.scale) as u8);
+            for x in 0..d.width {
+                let xoff = xoff0.wrapping_add((x / d.scale) as u8);
+                let ofs = (u32::from(yoff) << 9) + (u32::from(xoff) << 1);
+                let rd = |a: u32| {
+                    let a = a as usize;
+                    u32::from(u16::from_le_bytes([f.tex[a], f.tex[a + 1]]))
+                };
+                let val2 = rd(0x40000 + ofs);
+                let val3 = rd(0x60000 + ofs);
+                let (r, g, b) = expand6(val2);
+                let a = if val2 & 0x8000 != 0 { 0x1F00_0000 } else { 0 };
+                let addr = row * d.pitch + 1 + x;
+                color[addr] = r | (g << 8) | (b << 16) | a;
+                depth[addr] = ((val3 & 0x7FFF) * 0x200 + 0x1FF) as i32;
+                attr[addr] = poly_id | (val3 & 0x8000);
+            }
+        }
+    } else {
+        let (r, g, b) = expand6(st.clear_attr1);
+        let a = (st.clear_attr1 >> 16) & 0x1F;
+        let clear_color = r | (g << 8) | (b << 16) | (a << 24);
+        let clear_attr = poly_id | (st.clear_attr1 & 0x8000);
+        for row in 0..rows {
+            let start = row * d.pitch + 1;
+            color[start..start + d.width].fill(clear_color);
+            attr[start..start + d.width].fill(clear_attr);
+        }
+    }
+}
+
+/// Lines `i * lines ..` of both layers of `buf` (whole rows, borders
+/// included), one pair of slices per band.
+fn band_rows<T>(buf: &mut [T], d: Dims, count: usize, lines: usize) -> Vec<[&mut [T]; 2]> {
+    fn split<T>(layer: &mut [T], d: Dims, count: usize, lines: usize) -> Vec<&mut [T]> {
+        let mut rest = &mut layer[d.pitch..d.pitch * (d.height + 1)];
+        (0..count)
+            .map(|i| {
+                let rows = lines.min(d.height.saturating_sub(i * lines));
+                let (band, tail) = std::mem::take(&mut rest).split_at_mut(rows * d.pitch);
+                rest = tail;
+                band
+            })
+            .collect()
+    }
+    let (l0, l1) = buf.split_at_mut(d.layer);
+    split(l0, d, count, lines)
+        .into_iter()
+        .zip(split(l1, d, count, lines))
+        .map(|(a, b)| [a, b])
+        .collect()
+}
+
+/// Buffers of whole rows (both layers) that the final pass works on: the
+/// full frame or one band's copy.
+struct Pixels<'a> {
+    color: &'a mut [u32],
+    pub(super) depth: &'a [i32],
+    pub(super) attr: &'a mut [u32],
+    pub(super) pitch: usize,
+    /// Offset of the second layer.
+    pub(super) layer: usize,
+}
+
+impl Pixels<'_> {
     /// Fog density for the pixel at `addr` from its depth and the fog table.
     fn fog_density(&self, st: &RenderState, addr: usize) -> u32 {
         let z = self.depth[addr] as u32;
@@ -389,13 +472,13 @@ impl Raster {
         self.color[addr] = r | (g << 8) | (b << 16) | (a << 24);
     }
 
-    /// Edge marking, fog and anti-aliasing of one finished line.
-    fn scanline_final_pass(&mut self, st: &RenderState, y: usize) {
-        let d = self.dims;
-        let row = d.first + y * d.pitch;
+    /// Edge marking, fog and anti-aliasing of the `width` pixels from
+    /// `row` (the lines above and below must be in the buffers too).
+    pub(super) fn final_pass(&mut self, st: &RenderState, row: usize, width: usize) {
+        let (pitch, layer) = (self.pitch, self.layer);
 
         if st.disp_cnt & (1 << 5) != 0 {
-            for x in 0..d.width {
+            for x in 0..width {
                 let addr = row + x;
                 let attr = self.attr[addr];
                 if attr & 0xF == 0 {
@@ -406,8 +489,8 @@ impl Raster {
                 let differs = |a: usize| id != self.attr[a] >> 24 && z < self.depth[a];
                 if differs(addr - 1)
                     || differs(addr + 1)
-                    || differs(addr - d.pitch)
-                    || differs(addr + d.pitch)
+                    || differs(addr - pitch)
+                    || differs(addr + pitch)
                 {
                     let (r, g, b) = expand6(u32::from(st.edge_table[(id >> 3) as usize & 7]));
                     self.color[addr] = r | (g << 8) | (b << 16) | (self.color[addr] & 0xFF00_0000);
@@ -417,18 +500,18 @@ impl Raster {
         }
 
         if st.disp_cnt & (1 << 7) != 0 {
-            for x in 0..d.width {
+            for x in 0..width {
                 let addr = row + x;
                 let attr = self.attr[addr];
                 self.apply_fog(st, addr);
                 if attr & 0xF != 0 {
-                    self.apply_fog(st, addr + d.layer);
+                    self.apply_fog(st, addr + layer);
                 }
             }
         }
 
         if st.disp_cnt & (1 << 4) != 0 {
-            for x in 0..d.width {
+            for x in 0..width {
                 let addr = row + x;
                 let attr = self.attr[addr];
                 if attr & 0xF == 0 {
@@ -438,7 +521,7 @@ impl Raster {
                 if coverage == 0x1F {
                     continue;
                 }
-                let bot = self.color[addr + d.layer];
+                let bot = self.color[addr + layer];
                 if coverage == 0 {
                     self.color[addr] = bot;
                     continue;

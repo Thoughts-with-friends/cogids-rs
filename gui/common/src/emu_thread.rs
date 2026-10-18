@@ -3,10 +3,25 @@
 //! The UI talks to it through [`Shared`]: it writes the pressed keys, the
 //! stylus position, the speed, the internal resolution and new cheat codes,
 //! and reads the latest frame (RGBA, both screens, possibly upscaled).
+//!
+//! ```text
+//!  emulator thread: emu.run() -> audio -> frame
+//!     1x:  both screens -> RGBA -> Shared::frame
+//!     2x+: Gpu::hd_frame() (copy of the frame's inputs) --try--> HD worker
+//!  HD worker thread: HdFrame::screen() x2 (xBRZ / hi-res 3D) -> RGBA
+//!                    -> Shared::frame
+//! ```
+//!
+//! Upscaling runs beside emulation so a high internal resolution does not
+//! slow the game (and its sound) down: a frame that arrives while the
+//! worker is still busy is simply not shown.
 use crate::{AudioOutput, speed};
 use ds_emu::Emulator;
+use ds_gpu::display::hires::HdFrame;
+use ds_gpu::engine_3d::raster::hires::Renderer;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -231,34 +246,94 @@ fn apply_touch(emu: &mut Emulator, shared: &Shared) {
 
 /// 0xAARRGGBB -> RGBA bytes appended to `dst`.
 fn push_rgba(src: &[u32], dst: &mut Vec<u8>) {
-    dst.extend(
-        src.iter()
-            .flat_map(|px| [(px >> 16) as u8, (px >> 8) as u8, *px as u8, 0xFF]),
-    );
+    let start = dst.len();
+    dst.resize(start + src.len() * 4, 0xFF);
+    for (d, &px) in dst[start..].as_chunks_mut::<4>().0.iter_mut().zip(src) {
+        *d = [(px >> 16) as u8, (px >> 8) as u8, px as u8, 0xFF];
+    }
 }
 
-/// Both screens at the current internal resolution into `shared.frame`.
-fn publish_frame(emu: &mut Emulator, shared: &Shared, pixels: &mut Vec<u32>, rgba: &mut Vec<u8>) {
-    let render = shared.render.load(Ordering::Relaxed);
-    let scale = (render & 0xFF).clamp(1, 4) as usize;
-    let xbrz = render & 0x100 != 0 && scale >= 2;
-    rgba.clear();
-    let mut width = PIXELS_PER_LINE;
-    for upper in [true, false] {
-        width = emu.gpu.screen_hd(upper, scale, xbrz, pixels);
-        push_rgba(pixels, rgba);
-    }
+/// Makes `rgba` (both screens, `width` pixels wide) the latest frame.
+fn store_frame(shared: &Shared, rgba: &mut Vec<u8>, width: usize) {
     if let Ok(mut frame) = shared.frame.lock() {
         std::mem::swap(&mut *frame, rgba);
         shared.frame_width.store(width as u32, Ordering::Release);
     }
 }
 
-fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
+/// An upscaling job: the frame, the internal resolution and xBRZ.
+type HdJob = (HdFrame, usize, bool);
+
+/// Publishes the frame the emulator just finished: at 1x right here, above
+/// it through the HD worker. `wait` (single steps) waits for a busy worker
+/// instead of dropping the frame.
+fn publish_frame(
+    emu: &mut Emulator,
+    shared: &Shared,
+    hd: &SyncSender<HdJob>,
+    wait: bool,
+    pixels: &mut Vec<u32>,
+    rgba: &mut Vec<u8>,
+) {
+    let render = shared.render.load(Ordering::Relaxed);
+    let scale = (render & 0xFF).clamp(1, 4) as usize;
+    let xbrz = render & 0x100 != 0 && scale >= 2;
+    if scale > 1 {
+        let job = (emu.gpu.hd_frame(), scale, xbrz);
+        if wait {
+            let _ = hd.send(job);
+        } else if let Err(TrySendError::Disconnected(_)) = hd.try_send(job) {
+            log::error!("HD worker stopped");
+        }
+        return;
+    }
+    rgba.clear();
+    for upper in [true, false] {
+        emu.gpu.screen_hd(upper, 1, false, pixels);
+        push_rgba(pixels, rgba);
+    }
+    store_frame(shared, rgba, PIXELS_PER_LINE);
+}
+
+/// The HD worker: upscales the frames it is handed until the emulator
+/// thread hangs up.
+fn hd_worker(shared: &Shared, jobs: &Receiver<HdJob>) {
+    let mut renderer = Renderer::default();
+    let (mut pixels, mut rgba) = (Vec::new(), Vec::new());
+    for (frame, scale, xbrz) in jobs {
+        rgba.clear();
+        let mut width = PIXELS_PER_LINE;
+        for upper in [true, false] {
+            width = frame.screen(&mut renderer, upper, scale, xbrz, &mut pixels);
+            push_rgba(&pixels, &mut rgba);
+        }
+        store_frame(shared, &mut rgba, width);
+    }
+}
+
+fn run(emu: Emulator, shared: &Shared, audio: &AudioOutput) {
+    std::thread::scope(|s| {
+        // Rendezvous: a job is only taken while the worker is idle.
+        let (hd, jobs) = std::sync::mpsc::sync_channel(0);
+        let worker = std::thread::Builder::new()
+            .name("hd-render".to_owned())
+            .spawn_scoped(s, move || hd_worker(shared, &jobs));
+        if let Err(e) = worker {
+            log::error!("Failed to start the HD worker: {e}");
+        }
+        emulate(emu, shared, audio, &hd);
+    });
+}
+
+fn emulate(mut emu: Emulator, shared: &Shared, audio: &AudioOutput, hd: &SyncSender<HdJob>) {
     let mut pixels = vec![0_u32; PIXELS_PER_LINE * SCANLINES];
     let mut rgba = Vec::new();
     let mut samples = Vec::with_capacity(4096);
     let mut stretched = Vec::with_capacity(4096);
+    let mut stretch = speed::TimeStretch::default();
+    let mut meter = speed::SpeedMeter::new(speed::NORMAL);
+    // Speed the meter was started for (0: start again).
+    let mut metered = 0;
 
     let mut next = Instant::now();
     shared.frame_taken.store(true, Ordering::Release);
@@ -268,11 +343,17 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
         if shared.paused.load(Ordering::Relaxed) && !shared.step.swap(false, Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(10));
             next = Instant::now();
+            metered = 0;
             continue;
         }
         let unlimited = shared.unlimited.load(Ordering::Relaxed);
         let percent = speed::valid(shared.speed.load(Ordering::Relaxed) as u16);
         let frame_time = Duration::from_secs_f64(1.0 / speed::fps(percent));
+        if percent != metered {
+            meter.reset(percent);
+            stretch.reset();
+            metered = percent;
+        }
         let render = shared.render.load(Ordering::Relaxed);
         emu.gpu
             .set_render_scale((render & 0xFF).clamp(1, 4) as usize);
@@ -286,12 +367,22 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
         apply_touch(&mut emu, shared);
 
         emu.run();
-
         emu.take_audio_samples(&mut samples);
-        // Fast-forwarding or stepping would only garble the sound.
+
+        // Fast-forwarding or stepping would only garble the sound. Other
+        // speeds keep the pitch and follow the speed really reached.
+        let measured = meter.tick(1);
         if !unlimited && !shared.paused.load(Ordering::Relaxed) {
-            speed::stretch_audio(&samples, percent, &mut stretched);
-            audio.push(&stretched);
+            if percent == speed::NORMAL {
+                audio.push(&samples);
+            } else {
+                stretch.process(
+                    &samples,
+                    speed::stretch_ratio(percent, measured),
+                    &mut stretched,
+                );
+                audio.push(&stretched);
+            }
         }
         samples.clear();
 
@@ -299,11 +390,9 @@ fn run(mut emu: Emulator, shared: &Shared, audio: &AudioOutput) {
         // replaced (upscaling frames nobody sees is wasted work); at 1x and
         // for single steps every frame is published.
         let taken = shared.frame_taken.swap(false, Ordering::AcqRel);
-        if taken
-            || (percent <= speed::NORMAL && !unlimited)
-            || shared.paused.load(Ordering::Relaxed)
-        {
-            publish_frame(&mut emu, shared, &mut pixels, &mut rgba);
+        let paused = shared.paused.load(Ordering::Relaxed);
+        if taken || (percent <= speed::NORMAL && !unlimited) || paused {
+            publish_frame(&mut emu, shared, hd, paused, &mut pixels, &mut rgba);
         }
         shared.frame_seq.fetch_add(1, Ordering::Release);
 

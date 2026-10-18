@@ -18,6 +18,7 @@ mod cheat_dialog;
 mod config;
 mod dialogs;
 mod font;
+mod hd;
 mod input;
 mod menu;
 mod multiplayer;
@@ -100,6 +101,8 @@ struct App {
     /// Frames ran since the textures were last filled, and the (scale,
     /// xBRZ) they were made with.
     new_frame: bool,
+    /// Upscales frames at an internal resolution of 2x+ (started on first use).
+    hd: Option<hd::HdWorker>,
     texture_mode: (usize, bool, bool),
 
     /// Emulated frames per second, measured.
@@ -123,6 +126,10 @@ struct App {
     audio_buf: Vec<i16>,
     /// `audio_buf` fitted to the emulation speed.
     audio_out: Vec<i16>,
+    stretch: speed::TimeStretch,
+    meter: speed::SpeedMeter,
+    /// Speed the meter was started for (0: start again).
+    metered: u16,
     /// Emulated frames owed to real time (frame pacing).
     frame_debt: f64,
     last_tick: Instant,
@@ -153,6 +160,7 @@ impl App {
             pixels: vec![0; PIXELS_PER_LINE * SCANLINES],
             new_frame: false,
             texture_mode: (1, false, false),
+            hd: None,
             fps: 0.0,
             fps_frames: 0,
             fps_start: Instant::now(),
@@ -161,6 +169,9 @@ impl App {
             audio: AudioOutput::new(f32::from(volume) / 100.0),
             audio_buf: Vec::with_capacity(4096),
             audio_out: Vec::with_capacity(4096),
+            stretch: speed::TimeStretch::default(),
+            meter: speed::SpeedMeter::new(speed::NORMAL),
+            metered: 0,
             frame_debt: 0.0,
             last_tick: Instant::now(),
             instance,
@@ -465,6 +476,7 @@ impl App {
         let percent = self.speed();
         let frames = if self.paused {
             self.frame_debt = 0.0;
+            self.metered = 0;
             u32::from(std::mem::take(&mut self.step))
         } else if self.multiplayer.busy() {
             0 // joining a LAN session: the backend is the worker's
@@ -491,6 +503,12 @@ impl App {
             .set_render_scale(usize::from(self.config.view.render_scale()));
         let start = Instant::now();
         let mut ran = 0;
+        if percent != self.metered {
+            self.meter.reset(percent);
+            self.stretch.reset();
+            self.metered = percent;
+        }
+        let ratio = speed::stretch_ratio(percent, self.meter.speed());
         while ran < frames {
             input::apply_keyboard(ctx, emu);
             self.gamepads.apply(emu);
@@ -500,8 +518,14 @@ impl App {
 
             emu.take_audio_samples(&mut self.audio_buf);
             if self.config.limit_framerate && !self.paused {
-                speed::stretch_audio(&self.audio_buf, percent, &mut self.audio_out);
-                self.audio.push(&self.audio_out);
+                // Other speeds keep the pitch (see `speed`).
+                if percent == speed::NORMAL {
+                    self.audio.push(&self.audio_buf);
+                } else {
+                    self.stretch
+                        .process(&self.audio_buf, ratio, &mut self.audio_out);
+                    self.audio.push(&self.audio_out);
+                }
             }
             self.audio_buf.clear();
             if (frames == u32::MAX || percent > speed::NORMAL)
@@ -514,6 +538,7 @@ impl App {
             }
         }
 
+        self.meter.tick(ran);
         self.new_frame |= ran > 0;
         self.fps_frames += ran;
         let window = self.fps_start.elapsed();
@@ -549,23 +574,44 @@ impl App {
             self.config.view.filtering,
         );
         let stale = self.new_frame || mode != self.texture_mode || self.textures[0].is_none();
-        if let Some(emu) = self.emu.as_mut().filter(|_| stale) {
+        let upload = |textures: &mut [Option<egui::TextureHandle>; 2],
+                      index: usize,
+                      width: usize,
+                      pixels: &mut Vec<u32>| {
+            let height = pixels.len() / width;
+            swap_red_blue(pixels);
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [width, height],
+                bytemuck::cast_slice(pixels),
+            );
+            match &mut textures[index] {
+                Some(tex) => tex.set(image, options),
+                slot @ None => {
+                    let name = ["upper", "lower"][index];
+                    *slot = Some(ctx.load_texture(name, image, options));
+                }
+            }
+        };
+        if scale >= 2 {
+            // Upscaled on the HD worker (see `hd`); shown when it is done.
+            let hd = self.hd.get_or_insert_with(|| hd::HdWorker::new(ctx));
+            if let Some(emu) = self.emu.as_mut().filter(|_| stale)
+                && hd.submit(emu.gpu.hd_frame(), mode.0, mode.1, self.paused)
+            {
+                self.new_frame = false;
+                self.texture_mode = mode;
+            }
+            if let Some(mut image) = hd.take() {
+                for (index, pixels) in image.screens.iter_mut().enumerate() {
+                    upload(&mut self.textures, index, image.width, pixels);
+                }
+            }
+        } else if let Some(emu) = self.emu.as_mut().filter(|_| stale) {
             self.new_frame = false;
             self.texture_mode = mode;
-            for (index, name) in ["upper", "lower"].into_iter().enumerate() {
-                let width = emu
-                    .gpu
-                    .screen_hd(index == 0, mode.0, mode.1, &mut self.pixels);
-                let height = self.pixels.len() / width;
-                swap_red_blue(&mut self.pixels);
-                let image = egui::ColorImage::from_rgba_unmultiplied(
-                    [width, height],
-                    bytemuck::cast_slice(&self.pixels),
-                );
-                match &mut self.textures[index] {
-                    Some(tex) => tex.set(image, options),
-                    slot @ None => *slot = Some(ctx.load_texture(name, image, options)),
-                }
+            for index in 0..2 {
+                let width = emu.gpu.screen_hd(index == 0, 1, false, &mut self.pixels);
+                upload(&mut self.textures, index, width, &mut self.pixels);
             }
         }
 
