@@ -129,3 +129,28 @@ ARM9 で `coprocessor_id == 15` かつ opcode1 = 0 のときだけ CP15 を操�
 
 - `core/cpu/src/coprocessor_15.rs` のユニットテスト：`dtcm_window_and_readback`（DTCM の位置とミラー、読み戻し）、`halt_and_control`（WFI と制御レジスタ）
 - トレース：`Config::trace_cpus`（bit 0 = ARM9、bit 1 = ARM7）で、実行命令を stderr に `<9|7><A|T> addr opcode cpsr r0..r14` の形式で出力します。`Config::trace_trigger = (mask, pc)` で、指定 PC に達したときからトレースを始められます。
+
+## 3.9 ROM 実行テスト（機能 ID `cpu`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature cpu` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `no_terminate` | 命令の誤りで異常終了しない |
+| `screen_changes` | 先へ進む |
+| （自動）baseline | 命令の実装を変えた後も、同じ入力で同じ画面になる |
+
+```toml
+[[case]]
+feature = "cpu"
+name = "cpu-example"
+rom = "my_game"            # [roms] の別名
+frames = 1200
+press = ["start:600:120"]
+snapshots = [900]
+[case.expect]
+no_terminate = true
+screen_changes = true
+```
+
+CPU の変更はどのゲームにも影響するので、全ケースの baseline が一致するかで確かめるのが確実です。

@@ -192,3 +192,25 @@ egui は 1 回の描画で複数フレームを実行するので、実行した
 - `gui/common/src/speed.rs`：440 Hz の正弦波を 1 フレームずつ入れて 2 倍・0.5 倍で変換し、音程が ±3% 以内、出力長が入力 ÷ 比率になることを確認（`faster_keeps_the_pitch`、`slower_keeps_the_pitch`）。ほかに `cycles_through_all_speeds`、`labels`、`ratio_follows_the_real_speed`
 - `gui/common/src/audio.rs` の `bursty_producer_does_not_underrun`：揺れのあるフレーム単位の投入とデバイスレートでの消費で、起動後にアンダーランが起きないこと
 - 実行：`cargo test --release -p ds_gpu -p ds_common`
+
+## 12.10 ROM 実行テスト（機能 ID `sound`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature sound` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `audio` | SPU から音が出る |
+| `audio_rate` | 出力レートが約 32728.5 Hz（1 フレーム約 547 サンプル） |
+
+```toml
+[[case]]
+feature = "sound"
+name = "sound-example"
+rom = "my_game"            # [roms] の別名
+frames = 900
+[case.expect]
+audio = true
+audio_rate = true
+```
+
+テンポ変換とホスト出力（12.5、12.6）は GUI 側の処理なので、このツールでは扱いません（`ds_common` のユニットテストで確かめます）。

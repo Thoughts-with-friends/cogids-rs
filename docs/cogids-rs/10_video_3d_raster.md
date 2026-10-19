@@ -153,3 +153,28 @@ final pass が隣の行から読むのは、ポリゴン ID（attr の上位ビ�
 
 - 回帰：headless 例で等倍・2 倍・3 倍 xBRZ・4 倍 xBRZ の PNG を出力し、変更前のビルドと md5 で比較します（[19 章](19_testing.md)）。
 - 速度：`HDBENCH` で 3D 描画と高解像度処理の時間を計測します。
+
+## 10.9 ROM 実行テスト（機能 ID `raster3d`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature raster3d` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `polygons_min` | 3D が描かれている |
+| `not_blank` | 描画結果が画面に出ている |
+| snapshots + baseline | ラスタの変更で画素が 1 つも変わらない（並列化の確認） |
+
+```toml
+[[case]]
+feature = "raster3d"
+name = "raster3d-example"
+rom = "my_game"            # [roms] の別名
+frames = 2200
+press = ["start:2000:60"]
+snapshots = [2150]
+[case.expect]
+polygons_min = 100
+not_blank = ["upper", "lower"]
+```
+
+`--jobs` を変えて 2 回実行し、baseline が一致すれば、バンド並列がスレッド数に依存しないことも確かめられます。

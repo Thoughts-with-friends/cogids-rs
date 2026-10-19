@@ -135,7 +135,7 @@ id 1 = HBlank 終了（次のライン）
 
 ## 2.7 設計判断と理由
 
-- **ARM9 の経過時間は「両方を半分にしてから引く」。** `cycles_ran() >> 1` だと、1 サイクルの命令が 0 に丸められます。GXSTAT やタイマを待つ短いループで 3D とタイマが永遠に進まなくなりました（ポケモンレンジャーで GXSTAT の busy 待ちが終わらなかった）。
+- **ARM9 の経過時間は「両方を半分にしてから引く」。** `cycles_ran() >> 1` だと、1 サイクルの命令が 0 に丸められます。GXSTAT やタイマを待つ短いループで 3D とタイマが永遠に進まなくなりました（ある市販ソフトで GXSTAT の busy 待ちが終わらなかった）。
 - **次のライン処理は「前回の予定時刻」から数える。** 現在時刻から数えると処理の遅れが積み重なり、1 フレームが約 2% 長く（572k サイクル）なっていました。その結果 SPU が実時間 1 秒あたり約 33.4 kHz の音を作り、音声キューがあふれていました。
 - **`get_timestamp()` は `system_timestamp` を返す。** CorgiDS の構造体に残る未使用の `total_timestamp` を返していたときは、HALT 中の CPU が自分の時刻を巻き戻してしまい、最初の HALT や DMA 待ちで実行ループが止まりました。
 - **`next_event_time` は毎回計算し直す。** 以前は小さくなる方向にしか更新されず、最初のイベントの後はずっと過去の値のままでした。
@@ -150,3 +150,27 @@ id 1 = HBlank 終了（次のライン）
 
 - 実 ROM でのフレームレート確認：`ds_common` の `#[ignore]` テスト（`emu_thread.rs`、約 60 fps で出ること）
 - headless 例の `HDBENCH`（毎フレームの `run()` の時間）（[19 章](19_testing.md)）
+
+## 2.10 ROM 実行テスト（機能 ID `scheduler`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature scheduler` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `audio_rate` | 1 フレームの長さが 560190 サイクルからずれていない（ずれると 1 フレームあたりのサンプル数が変わる。2.7 の 2% の不具合の再発検知） |
+| `screen_changes` | 時間待ちのループで止まらない |
+| `max_ms_per_frame` | `--jobs 1` で実行したときの速度の目安（参考値） |
+
+```toml
+[[case]]
+feature = "scheduler"
+name = "scheduler-example"
+rom = "my_game"            # [roms] の別名
+frames = 900
+[case.expect]
+audio_rate = true
+screen_changes = true
+max_ms_per_frame = 8.0
+```
+
+GXSTAT やタイマを短いループで待つゲームを入れると、ARM9 の時間の丸め（2.7）の回帰を検知できます。

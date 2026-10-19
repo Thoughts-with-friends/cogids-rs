@@ -144,3 +144,25 @@ CorgiDS は 2 本の FIFO キューを両 CPU の FIFO オブジェクトから�
 
 - IPC：`core/peripherals/src/ipc.rs` のユニットテスト `sync_output_reaches_remote_input`、`sync_irq_requires_remote_enable`、`fifo_crosses_cpus`。実 ROM の起動も確認になります（SDK の PXI が動かないと起動しません）。
 - 除算器：`start_division` の境界値（ゼロ除算・オーバーフロー）は GBATEK の表と照合します。
+
+## 6.9 ROM 実行テスト（機能 ID `interrupt`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature interrupt` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `no_terminate` | IPC / 割り込みの取りこぼしで止まらない |
+| `screen_changes` | VBlank・タイマ割り込みで進む |
+
+```toml
+[[case]]
+feature = "interrupt"
+name = "interrupt-example"
+rom = "my_game"            # [roms] の別名
+frames = 600
+[case.expect]
+no_terminate = true
+screen_changes = true
+```
+
+起動時に ARM7 と大量に IPC をやり取りする市販ソフト（SDK の PXI）が、ここでは最もよい検査になります。

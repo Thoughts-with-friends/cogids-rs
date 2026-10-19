@@ -141,5 +141,30 @@ dma_event.processing = false、ch = dma_event.id
 
 ## 7.8 関連テスト
 
-- GX FIFO DMA の流れは、ハートゴールドのオープニング（3D のディスプレイリストを DMA で送る）で確認します（[19 章](19_testing.md)）。
+- GX FIFO DMA の流れは、3D のオープニングを持つソフト（3D のディスプレイリストを DMA で送る）で確認します（[19 章](19_testing.md)）。
 - ログ：`log` 機能を有効にすると、ターゲット `dma` に起動・完了（転送元・転送先・FIFO の段数・IF9）が出ます。
+
+## 7.9 ROM 実行テスト（機能 ID `dma`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature dma` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `polygons_min` | GX FIFO DMA でディスプレイリストが届き、3D が描かれる |
+| `no_terminate` | カード DMA・DMA 完了割り込みの待ちで止まらない |
+| （自動）baseline | HBlank DMA を使う演出の画面が変わらない |
+
+```toml
+[[case]]
+feature = "dma"
+name = "dma-example"
+rom = "my_game"            # [roms] の別名
+frames = 2200
+press = ["start:2000:60"]
+snapshots = [2150]
+[case.expect]
+polygons_min = 100
+no_terminate = true
+```
+
+VBlank DMA（7.7、未実装）を直したときは、それを使うゲームのケースを足して baseline を取り直してください。

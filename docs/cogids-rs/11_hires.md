@@ -116,7 +116,7 @@ screen(renderer, upper, scale, xbrz, out)
 
 ## 11.7 計測結果（参考）
 
-ハートゴールドのタイトル画面、4 倍 + xBRZ、16 スレッド環境、両画面の拡大時間（300 フレーム平均）：変更前 23.9 ms → 変更後 11.8 ms。主な改善点は、3D ラスタの消去・コピー・final pass のバンド内並列化、バンド数の増加、3D 合成の行並列化、xBRZ のバンド数 4→8、RGBA 変換の単純化、HD 処理の別スレッド化です。
+3D のタイトル画面（約 620 ポリゴン）、4 倍 + xBRZ、16 スレッド環境、両画面の拡大時間（300 フレーム平均）：変更前 23.9 ms → 変更後 11.8 ms。主な改善点は、3D ラスタの消去・コピー・final pass のバンド内並列化、バンド数の増加、3D 合成の行並列化、xBRZ のバンド数 4→8、RGBA 変換の単純化、HD 処理の別スレッド化です。
 
 ## 11.8 制約・未実装
 
@@ -128,3 +128,29 @@ screen(renderer, upper, scale, xbrz, out)
 
 - `core/gpu/src/display/hires.rs` のユニットテスト：`nearest_scales_rows_and_columns`、`xbrz_keeps_flat_areas`、`xbrz_bands_match_a_whole_image_pass`（バンド分割が全体処理と一致）、`shading_matches_native_rules`（`shade_3d` が等倍の規則と一致）
 - headless 例：等倍の画像が変更前とビット一致すること、2 倍・3 倍 xBRZ・4 倍 xBRZ の画像の確認、`HDBENCH=<倍率>[:x]` による時間計測（[19 章](19_testing.md)）
+
+## 11.10 ROM 実行テスト（機能 ID `hires`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature hires` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| hd / xbrz | 指定した倍率の画面を作り、`_hdN.png` に出力する |
+| `polygons_min` | 高解像度 3D の元になる 3D がある |
+| （自動）baseline | 等倍の画面が変わらない（11.6 の「表示専用」の確認）と、高解像度の画面の回帰 |
+
+```toml
+[[case]]
+feature = "hires"
+name = "hires-example"
+rom = "my_game"            # [roms] の別名
+frames = 2200
+press = ["start:2000:60"]
+snapshots = [2150]
+hd = 3
+xbrz = true
+[case.expect]
+polygons_min = 100
+```
+
+等倍の baseline は `hd` を付けたケースでも記録されます。高解像度の変更で等倍のハッシュが変わったら、ハードウェア側に影響が出ています。

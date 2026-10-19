@@ -165,5 +165,30 @@ GUI のキー割り当て（全 GUI 共通）：矢印 = 十字キー、X = A、
 
 ## 14.10 関連テスト
 
-- ハートゴールドのセーブ選択画面でタッチが効くこと（較正のパッチ、TSC、IPC の確認）
+- タッチでセーブを選ぶソフトのセーブ選択画面でタッチが効くこと（較正のパッチ、TSC、IPC の確認）
 - headless 例の `TOUCH=x:y:start:every[:end]` と `PRESS=key:start:every[:end]` による操作（[19 章](19_testing.md)）
+
+## 14.11 ROM 実行テスト（機能 ID `input`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature input` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| press / touch | キーとタッチを台本どおりに入れる |
+| `screen_changes` | 入力で画面が進む |
+| （自動）baseline | RTC を固定しているので、時計を表示する画面も再現できる |
+
+```toml
+[[case]]
+feature = "input"
+name = "input-example"
+rom = "my_game"            # [roms] の別名
+frames = 900
+press = ["a:300:30"]
+touch = ["128:96:600:0"]
+snapshots = [700]
+[case.expect]
+screen_changes = true
+```
+
+タッチの較正（14.5.4）は、タッチで選ぶメニューのあるゲームで、タッチ後の画面を baseline に取ると確かめられます。

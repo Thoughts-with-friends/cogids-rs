@@ -1,0 +1,41 @@
+{
+  // ROM 実行テスト（docs/cogids-rs/20_rom_tests.md）。
+  // コマンドパレット > "Tasks: Run Task" から選ぶと、ターミナルパネルで実行されます（エディタは使えるまま）。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "rom_test: 自分の ROM（全ケース）",
+      "type": "shell",
+      "command": "cargo run --release -p ds_rom_test",
+      "problemMatcher": []
+    },
+    {
+      "label": "rom_test: 自分の ROM（機能を選ぶ）",
+      "type": "shell",
+      "command": "cargo run --release -p ds_rom_test -- --feature ${input:feature}",
+      "problemMatcher": []
+    },
+    {
+      "label": "rom_test: 基準を更新（自分の ROM）",
+      "type": "shell",
+      "command": "cargo run --release -p ds_rom_test -- --update-baseline",
+      "problemMatcher": []
+    },
+    {
+      "label": "rom_test: ROM を 1 本指定",
+      "type": "shell",
+      "command": "cargo run --release -p ds_rom_test -- --rom \"${input:rom}\" --feature ${input:feature} --frames ${input:frames} --expect no_terminate",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "feature",
+      "type": "pickString",
+      "description": "機能 ID",
+      "options": ["boot", "scheduler", "cpu", "bios", "memory", "interrupt", "dma", "video2d", "geometry3d", "raster3d", "hires", "sound", "cartridge", "input", "wifi", "cheats"]
+    },
+    { "id": "rom", "type": "promptString", "description": "ROM のパス（Git には残りません）" },
+    { "id": "frames", "type": "promptString", "description": "フレーム数", "default": "600" }
+  ]
+}

@@ -145,7 +145,7 @@ draw_scanline_for_engine(engine)
 ## 8.6 設計判断と理由
 
 - **両エンジンを毎ライン描く。** 以前は `if engine_upper { .. } else if engine_lower { .. }` の分岐で、1 ラインに 1 エンジンしか描いていませんでした。先に有効だったエンジンが常に勝ち、もう一方の画面はずっと初期色のままでした。CorgiDS の `GPU::draw_scanline()` と同じく、各エンジンは自分の POWCNT1 ビットだけで判定します。
-- **VRAMCNT は 16 ビット書き込みでも 2 つのバイトレジスタとして扱う。** 星のカービィ ウルトラスーパーデラックスは `0x04000240` と `0x04000242` をハーフワードで書きます。これを捨てていたため、VRAM が全く割り当てられませんでした（`arm9_write_halfword`）。
+- **VRAMCNT は 16 ビット書き込みでも 2 つのバイトレジスタとして扱う。** あるソフトは `0x04000240` と `0x04000242` をハーフワードで書きます。これを捨てていたため、VRAM が全く割り当てられませんでした（`arm9_write_halfword`）。
 - **重なったバンクは OR / 全書き込み。** 実機の挙動で、一部のゲームはバンクを重ねて割り当てます。
 - **DISPCAPCNT bit 31 はハードが下ろす。** 部分書き込みの前に影コピーを GPU の値で更新します（[5 章](05_memory_bus.md) 5.7）。
 
@@ -157,4 +157,26 @@ draw_scanline_for_engine(engine)
 
 ## 8.8 関連テスト
 
-- headless 例で、ハートゴールドのタイトルとスタフィー4のステージ紹介を PNG に出力し、変更前のビルドと md5 で比較します（[19 章](19_testing.md)）。
+- headless 例で、3D のタイトル画面と 3D のステージ紹介を PNG に出力し、変更前のビルドと md5 で比較します（[19 章](19_testing.md)）。
+
+## 8.9 ROM 実行テスト（機能 ID `video2d`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature video2d` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `not_blank` | 両エンジンが描かれている（8.6 の「片方だけ描かれる」不具合の再発検知） |
+| snapshots + baseline | BG・OBJ・ウィンドウ・合成の画面が変わらない |
+
+```toml
+[[case]]
+feature = "video2d"
+name = "video2d-example"
+rom = "my_game"            # [roms] の別名
+frames = 900
+snapshots = [300, 600]
+[case.expect]
+not_blank = ["upper", "lower"]
+```
+
+2D の変更は、見た目の確認に `local/results/run-*/ケース名/*.png` を、回帰の確認に baseline を使います。

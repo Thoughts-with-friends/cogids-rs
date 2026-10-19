@@ -107,3 +107,25 @@ run_cheat(code)
 
 - `core/system/src/emulator/cheats.rs`：`parses_pairs`（文字列の解析）、`data_ops`（D4 の演算）、`runs_codes_on_main_ram`（ARM7 のバス経由のメイン RAM で、書き込み、偽の IF、ループ、ブロックコピー）
 - `gui/common/src/cheats.rs`：`only_enabled_valid_codes_run`、`round_trips_through_a_file`
+
+## 16.10 ROM 実行テスト（機能 ID `cheats`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature cheats` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `cheats` | コードを毎フレーム実行する |
+| `ram` | 書き込まれた値を確かめる |
+
+```toml
+[[case]]
+feature = "cheats"
+name = "cheats-example"
+rom = "my_game"            # [roms] の別名
+frames = 60
+cheats = ["02300000 12345678"]
+[case.expect]
+ram = ["0x02300000=0x12345678"]
+```
+
+ゲーム用のコードを試すときは、コードの効果が出る RAM のアドレスを `ram` に書きます。

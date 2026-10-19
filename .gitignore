@@ -24,3 +24,10 @@ config.json
 core/tests/
 core/system/tests/
 core/system/examples/
+
+# Local ROM test config and results (ROM names/paths are private)
+docs/cogids-rs/local/
+# ROM images in any case/extension (never commit ROMs, including public homebrew)
+*.[nN][dD][sS]
+*.[sS][rR][lL]
+*.[dD][sS][iI]

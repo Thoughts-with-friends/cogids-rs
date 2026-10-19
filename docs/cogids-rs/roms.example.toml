@@ -1,0 +1,85 @@
+# ROM 実行テストの設定のひな形（Git 管理）
+#
+# このファイルをコピーして docs/cogids-rs/local/roms.toml を作り、
+# 自分の ROM のパスとケースを書いてください。docs/cogids-rs/local/ は
+# .gitignore で除外されているので、ROM の名前やパス、結果の画像は Git に残りません。
+#
+#   cargo run --release -p ds_rom_test -- --list
+#   cargo run --release -p ds_rom_test                 （全ケース）
+#   cargo run --release -p ds_rom_test -- --feature hires,sound
+#   cargo run --release -p ds_rom_test -- --update-baseline
+#   cargo run --release -p ds_rom_test -- --rom D:/path/to/game.nds --feature boot --expect no_terminate
+#
+# 詳細は docs/cogids-rs/20_rom_tests.md を参照してください。
+
+[settings]
+results = "results"            # この設定ファイルからの相対パス
+jobs = 2                       # 同時に動かすケース数
+fixed_time = [2026, 1, 1, 12, 0, 0]   # RTC を固定して結果を再現可能にする
+
+[roms]
+# 別名 = "ROM のパス"（ここに書くのは local/roms.toml だけ）
+game_3d = "D:/path/to/your_3d_game.nds"
+game_2d = "D:/path/to/your_2d_game.nds"
+
+[[case]]
+feature = "boot"
+name = "boot-2d"
+rom = "game_2d"
+frames = 600
+memo = "起動してタイトルが出る"
+[case.expect]
+not_blank = ["upper"]
+screen_changes = true
+no_terminate = true
+# pixel = ["lower:0:0=0xF80000"]       # 最後のフレームの画素（画面:X:Y=色）
+# ram = ["0x04000130:16=0x03FF"]       # ARM9 から見た値（幅 8 / 16 / 32）
+
+[[case]]
+feature = "raster3d"
+name = "title-3d"
+rom = "game_3d"
+frames = 2300
+press = ["start:2000:60"]      # キー:開始フレーム:間隔[:終了]（6 フレーム押す）
+snapshots = [2200]
+[case.expect]
+polygons_min = 1
+not_blank = ["upper", "lower"]
+
+[[case]]
+feature = "hires"
+name = "title-3d-hd3x"
+rom = "game_3d"
+frames = 2300
+press = ["start:2000:60"]
+hd = 3
+xbrz = true
+[case.expect]
+polygons_min = 1
+
+[[case]]
+feature = "sound"
+name = "sound-2d"
+rom = "game_2d"
+frames = 900
+[case.expect]
+audio = true
+audio_rate = true
+
+[[case]]
+feature = "cartridge"
+name = "save-2d"
+rom = "game_2d"
+frames = 300
+save_from = "D:/path/to/your_2d_game.sav"   # コピーして使う（元のファイルは書き換えない）
+[case.expect]
+save_written = true
+
+[[case]]
+feature = "cheats"
+name = "cheat-write"
+rom = "game_2d"
+frames = 120
+cheats = ["02300000 12345678"]   # 0x02300000 に毎フレーム書き込む
+[case.expect]
+ram = ["0x02300000=0x12345678"]

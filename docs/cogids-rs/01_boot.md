@@ -195,3 +195,27 @@ power_on()
 
 - `ds_common` の `#[ignore]` テスト（実 ROM が必要）：環境変数 `LUNARIS_TEST_ROM` に ROM のパスを入れて `cargo test -p ds_common -- --ignored` を実行し、起動してフレームが出ることを確認します。
 - headless 例（`core/system/examples/headless.rs`、git 管理外）で起動と描画を確認します（[19 章](19_testing.md)）。
+
+## 1.10 ROM 実行テスト（機能 ID `boot`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature boot` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `not_blank` | 起動後に画面が出る（ホームブリューは片方の画面だけのこともあるので、どちらを確かめるか指定する） |
+| `screen_changes` | タイトルや演出まで進む |
+| `no_terminate` | ダイレクトブートの値（ヘッダのコピー範囲、チップ ID、MAC）の誤りで `OS_Terminate` に入らない |
+
+```toml
+[[case]]
+feature = "boot"
+name = "boot-example"
+rom = "my_game"            # [roms] の別名
+frames = 600
+[case.expect]
+not_blank = ["upper"]
+screen_changes = true
+no_terminate = true
+```
+
+ホームブリュー（小さく速い）と、起動処理の厳しい市販ソフトを 1 本ずつ入れると、ダイレクトブートの回帰に気づきやすくなります。

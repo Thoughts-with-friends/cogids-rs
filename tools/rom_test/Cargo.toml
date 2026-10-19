@@ -1,0 +1,27 @@
+[package]
+name = "ds_rom_test"
+description = "Runs the per-feature ROM test cases listed in a local, git-ignored config"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[[bin]]
+name = "rom_test"
+path = "src/main.rs"
+
+[dependencies]
+ds_emu = { workspace = true }
+image = { version = "0.25.9", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8.23"
+
+[lints]
+workspace = true

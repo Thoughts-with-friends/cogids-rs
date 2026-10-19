@@ -31,6 +31,7 @@
 | 17  | [17_frontend_common.md](17_frontend_common.md)         | フロントエンド共通部品                             | `ds_common`                                      |
 | 18  | [18_gui.md](18_gui.md)                                 | 各 GUI（egui / freya / Tauri）                     | `lunaris_ds_egui`, `lunaris_ds_freya`, `lunaris` |
 | 19  | [19_testing.md](19_testing.md)                         | テストと検証手順                                   | 全体                                             |
+| 20  | [20_rom_tests.md](20_rom_tests.md) | 手元の ROM による機能別の実行テスト | `ds_rom_test`（`tools/rom_test`） |
 
 ---
 
@@ -48,6 +49,7 @@
 8. **設計判断と理由** — 実際に起きた不具合と、現在の実装になった理由
 9. **制約・未実装**
 10. **関連テスト**
+11. **ROM 実行テスト** — 自分の ROM でその機能を確かめるときの機能 ID・チェック・設定例（[20 章](20_rom_tests.md)）
 
 「8. 設計判断と理由」は、変更時に同じ不具合を再発させないための記録です。実装を変える前に必ず確認してください。
 
@@ -88,3 +90,22 @@
 - melonDS：3D ラスタライザ、Wi-Fi、チート、DMA・GXFIFO の割り込み条件などの移植元です。各章で `GPU3D_Soft.cpp`、`Wifi.cpp`、`AREngine.cpp` のように元のファイル名と関数名を併記します。
 - CorgiDS：エミュレータ全体の骨格の移植元です。ソース先頭の `//! emulator.hpp` などのコメントは、CorgiDS の対応ファイルを表します。
 - 各ソースファイルの先頭コメント（`//!`）と関数コメント（`///`）：この文書の元情報です。食い違いがあれば、コードを正とします。
+
+---
+
+## 手元の ROM での実行テスト
+
+各章の「ROM 実行テスト」の節に、その機能を自分の ROM で確かめる方法があります。ROM のパスとケースは `docs/cogids-rs/local/roms.toml` に書きます。`docs/cogids-rs/local/` は `.gitignore` で除外しているので、ROM の名前・パス・結果の画像は Git に残りません。ひな形は [roms.example.toml](roms.example.toml) です。
+
+ROM は、設定ファイルに書くか、引数で 1 本指定します。
+
+```text
+cp docs/cogids-rs/roms.example.toml docs/cogids-rs/local/roms.toml   # 自分の ROM を書く
+cargo run --release -p ds_rom_test -- --list
+cargo run --release -p ds_rom_test -- --feature raster3d,hires
+cargo run --release -p ds_rom_test -- --rom ROM のパス --feature boot --expect no_terminate
+# 結果：docs/cogids-rs/local/results/latest.md
+```
+
+VS Code では、コマンドパレットの **Tasks: Run Task** → `rom_test: …` からも実行できます（[20 章](20_rom_tests.md) 20.3）。
+

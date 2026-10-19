@@ -168,3 +168,7 @@ update()
 - freya：`gui/freya/examples/min.rs` と、ヘッドレスの PNG スナップショット
 - Tauri：React のテスト（`DsMenuBar.test.tsx`、`EmulatorView.test.tsx`、`CheatDialog.test.tsx`、`emulator.test.ts`）、実 ROM を使う Rust のテスト
 - 3 つの GUI の `config.json` の往復テスト
+
+## 18.7 ROM 実行テスト
+
+GUI の操作はこのツールの対象外です。18.6 のテストと、配布用の実行ファイルでの手動確認を使います。（[20 章](20_rom_tests.md)）

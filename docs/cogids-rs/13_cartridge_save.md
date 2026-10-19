@@ -80,7 +80,7 @@ ROM 読み込みの全体の流れは [1 章](01_boot.md) を参照してくだ�
 | `path` | `.sav` のパス |
 | `pos`, `cmd`, `addr` | チップ選択中のバイト番号（0 = コマンド）、コマンド、アドレス |
 | `status` | ステータスレジスタ（bit 1 = `STATUS_WEL` 書き込み許可ラッチ） |
-| `ir`, `ir_pos`, `ir_cmd` | 赤外線トランシーバの有無と状態（ポケモン HG/SS、B/W、B2/W2、歩数計付きカード） |
+| `ir`, `ir_pos`, `ir_cmd` | 赤外線トランシーバの有無と状態（赤外線通信・歩数計付きのカード） |
 | `dirty` | 前回の書き出しから変わったか |
 | `idle_frames` | `dirty` のまま書き込みがなかったフレーム数 |
 
@@ -167,7 +167,7 @@ set_auxspidata(byte)
 
 ## 13.8 設計判断と理由
 
-- **ROMCTRL の busy は、最後のワードが読まれるまで下ろさない。** 用意できただけで下ろすと、「word ready を見て、次に busy を見る」ポーリングループが最後のワードを取りこぼします。後期のゲーム（例：ポケモン＋ノブナガの野望）のコピー対策はこれを検出します（melonDS `NDSCartSlot::ReadROMData`）。
+- **ROMCTRL の busy は、最後のワードが読まれるまで下ろさない。** 用意できただけで下ろすと、「word ready を見て、次に busy を見る」ポーリングループが最後のワードを取りこぼします。後期のゲームのコピー対策はこれを検出します（melonDS `NDSCartSlot::ReadROMData`）。
 - **B7 はチップサイズで折り返し、先頭 32 KiB を読ませない。** コピー対策のコードは、チップサイズを超えたアドレス（例：256 MiB カードで `0x10001000`）を読み、期待どおりのデータでなければ終了します。
 - **`.sav` は 30 フレーム書き込みが止まってから書く。** 複数ページのセーブを 1 回の書き出しにまとめます。
 - **一時ファイルに書いてからリネームする。** 書き出し中に止まっても、途中で切れたセーブが残りません。
@@ -181,6 +181,30 @@ set_auxspidata(byte)
 
 ## 13.10 関連テスト
 
-- 実 ROM：ポケモン＋ノブナガの野望（コピー対策の B7・ROMCTRL）、ハートゴールド（赤外線付きセーブ）でセーブと起動を確認します。
+- 実 ROM：コピー対策のある後期の市販ソフト（B7・ROMCTRL）、赤外線付きカードのソフトでセーブと起動を確認します。
 - ログ：ターゲット `card` に、コマンドバイトと長さが出ます。
 - **実ファイルで試すときは、セーブを別フォルダに分けてください**（インスタンスフォルダの `saves/`、または `Config::save_dir`）。
+
+## 13.11 ROM 実行テスト（機能 ID `cartridge`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature cartridge` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `save_from` | 実セーブをコピーして起動する（元のファイルは書き換えない） |
+| `save_written` | セーブチップの判定と `.sav` の書き出しが動く |
+| `no_terminate` | B7 読み出し・ROMCTRL の busy・MAC のコピー対策を通る（13.8） |
+
+```toml
+[[case]]
+feature = "cartridge"
+name = "cartridge-example"
+rom = "my_game"            # [roms] の別名
+frames = 600
+save_from = "D:/path/to/game.sav"
+[case.expect]
+save_written = true
+no_terminate = true
+```
+
+セーブを書かせるには、`press` でゲーム内のセーブ操作まで進めるケースを作ります。書いたセーブはケースのフォルダに残るので、中身を比べられます。

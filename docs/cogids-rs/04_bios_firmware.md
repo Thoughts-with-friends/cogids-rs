@@ -87,7 +87,7 @@ to:   インタプリタに戻り、SWI の次の命令から続ける
 
 - **IntrWait の近似。** 実 BIOS は共有 RAM のフラグで「新しく発生した」割り込みを待ちます。HLE では IE と IME を有効にして HALT し、通常の割り込み経路で CPU を起こします。VBlank で同期するゲームにはこれで足ります。
 - **ARM7 の CpuSet は BIOS 領域を書き換えない。** 転送元と転送先がともに `0x4000` 未満なら何もしません（実機の保護に合わせる）。
-- **MAC アドレスをゼロにしない。** SDK は起動時に MAC を `0x027FFCF4` へコピーします（`OS_GetMacAddress`）。後期のゲーム（例：ポケモン＋ノブナガの野望）のコピー対策は、MAC がゼロならエミュレータと判断して `OS_Terminate` を呼びます。
+- **MAC アドレスをゼロにしない。** SDK は起動時に MAC を `0x027FFCF4` へコピーします（`OS_GetMacAddress`）。後期のゲームのコピー対策は、MAC がゼロならエミュレータと判断して `OS_Terminate` を呼びます。
 - **GetCRC16 はファームのユーザー設定と同じ CRC。** ゲームはこれで設定ブロックを検証します。
 
 ## 4.7 制約・未実装
@@ -100,3 +100,27 @@ to:   インタプリタに戻り、SWI の次の命令から続ける
 
 - ファームの CRC：`core/peripherals/src/spi/firmware.rs` の `verify_crc` を読み込み時に使います（[14 章](14_spi_rtc_input.md)）。
 - 内蔵ファームの書き出し例：`std::fs::write("firmware.bin", ds_bios::firmware::FIRMWARE_DS)`（`firmware.rs` の doc 例）。
+
+## 4.9 ROM 実行テスト（機能 ID `bios`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature bios` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `no_terminate` | `IntrWait` / `VBlankIntrWait` の近似で止まらない |
+| `screen_changes` | VBlank 同期で毎フレーム進む |
+| `audio` | サウンドドライバ（`GetPitchTable` などの表）が動いて音が出る |
+
+```toml
+[[case]]
+feature = "bios"
+name = "bios-example"
+rom = "my_game"            # [roms] の別名
+frames = 900
+[case.expect]
+no_terminate = true
+screen_changes = true
+audio = true
+```
+
+MAC がゼロでないこと（4.6）は、コピー対策のあるゲームの `no_terminate` で間接的に確かめられます。

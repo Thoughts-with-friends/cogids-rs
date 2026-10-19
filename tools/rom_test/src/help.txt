@@ -1,0 +1,19 @@
+rom_test: runs per-feature ROM test cases (docs/cogids-rs/20_rom_tests.md).
+
+Cases from a config file (default docs/cogids-rs/local/roms.toml, git-ignored):
+  rom_test [--config PATH] [--feature ID[,ID]] [--case TEXT] [--jobs N]
+           [--results DIR] [--update-baseline] [--no-png] [--list]
+
+One ROM from the command line (no config needed):
+  rom_test --rom PATH [--feature ID] [--name NAME] [--frames N]
+           [--press key:start:every[:end]] [--touch x:y:start:every[:end]]
+           [--cheat "XXXXXXXX YYYYYYYY"] [--save-from FILE.sav]
+           [--hd N] [--xbrz] [--snapshot FRAME] [--expect KEY[=VALUE]] ...
+
+  --expect keys: not_blank=upper[,lower]  screen_changes  polygons_min=N
+                 audio  audio_rate  save_written  no_terminate
+                 ram=0xADDR[:16]=0xVALUE  pixel=SCREEN:X:Y=0xRRGGBB
+                 max_ms_per_frame=MS
+
+Results: <results>/latest.md (default docs/cogids-rs/local/results).
+Exit code: 0 all passed (or nothing to run), 1 a case failed, 2 bad usage.

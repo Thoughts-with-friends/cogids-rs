@@ -117,3 +117,25 @@ read_io_2d_u16(address)
 - GBA スロット（`0x08000000..`）は実装していません。
 - VRAMSTAT（ARM7 `0x04000240`）は `Vram::vramstat()` があるものの、ARM7 の読み出しに接続されていません（0 が返ります）。
 - 待ちサイクルは CPU 側の表（[3 章](03_cpu.md)）による近似で、バスの競合は再現しません。DMA 中は両 CPU を止めます（[7 章](07_dma.md)）。
+
+## 5.11 ROM 実行テスト（機能 ID `memory`）
+
+自分の ROM で確かめるときは、`docs/cogids-rs/local/roms.toml`（Git 管理外）にケースを書き、`cargo run --release -p ds_rom_test -- --feature memory` で実行します（[20 章](20_rom_tests.md)）。
+
+| 使うチェック | 確かめること |
+|---|---|
+| `ram` | 特定のアドレスに期待どおりの値がある（WRAMCNT の割り当て、ミラー） |
+| `not_blank` | DISPCNT の部分書き込み（5.7）で真っ白にならない |
+| （自動）baseline | アドレスマップの変更で画面が変わらない |
+
+```toml
+[[case]]
+feature = "memory"
+name = "memory-example"
+rom = "my_game"            # [roms] の別名
+frames = 600
+[case.expect]
+not_blank = ["upper", "lower"]
+```
+
+チートの書き込み（16 章）と `ram` を組み合わせると、ARM7 のバスからメイン RAM への経路も確かめられます。

@@ -17,7 +17,8 @@ members = [
   "gui/egui",
   "gui/freya",
   "gui/net",
-  "gui/tauri/src-tauri"
+  "gui/tauri/src-tauri",
+  "tools/rom_test"
 ]
 resolver = "3"
 default-members = ["gui/egui"]

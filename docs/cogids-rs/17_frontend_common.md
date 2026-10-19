@@ -221,3 +221,7 @@ System > ROM info で表示します。ヘッダ（`0x000` タイトル、`0x00C
 - `emu_thread.rs` の `#[ignore]` テスト（実 ROM が必要。環境変数 `LUNARIS_TEST_ROM`）：`thread_produces_frames`（約 60 fps でフレームが出る）、`pause_and_step`（一時停止でフレームが止まり、コマ送りでちょうど 1 枚）、`speed_and_resolution`（2 倍速でフレームレートが 2 倍、2 倍解像度でフレームが 2 倍の大きさ）
 - `frontend.rs`：egui の snake_case の `config.json` を読めること
 - `audio.rs`、`speed.rs`、`cheats.rs` のユニットテスト（[12 章](12_sound.md)、[16 章](16_cheats.md)）
+
+## 17.12 ROM 実行テスト
+
+このツールは GUI を通さずにエミュレータ本体を動かすので、この章の部品は対象外です。エミュレータスレッドは `ds_common` の `#[ignore]` テスト（17.11）で確かめます。（[20 章](20_rom_tests.md)）
