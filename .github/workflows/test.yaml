@@ -28,12 +28,12 @@ jobs:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
     runs-on: ${{ matrix.job.os }}
 
-    # steps:
-    #   - uses: actions/checkout@v4.2.2
-    #   - name: Rust cache
-    #     uses: Swatinem/rust-cache@v2.7.5
-    #     with:
-    #       prefix-key: cargo-debug-${{ matrix.job.target }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2.7.5
+        with:
+          prefix-key: cargo-debug-${{ matrix.job.target }}
     #   - name: Setup environment
     #     uses: ./.github/actions/setup-deps
     #     with:

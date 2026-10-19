@@ -20,7 +20,11 @@ pub struct CaseResult {
 
 impl CaseResult {
     pub const fn new(case: Case, outcome: Result<Metrics, String>) -> Self {
-        Self { case, outcome, checks: Vec::new() }
+        Self {
+            case,
+            outcome,
+            checks: Vec::new(),
+        }
     }
 
     pub fn evaluate(&mut self, base: Option<&BTreeMap<String, String>>) {
@@ -68,14 +72,36 @@ fn markdown(results: &[CaseResult]) -> String {
                     format!("{:.2}", m.ms_per_frame),
                     r.checks
                         .iter()
-                        .map(|c| format!("{} {}: {}", if c.ok { "✓" } else if c.info { "△" } else { "✗" }, c.name, c.detail))
+                        .map(|c| {
+                            format!(
+                                "{} {}: {}",
+                                if c.ok {
+                                    "✓"
+                                } else if c.info {
+                                    "△"
+                                } else {
+                                    "✗"
+                                },
+                                c.name,
+                                c.detail
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join("<br>"),
                 ),
                 Err(e) => ("-".to_owned(), e.replace('|', "/")),
             };
-            let memo = r.case.memo.as_deref().map_or_else(String::new, |m| format!("<br>{}", m.replace('|', "/")));
-            let _ = writeln!(s, "| {}{memo} | {} | {ms} | {detail} |", r.case.name, status(r));
+            let memo = r
+                .case
+                .memo
+                .as_deref()
+                .map_or_else(String::new, |m| format!("<br>{}", m.replace('|', "/")));
+            let _ = writeln!(
+                s,
+                "| {}{memo} | {} | {ms} | {detail} |",
+                r.case.name,
+                status(r)
+            );
         }
         s.push('\n');
     }
@@ -135,7 +161,11 @@ pub fn load_baseline(path: &Path) -> Baseline {
 ///
 /// # Errors
 /// If the file cannot be written.
-pub fn save_baseline(path: &Path, mut base: Baseline, results: &[CaseResult]) -> Result<(), String> {
+pub fn save_baseline(
+    path: &Path,
+    mut base: Baseline,
+    results: &[CaseResult],
+) -> Result<(), String> {
     for r in results {
         if let Ok(m) = &r.outcome {
             base.insert(r.case.name.clone(), m.hashes.clone());
@@ -148,11 +178,21 @@ pub fn save_baseline(path: &Path, mut base: Baseline, results: &[CaseResult]) ->
 /// Prints one line per case; `true` if all passed.
 pub fn print_summary(results: &[CaseResult]) -> bool {
     for r in results {
-        let failed: Vec<&str> = r.checks.iter().filter(|c| !c.ok && !c.info).map(|c| c.name.as_str()).collect();
+        let failed: Vec<&str> = r
+            .checks
+            .iter()
+            .filter(|c| !c.ok && !c.info)
+            .map(|c| c.name.as_str())
+            .collect();
         match &r.outcome {
             Err(e) => println!("ERROR [{}] {}: {e}", r.case.feature, r.case.name),
             Ok(_) if failed.is_empty() => println!("PASS  [{}] {}", r.case.feature, r.case.name),
-            Ok(_) => println!("FAIL  [{}] {}: {}", r.case.feature, r.case.name, failed.join(", ")),
+            Ok(_) => println!(
+                "FAIL  [{}] {}: {}",
+                r.case.feature,
+                r.case.name,
+                failed.join(", ")
+            ),
         }
     }
     results.iter().all(CaseResult::passed)

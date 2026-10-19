@@ -30,7 +30,8 @@ pub struct Args {
 }
 
 fn number<T: std::str::FromStr>(opt: &str, v: &str) -> Result<T, String> {
-    v.parse().map_err(|_| format!("{opt}: \"{v}\" is not a number"))
+    v.parse()
+        .map_err(|_| format!("{opt}: \"{v}\" is not a number"))
 }
 
 impl Args {
@@ -95,13 +96,19 @@ impl Args {
     /// # Errors
     /// A bad `--expect`.
     pub fn rom_case(&self) -> Result<Option<Case>, String> {
-        let Some(rom) = &self.rom else { return Ok(None) };
+        let Some(rom) = &self.rom else {
+            return Ok(None);
+        };
         let mut expect = Expect::default();
         for e in &self.expect {
             apply_expect(&mut expect, e)?;
         }
         Ok(Some(Case {
-            feature: self.features.first().cloned().unwrap_or_else(|| "boot".to_owned()),
+            feature: self
+                .features
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "boot".to_owned()),
             name: self.name.clone().unwrap_or_else(|| "cli".to_owned()),
             rom: rom.clone(),
             frames: self.frames.unwrap_or(300),
@@ -124,9 +131,17 @@ impl Args {
 /// Unknown keys or bad values.
 pub fn apply_expect(x: &mut Expect, entry: &str) -> Result<(), String> {
     let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
-    let num = |v: &str| v.parse::<f64>().map_err(|_| format!("--expect {entry}: not a number"));
+    let num = |v: &str| {
+        v.parse::<f64>()
+            .map_err(|_| format!("--expect {entry}: not a number"))
+    };
     match key {
-        "not_blank" => x.not_blank.extend(value.split(',').filter(|s| !s.is_empty()).map(str::to_owned)),
+        "not_blank" => x.not_blank.extend(
+            value
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+        ),
         "screen_changes" => x.screen_changes = true,
         "polygons_min" => x.polygons_min = Some(num(value)? as i32),
         "audio" => x.audio = true,
@@ -151,9 +166,23 @@ mod tests {
 
     #[test]
     fn builds_a_case_from_options() {
-        let a = args(&["--rom", "x.nds", "--feature", "video2d", "--frames", "60", "--expect", "pixel=lower:1:2=0xF80000", "--expect", "no_terminate"]);
+        let a = args(&[
+            "--rom",
+            "x.nds",
+            "--feature",
+            "video2d",
+            "--frames",
+            "60",
+            "--expect",
+            "pixel=lower:1:2=0xF80000",
+            "--expect",
+            "no_terminate",
+        ]);
         let case = a.and_then(|a| a.rom_case()).ok().flatten();
-        assert!(case.as_ref().is_some_and(|c| c.feature == "video2d" && c.frames == 60));
+        assert!(
+            case.as_ref()
+                .is_some_and(|c| c.feature == "video2d" && c.frames == 60)
+        );
         assert!(case.is_some_and(|c| c.expect.no_terminate && c.expect.pixel.len() == 1));
     }
 
@@ -161,6 +190,10 @@ mod tests {
     fn rejects_unknown_options() {
         assert!(args(&["--bogus"]).is_err());
         assert!(args(&["--frames", "ten"]).is_err());
-        assert!(args(&["--rom", "x", "--expect", "nope"]).and_then(|a| a.rom_case()).is_err());
+        assert!(
+            args(&["--rom", "x", "--expect", "nope"])
+                .and_then(|a| a.rom_case())
+                .is_err()
+        );
     }
 }

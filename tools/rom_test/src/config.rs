@@ -144,7 +144,8 @@ impl Config {
     /// If the file cannot be read or parsed, or a case is invalid.
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut config: Self = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut config: Self =
+            toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         config.dir = path.parent().map(Path::to_path_buf);
         config.validate()?;
         Ok(config)
@@ -154,7 +155,10 @@ impl Config {
         let mut names = std::collections::BTreeSet::new();
         for case in &self.cases {
             if chapter(&case.feature).is_none() {
-                return Err(format!("case \"{}\": unknown feature \"{}\" (see --list)", case.name, case.feature));
+                return Err(format!(
+                    "case \"{}\": unknown feature \"{}\" (see --list)",
+                    case.name, case.feature
+                ));
             }
             if !names.insert(case.name.as_str()) {
                 return Err(format!("case \"{}\" is defined twice", case.name));
@@ -171,7 +175,10 @@ impl Config {
     /// # Errors
     /// If the case is invalid.
     pub fn single(case: Case) -> Result<Self, String> {
-        let config = Self { cases: vec![case], ..Self::default() };
+        let config = Self {
+            cases: vec![case],
+            ..Self::default()
+        };
         config.validate()?;
         Ok(config)
     }

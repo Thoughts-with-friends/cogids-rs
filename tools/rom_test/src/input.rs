@@ -140,7 +140,11 @@ impl Script {
                 (Some(x), Some(y), Some(tm)) if (0..256).contains(&x) && (0..192).contains(&y) => {
                     script.touches.push(((x, y), tm));
                 }
-                _ => return Err(format!("bad touch \"{t}\" (x:y:start:every[:end], x < 256, y < 192)")),
+                _ => {
+                    return Err(format!(
+                        "bad touch \"{t}\" (x:y:start:every[:end], x < 256, y < 192)"
+                    ));
+                }
             }
         }
         Ok(script)
@@ -155,7 +159,11 @@ impl Script {
                 key.release(emu);
             }
         }
-        let touch = self.touches.iter().find(|(_, t)| t.held(frame)).map(|(p, _)| *p);
+        let touch = self
+            .touches
+            .iter()
+            .find(|(_, t)| t.held(frame))
+            .map(|(p, _)| *p);
         match touch {
             Some((x, y)) => emu.touchscreen_press(x, y),
             None => emu.touchscreen_press(0, 0xFFF),
@@ -169,7 +177,11 @@ mod tests {
 
     #[test]
     fn timing_holds_for_six_frames() {
-        let t = Timing::parse(&["10", "30"]).unwrap_or(Timing { start: 0, every: 0, end: 0 });
+        let t = Timing::parse(&["10", "30"]).unwrap_or(Timing {
+            start: 0,
+            every: 0,
+            end: 0,
+        });
         assert!(!t.held(9));
         assert!(t.held(10) && t.held(15));
         assert!(!t.held(16));

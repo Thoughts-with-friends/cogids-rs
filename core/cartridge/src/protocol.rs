@@ -166,6 +166,7 @@ impl NDSCart {
         self.rom.get(address as usize).copied().unwrap_or_else(|| {
             #[cfg(feature = "log")]
             log::warn!("Direct read out of bounds: {address:08X}");
+
             0
         })
     }
