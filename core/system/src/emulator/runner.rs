@@ -85,9 +85,9 @@ impl Emulator {
             self.cartridge_run(slice);
         }
 
-        if let Err(err) = self.cart.save_check() {
+        if let Err(_err) = self.cart.save_check() {
             #[cfg(feature = "log")]
-            log::error!("{err}");
+            log::error!("{_err}");
         };
     }
 

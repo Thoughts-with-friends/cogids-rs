@@ -349,9 +349,9 @@ impl Emulator {
 
                 self.reschedule_gpu_event(0, 256 * 6);
             }
-            unknown_id => {
+            _unknown_id => {
                 #[cfg(feature = "log")]
-                log::error!("Unrecognized event.id: {unknown_id}");
+                log::error!("Unrecognized event.id: {_unknown_id}");
             }
         }
     }

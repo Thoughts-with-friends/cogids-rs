@@ -112,7 +112,8 @@ impl PsrFlags {
     }
 
     /// Load flags from a 32-bit CPSR/SPSR value
-    pub const fn set(&mut self, value: u32) {
+    #[allow(clippy::missing_const_for_fn)] // not const: logs under feature "log"
+    pub fn set(&mut self, value: u32) {
         // 1610612829
         self.negative = (value & (1 << 31)) != 0;
         self.zero = (value & (1 << 30)) != 0;

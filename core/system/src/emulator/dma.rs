@@ -179,9 +179,9 @@ impl Emulator {
                     }
                     1 => active_dma.internal_dest = active_dma.internal_dest.wrapping_sub(offset),
                     2 => {}
-                    v => {
+                    _v => {
                         #[cfg(feature = "log")]
-                        log::error!("Unrecognized DMA dest control {v}");
+                        log::error!("Unrecognized DMA dest control {_v}");
                     }
                 }
             }
@@ -199,9 +199,10 @@ impl Emulator {
                             active_dma.internal_source.wrapping_sub(offset);
                     }
                     2 => {}
-                    v => {
+                    #[cfg(feature = "log")]
+                    _v => {
                         #[cfg(feature = "log")]
-                        log::error!("Unrecognized DMA source control {v}");
+                        log::error!("Unrecognized DMA source control {_v}");
                     }
                 }
             }

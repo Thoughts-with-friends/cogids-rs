@@ -51,6 +51,8 @@ pub fn arm_interpret(emu: &mut Emulator, cpu_type: CpuType) {
         log::trace!("[{pc:08X}] {instruction:08X} - ");
 
         let cpu = emu.get_cpu_mut(cpu_type);
+
+        #[cfg(feature = "log")]
         let disasm = ds_cpu::disassemble::disasm_arm(cpu, instruction, pc);
         #[cfg(feature = "log")]
         log::trace!("disasm: {disasm}");
