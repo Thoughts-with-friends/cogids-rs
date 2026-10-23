@@ -1,6 +1,54 @@
 //! The two 2D engines (A: main, may show 3D as BG0; B: sub). Each scanline
 //! renders BGs ([`bg`]) and OBJs ([`obj`]) into line buffers that
 //! [`compose`] combines with windows ([`window`]) and color effects.
+//!
+//! ## How a 2D engine builds a picture
+//!
+//! The screen is 256x192 pixels and is drawn one scanline (row) at a time.
+//! Each line is built from up to four background layers (BG0-BG3) and the
+//! sprite layer (OBJ), stacked by priority in front of a backdrop color:
+//!
+//! ```text
+//!   viewer
+//!     |     priority 0  (front)   BG pixels (BGxCNT bits 0-1) and
+//!     v     priority 1            OBJ pixels (OAM attr2 bits 10-11)
+//!           priority 2
+//!           priority 3  (back)
+//!           backdrop              BG palette color 0
+//!
+//!   same priority: OBJ is in front of BG, and BG0 > BG1 > BG2 > BG3
+//!
+//!   one scanline (y = VCOUNT), every layer rendered into its own line buffer:
+//!   x=0                                   x=255
+//!   +---------------------------------------+
+//!   | BG0   . . . a a a . . . . . . . . . . |   '.' = transparent pixel
+//!   | BG1   b b b b b b b b b b b b b b b b |
+//!   | OBJ   . . . . . o o o . . . . . . . . |
+//!   +---------------------------------------+
+//!             |  per pixel: first opaque layer in priority order
+//!             v  (all three have the same priority here)
+//!   result  b b b a a o o o b b b b b b b b b
+//! ```
+//!
+//! Which kind of layer each BG is depends on the BG mode (DISPCNT bits 0-2):
+//!
+//! ```text
+//!   mode   BG0        BG1    BG2        BG3
+//!   0      text/3D    text   text       text
+//!   1      text/3D    text   text       affine
+//!   2      text/3D    text   affine     affine
+//!   3      text/3D    text   text       extended
+//!   4      text/3D    text   affine     extended
+//!   5      text/3D    text   extended   extended
+//!   6      text/3D    -      large      -          (engine A only)
+//!
+//!   "3D": engine A shows the 3D engine's image as BG0 when DISPCNT bit 3 is set.
+//! ```
+//!
+//! See `bg.rs` for the layer types, `obj.rs` for sprites, `window.rs` and
+//! `compose.rs` for how the layers are combined.
+//! GBATEK: [DS Video](https://problemkaputt.de/gbatek.htm#dsvideo),
+//! [DS Video BG Modes / Control](https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol)
 mod bg;
 pub(crate) mod compose;
 mod obj;

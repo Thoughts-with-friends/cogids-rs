@@ -1,6 +1,33 @@
 //! Clipping against the view volume (melonDS `ClipPolygon`), and the
 //! BOX_TEST command that reuses it. See GBATEK "DS 3D Polygon Definitions"
 //! and "DS 3D Tests".
+//!
+//! ```text
+//!   view volume in clip space: -w <= x <= w, -w <= y <= w, -w <= z <= w
+//!   (6 planes). A polygon partly outside is cut at each plane in turn:
+//!
+//!                    | plane x = w
+//!        v0 *--------a----* v1           v0 *--------a
+//!            \       |   /                   \       |
+//!             \      |  /        ==>          \      |
+//!              \     | /                       \     |
+//!               \    |/                         \    |
+//!                \   b                           \   b
+//!                 \ /|                            \ /
+//!                  * v2                            * v2
+//!        v1 is outside:  v0 v1 v2  ->  v0 a b v2
+//!
+//!   new vertices (a, b) sit where an edge crosses the plane; their color and
+//!   texture coordinates are interpolated along the edge. A clipped polygon
+//!   can grow to 10 vertices. Polygons entirely outside are dropped.
+//!   POLYGON_ATTR bit 12 = 0 drops polygons crossing the far plane instead.
+//!
+//!   BOX_TEST runs the same clipper on the 6 faces of a box and sets GXSTAT
+//!   bit 1 if any part of it is inside (used to skip invisible objects).
+//! ```
+//!
+//! GBATEK: [DS 3D Polygon Definitions by Vertices](https://problemkaputt.de/gbatek.htm#ds3dpolygondefinitionsbyvertices),
+//! [DS 3D Tests](https://problemkaputt.de/gbatek.htm#ds3dtests)
 use super::matrix::transform;
 use crate::engine_3d::state::{Gpu3D, Vertex};
 

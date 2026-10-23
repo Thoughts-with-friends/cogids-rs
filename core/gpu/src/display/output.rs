@@ -2,6 +2,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! gpu.hpp
 //!
+//! ## From the engine's line to the screen
+//!
+//! ```text
+//!   compose_scanline() row -----+
+//!   VRAM bank (LCDC) row -------+--> DISPCNT bits 16-17     --> MASTER_BRIGHT --> screen
+//!   main memory FIFO -----------+    0 off (white)
+//!                                    1 graphics (normal)
+//!                                    2 VRAM display
+//!                                    3 main memory (not emulated)
+//!
+//!   display capture (engine A, DISPCAPCNT bit 31 = start):
+//!     source A: the 2D+3D line, or 3D only ----+
+//!                                              +--> A*EVA/16 + B*EVB/16 --> VRAM bank
+//!     source B: a VRAM bank (read offset) -----+    (or A only / B only)    (write offset)
+//!     lets games reuse a finished frame: motion blur, render-to-texture,
+//!     or 3D on both screens (capture one frame, show it from VRAM)
+//!
+//!   MASTER_BRIGHT (bits 14-15 mode, bits 0-4 factor F, max 16):
+//!     mode 1 up:    c + (max - c) * F/16    fades toward white
+//!     mode 2 down:  c - c * F/16            fades toward black
+//! ```
+//!
+//! GBATEK: [DS Video Capture and Main Memory Display Mode](https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode),
+//! [DS Video Stuff](https://problemkaputt.de/gbatek.htm#dsvideostuff)
 use crate::Gpu;
 use ds_mem_addr::*;
 

@@ -1,5 +1,28 @@
 //! Vertex lighting for the NORMAL command (melonDS `CalculateLighting`).
 //! See GBATEK "DS 3D Polygon Light Parameters".
+//!
+//! ```text
+//!             light i (LIGHT_VECTOR, rotated by the vector matrix)
+//!                \
+//!                 \  L               N = NORMAL * vector matrix
+//!                  \      ^ N
+//!                   \     |
+//!                    v    |
+//!           ---------------*--------- surface at the vertex
+//!
+//!   for each light enabled in POLYGON_ATTR bits 0-3:
+//!      diffuse level  = max(0, -(L . N))            facing the light -> bright
+//!      specular level = from the half-way vector of L and the view direction,
+//!                       squared, optionally through the SHININESS table
+//!   vertex color = emission
+//!                + diffuse  color * light color * diffuse level
+//!                + specular color * light color * specular level
+//!                + ambient  color * light color
+//!   (per channel, clamped to 31). The rasterizer then interpolates this
+//!   color across the polygon (Gouraud shading).
+//! ```
+//!
+//! GBATEK: [DS 3D Polygon Light Parameters](https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters)
 use super::mul;
 use crate::engine_3d::state::Gpu3D;
 

@@ -1,6 +1,49 @@
 //! Scanline rasterization of one horizontal band of the frame: polygon
 //! edge setup, span fill rules, shadow masks and translucent pixels.
 //! Bands are rendered in parallel (see [`super::Raster::render`]).
+//!
+//! ## Filling a polygon, one scanline at a time
+//!
+//! ```text
+//!   a polygon is walked down from its top vertex; a left and a right edge
+//!   are followed, each moving on to the next vertex when it is passed:
+//!
+//!                  v0 (top)
+//!                 /  \
+//!    left edge   /    \   right edge
+//!    v0 -> v3   /      \  v0 -> v1
+//!              /        \
+//!         v3  *          * v1
+//!              \  ====== |      <- row y: pixels from the left edge X
+//!    then       \        |         to the right edge X are filled
+//!    v3 -> v2    \       |  then v1 -> v2
+//!                 \      |
+//!                  *-----*
+//!                 v2      (bottom)
+//!
+//!   one row (span) has three segments:
+//!      |<- left edge ->|<-------- interior -------->|<- right edge ->|
+//!      edge segments: edge flags (for edge marking) and AA coverage
+//!      interior: filled normally
+//!      a pixel belongs to the span when  left X <= x < right X
+//!      wireframe polygons (alpha 0) draw only the edge segments
+//!
+//!   per pixel: depth test -> texture / shading (pixel.rs)
+//!              -> alpha test (ALPHA_TEST_REF, DISP3DCNT bit 2)
+//!              -> opaque: write color + depth + polygon ID
+//!                 translucent: blend over the pixel below, skipped where a
+//!                 translucent pixel with the same polygon ID was already
+//!                 drawn (no double blending inside one object)
+//!
+//!   shadows (polygon mode 3):
+//!      shadow mask (ID 0):  marks a stencil where its depth test FAILS
+//!                           (i.e. where the shadow volume is behind something)
+//!      shadow (ID != 0):    drawn only on stencil-marked pixels whose
+//!                           polygon ID differs from the shadow's
+//! ```
+//!
+//! GBATEK: [DS 3D Polygon Attributes](https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes),
+//! [DS 3D Shadow Polygons](https://problemkaputt.de/gbatek.htm#ds3dshadowpolygons)
 use super::pixel::DepthTest;
 use super::slope::{Interp, Slope};
 use super::{Dims, Frame, Raster};

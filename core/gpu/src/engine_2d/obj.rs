@@ -1,5 +1,70 @@
 //! Sprites (OBJ): normal, affine and bitmap OBJs, plus the OBJ window.
 //! See GBATEK "DS Video OBJs".
+//!
+//! ## Sprites (OBJ)
+//!
+//! OAM holds 128 sprites per engine, 8 bytes each: three attributes plus one
+//! 16-bit slot of a rotation/scaling parameter group.
+//!
+//! ```text
+//!   attr0  bits 0-7 Y          8 rot/scale on     9 double size (rot/scale on)
+//!                                                   or hide (rot/scale off)
+//!          10-11 mode          12 mosaic          13 256 colors   14-15 shape
+//!   attr1  bits 0-8 X          9-13 parameter group (rot/scale on)
+//!                              12 H flip, 13 V flip (rot/scale off)
+//!                              14-15 size
+//!   attr2  bits 0-9 tile       10-11 priority     12-15 palette bank
+//!                                                   (bitmap OBJ: alpha)
+//!
+//!   shape \ size   0       1       2       3
+//!   square         8x8     16x16   32x32   64x64
+//!   wide           16x8    32x8    32x16   64x32
+//!   tall           8x16    8x32    16x32   32x64
+//!
+//!   screen 256x192
+//!   +------------------------------+   X is 9 bits (256-511 = -256..-1),
+//!   |  (X,Y)                       |   Y is 8 bits and wraps at 256,
+//!   |    +-------+                 |   so a sprite can slide in from any edge
+//!   |    | 16x16 |                 |
+//!   |    +-------+                 |
+//!   +------------------------------+
+//! ```
+//!
+//! Rotation/scaling: each pixel (lx, ly) of the sprite's box, measured from
+//! the box center, is mapped back into the sprite image:
+//!
+//! ```text
+//!   texX = (PA*lx + PB*ly) / 256 + width/2      PA..PD: group n = attr slot 3
+//!   texY = (PC*lx + PD*ly) / 256 + height/2     of OAM entries 4n..4n+3
+//!
+//!   "double size" doubles the box so a rotated sprite is not cut off:
+//!
+//!     normal box            double-size box
+//!     +-------+             +---------------+
+//!     |   /\  |             |               |
+//!     |  /  \ | <- corners  |      /\       |
+//!     |  \  / |    cut off  |     /  \      |
+//!     |   \/  |             |     \  /      |
+//!     +-------+             |      \/       |
+//!                           +---------------+
+//! ```
+//!
+//! ```text
+//!   OBJ mode (attr0 bits 10-11): 0 normal, 1 semi-transparent (alpha blended
+//!   with EVA/EVB), 2 OBJ window (shape only, see window.rs), 3 bitmap
+//!
+//!   tile layout in OBJ VRAM (DISPCNT bit 4):
+//!     2D mapping: tiles form a sheet 32 tiles wide; a 16x16 4bpp sprite at
+//!                 tile t uses  t   t+1
+//!                              t+32 t+33
+//!     1D mapping: a sprite's tiles are consecutive: t, t+1, t+2, t+3
+//!
+//!   overlapping sprites: lower priority value wins, then lower OAM index
+//! ```
+//!
+//! GBATEK: [LCD OBJ - OAM Attributes](https://problemkaputt.de/gbatek.htm#lcdobjoamattributes),
+//! [LCD OBJ - OAM Rotation/Scaling Parameters](https://problemkaputt.de/gbatek.htm#lcdobjoamrotationscalingparameters),
+//! [DS Video OBJs](https://problemkaputt.de/gbatek.htm#dsvideoobjs)
 use super::compose::{LineLayers, OBJ_BITMAP, OBJ_SEMI, OPAQUE, W};
 use crate::Gpu;
 use crate::vram::Region;

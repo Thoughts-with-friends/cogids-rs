@@ -16,6 +16,52 @@
 //! A raster can also work at N times the resolution ([`Raster::with_scale`],
 //! used by [`hires`] for display only): vertex positions then come from the
 //! sub-pixel `hires_position`, and every size below scales with N.
+//!
+//! ## How one 3D frame is drawn
+//!
+//! ```text
+//!   buffers: (256+2) x (192+2), a one-pixel border all around (edge marking
+//!   looks at neighbours)
+//!     layer 0:  color | depth | attr     the visible pixel
+//!     layer 1:  color | depth | attr     the pixel underneath, kept at polygon
+//!                                        edges for anti-aliasing
+//!     attr: polygon IDs, edge flags, AA coverage, fog flag
+//!
+//!   1. clear      every pixel = CLEAR_COLOR / CLEAR_DEPTH
+//!                 (or the rear-plane bitmaps in texture slots 2/3 when
+//!                  DISP3DCNT bit 14 is set)
+//!   2. polygons   in render order (opaque Y-sorted, then translucent);
+//!                 each polygon filled row by row (band.rs), every pixel:
+//!                 depth test -> texture + shading -> alpha test -> write/blend
+//!   3. final pass per line:
+//!                 edge marking   edge pixel next to a farther pixel with a
+//!                                different polygon ID -> EDGE_COLOR[ID / 8]
+//!                 fog            color += (FOG_COLOR - color) * density / 128,
+//!                                density from FOG_TABLE indexed by depth
+//!                 anti-aliasing  edge pixel = mix(layer 0, layer 1, coverage)
+//!
+//!   painter's view of step 2 (opaque first, translucent last):
+//!      clear      opaque A        opaque B (nearer)      translucent C
+//!     +------+   +------+        +------+               +------+
+//!     |      |   | AAA  |        | AAA  |               | AAA  |
+//!     |      |-->| AAA  |  -->   | ABBB |      -->      | ABcc |  c = C blended
+//!     |      |   |      |        |  BBB |               |  Bcc |  over what is
+//!     +------+   +------+        +------+               +------+  below
+//!
+//!   the frame is split into horizontal bands rendered in parallel:
+//!     +--------------------+ y = 0
+//!     | band 0   thread 0  |
+//!     +--------------------+
+//!     | band 1   thread 1  |
+//!     +--------------------+
+//!     | ...                |
+//!     +--------------------+ y = 191
+//!     the final pass of the lines at band borders runs after all bands
+//!     finish, because it reads the lines above and below.
+//! ```
+//!
+//! GBATEK: [DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing](https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing),
+//! [DS 3D Rear-Plane](https://problemkaputt.de/gbatek.htm#ds3drearplane)
 
 mod band;
 pub mod hires;

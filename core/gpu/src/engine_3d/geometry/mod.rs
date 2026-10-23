@@ -14,6 +14,35 @@
 //! Ported from melonDS `GPU3D.cpp` (GPL-3.0-or-later); see also GBATEK
 //! "DS 3D Matrix Load/Multiply", "DS 3D Polygon Definitions" and
 //! "DS 3D Polygon Light Parameters".
+//!
+//! ## Matrices and the matrix stack
+//!
+//! ```text
+//!   MTX_MODE 0  projection          stack: 1 entry
+//!            1  position            stack: 31 entries  (position and vector
+//!            2  position + vector          matrices are pushed/popped together)
+//!            3  texture             stack: 1 entry
+//!
+//!   mode 2 is used for models with lighting: every MTX_* also updates the
+//!   vector matrix that rotates normals and light directions.
+//!
+//!   clip matrix = position * projection   (recomputed when either changes)
+//!
+//!   MTX_PUSH:  stack [ M0 ][ M1 ][ M2 ][    ]      pointer 3 -> 4
+//!                                    ^ current matrix copied here
+//!   MTX_POP n: pointer -= n, current = stack[pointer]
+//!   MTX_STORE / MTX_RESTORE n: copy to / from slot n without moving the pointer
+//!   overflow / underflow -> GXSTAT bit 15 (error flag)
+//!
+//!   a typical frame:
+//!     MTX_MODE 0, MTX_LOAD_4x4 (perspective)       projection once
+//!     MTX_MODE 2, MTX_IDENTITY, camera transform   then per object:
+//!       MTX_PUSH, MTX_TRANS / MTX_MULT_3x3 (place + rotate the object),
+//!       BEGIN_VTXS, VTX_*..., MTX_POP 1
+//! ```
+//!
+//! GBATEK: [DS 3D Matrix Stack](https://problemkaputt.de/gbatek.htm#ds3dmatrixstack),
+//! [DS 3D Matrix Types](https://problemkaputt.de/gbatek.htm#ds3dmatrixtypes)
 
 mod clip;
 mod lighting;

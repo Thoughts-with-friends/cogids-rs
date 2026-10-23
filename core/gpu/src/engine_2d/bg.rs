@@ -1,6 +1,82 @@
 //! Background layers BG0-BG3: text, affine, extended (256-color /
 //! bitmap), large bitmap, and the 3D engine's output as BG0.
 //! See GBATEK "DS Video BG Modes / Control".
+//!
+//! ## Text BG: tiles + map
+//!
+//! A text BG is a grid of 8x8-pixel tiles. VRAM holds two tables:
+//!
+//! ```text
+//!   character data (the tiles)            screen data (the map), 32x32 entries
+//!   base = BGxCNT bits 2-5 * 16K          base = BGxCNT bits 8-12 * 2K
+//!        (+ DISPCNT bits 24-26 * 64K, A)       (+ DISPCNT bits 27-29 * 64K, A)
+//!
+//!   tile 0   tile 1   tile 2              +----+----+----+--      one entry = 16 bits
+//!   +------+ +------+ +------+            |  1 |  1 |  2 |        bits 0-9   tile number
+//!   | 8x8  | |      | |      |            +----+----+----+--      bit  10    H flip
+//!   |pixels| |      | |      |            |  0 |  2 |  2 |        bit  11    V flip
+//!   +------+ +------+ +------+            +----+----+----+--      bits 12-15 palette bank
+//!   4bpp: 32 bytes/tile, 16 colors from one of 16 palette banks
+//!   8bpp: 64 bytes/tile, 256 colors (or an extended palette: slot x bank)
+//!
+//!   screen pixel (x, y)
+//!      + scroll (BGxHOFS, BGxVOFS)       -> map pixel (mx, my)
+//!      -> map entry   (mx / 8, my / 8)   -> tile number, flips, palette bank
+//!      -> tile pixel  (mx % 8, my % 8)   -> color index (0 = transparent)
+//! ```
+//!
+//! Larger maps (BGxCNT bits 14-15) are made of 32x32-entry blocks, 2K apart:
+//!
+//! ```text
+//!   size 0: 256x256   size 1: 512x256   size 2: 256x512   size 3: 512x512
+//!   +---+             +---+---+         +---+             +---+---+
+//!   | 0 |             | 0 | 1 |         | 0 |             | 0 | 1 |
+//!   +---+             +---+---+         +---+             +---+---+
+//!                                       | 1 |             | 2 | 3 |
+//!                                       +---+             +---+---+
+//!
+//!   The 256x192 screen is a window onto the map, moved by the scroll
+//!   registers; the map wraps around at its edges.
+//! ```
+//!
+//! ## Affine (rotation / scaling) BG
+//!
+//! BG2/BG3 can be rotated and scaled. Instead of scrolling, the hardware walks
+//! through the map along a (possibly slanted) line for every scanline:
+//!
+//! ```text
+//!   map space                                     screen
+//!      ^ y                                         +--------------------+
+//!      |  start of line n = (refX, refY)            | line n   -------->  |
+//!      |    *---->---->---->   step per pixel       | line n+1 -------->  |
+//!      |     \                 = (PA, PC)           +--------------------+
+//!      |      *  start of line n+1 = start + (PB, PD)
+//!      +------------------------------> x
+//!
+//!   mapX = refX + PA * screenX          after each line: refX += PB
+//!   mapY = refY + PC * screenX                           refY += PD
+//!   PA..PD: 8.8 fixed point (100h = 1.0)   refX/refY: BGxX/BGxY (28 bits, .8)
+//!   outside the map: transparent, or wrap around when BGxCNT bit 13 is set
+//!
+//!   examples:  PA=100h PB=0 PC=0 PD=100h   -> 1:1 copy
+//!              PA=80h  ...  PD=80h         -> 2x zoom (half a map pixel per step)
+//!              PA=cos PB=sin PC=-sin PD=cos -> rotation
+//! ```
+//!
+//! ## Other BG kinds
+//!
+//! ```text
+//!   extended BG (modes 3-5), walked like an affine BG:
+//!     BGxCNT bit 7 = 0          16-bit map entries (text-like), 8bpp tiles
+//!     bit 7 = 1, bit 2 = 0      256-color bitmap, 1 byte per pixel
+//!     bit 7 = 1, bit 2 = 1      direct-color bitmap, BGR555 per pixel,
+//!                               bit 15 = opaque
+//!   large BG (mode 6, engine A): one 512x1024 or 1024x512 256-color bitmap
+//!   3D BG0: the 3D engine's 256x192 image, scrolled by BG0HOFS only
+//! ```
+//!
+//! GBATEK: [LCD VRAM BG Screen Data Format](https://problemkaputt.de/gbatek.htm#lcdvrambgscreendataformatbgmap),
+//! [LCD I/O BG Rotation/Scaling](https://problemkaputt.de/gbatek.htm#lcdiobgrotationscaling)
 use super::compose::{BG_3D, OPAQUE, W};
 use crate::Gpu;
 use crate::vram::Region;

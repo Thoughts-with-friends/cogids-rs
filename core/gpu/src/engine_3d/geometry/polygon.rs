@@ -1,6 +1,42 @@
 //! Vertex submission and polygon setup: strips, culling, clipping, viewport
 //! transform, W normalization and depth (melonDS `SubmitVertex` /
 //! `SubmitPolygon`). See GBATEK "DS 3D Polygon Definitions".
+//!
+//! ## From vertices to polygons
+//!
+//! ```text
+//!   BEGIN_VTXS type (vertex order as sent):
+//!
+//!    0 triangles      1 quads             2 triangle strip     3 quad strip
+//!    0     3          0---3   4---7       0---2---4            0---2---4
+//!    |\    |\         |   |   |   |       |\  |\  |            |   |   |
+//!    | \   | \        |   |   |   |       | \ | \ |            |   |   |
+//!    1--2  4--5       1---2   5---6       1---3---5            1---3---5
+//!                                         (0,1,2) (1,3,2)...   (0,1,3,2) (2,3,5,4)
+//!
+//!   Strips reuse the last 2 vertices, so each extra vertex (or pair) adds
+//!   a polygon.
+//!
+//!   culling: the winding of the projected vertices tells which side faces the
+//!   viewer. POLYGON_ATTR bit 7 = draw front faces, bit 6 = draw back faces.
+//!
+//!      anti-clockwise on screen   clockwise on screen
+//!           0                          0
+//!          / \                        / \
+//!         1---2   = front            2---1   = back
+//!      (GBATEK: vertices are normally sent anti-clockwise)
+//!
+//!   after culling: clip (clip.rs) -> divide by w -> viewport -> depth
+//!   -> stored in polygon RAM (max 2048 polygons, 6144 vertices; overflow sets
+//!      DISP3DCNT bit 13)
+//!
+//!   render order at the buffer swap: opaque polygons first, sorted by their
+//!   bottom/top Y, then translucent ones (Y-sorted too unless SWAP_BUFFERS
+//!   bit 0 asks for manual order).
+//! ```
+//!
+//! GBATEK: [DS 3D Polygon Definitions by Vertices](https://problemkaputt.de/gbatek.htm#ds3dpolygondefinitionsbyvertices),
+//! [DS 3D Polygon Attributes](https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes)
 use super::clip::clip_polygon;
 use super::matrix::transform;
 use super::mul;

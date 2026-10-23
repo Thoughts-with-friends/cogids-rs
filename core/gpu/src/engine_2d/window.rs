@@ -1,6 +1,37 @@
 //! Windows: WIN0, WIN1, the OBJ window and the outside area decide which
 //! layers and color effects show at each pixel. See GBATEK "DS Video
 //! Windows".
+//!
+//! ```text
+//!   x=0                                              x=255
+//!   +-------------------------------------------------+
+//!   | outside            (WINOUT bits 0-5)            |
+//!   |    +--------------+                             |
+//!   |    | WIN0         |                             |
+//!   |    | (WININ 0-5)  |                             |
+//!   |    |        +-----+-------+      .-"""-.        |
+//!   |    |        |     |       |     /       \  OBJ window:
+//!   |    +--------+-----+       |     \       /  the shape of mode-2
+//!   |             | WIN1        |      '-...-'   sprites (WINOUT 8-13)
+//!   |             | (WININ 8-13)|                     |
+//!   |             +-------------+                     |
+//!   +-------------------------------------------------+
+//!
+//!   WIN0 rectangle: X1..X2 = WIN0H bits 8-15 .. bits 0-7
+//!                   Y1..Y2 = WIN0V bits 8-15 .. bits 0-7
+//!                   X2 / Y2 are exclusive; X1 > X2 wraps around the screen
+//!   where regions overlap:   WIN0  >  WIN1  >  OBJ window  >  outside
+//!
+//!   each region has 6 enable bits, turned into a per-pixel mask:
+//!      bit 0-3  BG0-BG3 visible     bit 4  OBJ visible
+//!      bit 5    color special effects (blending, fades) allowed
+//!   no window enabled (DISPCNT bits 13-15 = 0): everything visible everywhere
+//! ```
+//!
+//! Typical uses: a dialog box that hides a BG (WIN0), a spotlight that only
+//! shows the scene inside a sprite's shape (OBJ window), a fade limited to
+//! part of the screen (bit 5).
+//! GBATEK: [LCD I/O Window Feature](https://problemkaputt.de/gbatek.htm#lcdiowindowfeature)
 use super::compose::{LineLayers, W};
 use crate::Gpu;
 

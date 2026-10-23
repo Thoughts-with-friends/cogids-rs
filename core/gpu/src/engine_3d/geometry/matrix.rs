@@ -1,6 +1,30 @@
 //! Matrix math (20.12 fixed point) and the matrix commands
 //! (MTX_LOAD / MTX_MULT / MTX_SCALE / MTX_TRANS).
 //! See GBATEK "DS 3D Matrix Load/Multiply".
+//!
+//! ```text
+//!   4x4 matrix, row-major (m[row*4 + col]), entries 20.12 fixed point (1000h = 1.0)
+//!   a vertex is a row vector multiplied from the left:
+//!
+//!                   | m0   m1   m2   m3  |
+//!     [x y z 1]  *  | m4   m5   m6   m7  |   =  [x' y' z' w']
+//!                   | m8   m9   m10  m11 |
+//!                   | m12  m13  m14  m15 |   <- translation (MTX_TRANS)
+//!
+//!   MTX_MULT_*:  current = given * current
+//!     the transform given last is applied to the vertex first, so
+//!     "translate, then rotate, then draw" rotates the model in place
+//!     and then moves it.
+//!
+//!   MTX_SCALE (x, y, z)        MTX_TRANS (x, y, z)
+//!   | x 0 0 0 |                | 1 0 0 0 |
+//!   | 0 y 0 0 |                | 0 1 0 0 |
+//!   | 0 0 z 0 |                | 0 0 1 0 |
+//!   | 0 0 0 1 |                | x y z 1 |
+//! ```
+//!
+//! GBATEK: [DS 3D Matrix Load/Multiply](https://problemkaputt.de/gbatek.htm#ds3dmatrixloadmultiply),
+//! [DS 3D Matrix Examples (Maths Basics)](https://problemkaputt.de/gbatek.htm#ds3dmatrixexamplesmathsbasics)
 use super::mul;
 use crate::engine_3d::state::{Gpu3D, Mtx};
 

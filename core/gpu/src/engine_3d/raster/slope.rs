@@ -1,6 +1,54 @@
 //! Edge walking and perspective-correct interpolation (melonDS `Slope` and
 //! `Interpolator`): reproduce the hardware's rounding of polygon edges and
 //! of colors / texture coordinates / depth across them.
+//!
+//! ## Edge walking
+//!
+//! ```text
+//!   An edge from (x0, y0) to (x1, y1) is stepped one scanline at a time.
+//!   X is kept in 14.18 fixed point (1.0 = 40000h); increment = |dx| / dy.
+//!
+//!    y-major edge (increment <= 1.0)       x-major edge (increment > 1.0)
+//!    at most one pixel per row             a run of pixels per row
+//!      *                                     *###
+//!       *                                        ####
+//!        *                                           ####
+//!         *                                              ###*
+//!                                          the run is the "left/right edge"
+//!                                          segment of the span in band.rs
+//!
+//!   The hardware's rounding is reproduced exactly: x-major edges start half a
+//!   pixel in (+0.5 = 20000h), and left and right edges round in opposite
+//!   directions, so two polygons sharing an edge neither leave a gap nor draw
+//!   the shared pixels twice.
+//! ```
+//!
+//! ## Perspective-correct interpolation (Interp)
+//!
+//! ```text
+//!   A color or texture coordinate between two vertices is NOT linear in
+//!   screen distance; it is weighted by each vertex's w (its depth):
+//!
+//!       screen:   v0 |------- t -------x---------------| v1      (t = 0..1)
+//!       value(t) = (v0*(1-t)/w0 + v1*t/w1) / ((1-t)/w0 + t/w1)
+//!
+//!   example: a floor tile running away from the camera (w0 small, w1 large).
+//!   The screen midpoint shows a point closer to v0 in 3D, so checkerboard
+//!   tiles shrink with distance as they should; linear interpolation would
+//!   give them all the same width on screen:
+//!
+//!       linear (wrong)          perspective-correct
+//!       +--+--+--+--+            +---+---+--+-+
+//!       |##|  |##|  |            |###|   |##| |
+//!       +--+--+--+--+            +---+---+--+-+
+//!
+//!   equal w on both ends -> plain linear interpolation ("linear" flag).
+//!   Edges use 9 bits of weight precision, spans 8 bits, as the hardware does.
+//!   Depth: linear for Z-buffering, perspective-correct for W-buffering.
+//! ```
+//!
+//! GBATEK: [DS 3D Polygon Definitions by Vertices](https://problemkaputt.de/gbatek.htm#ds3dpolygondefinitionsbyvertices),
+//! [DS 3D Texture Coordinates](https://problemkaputt.de/gbatek.htm#ds3dtexturecoordinates)
 /// Perspective-correct interpolator along an edge (`DIR = true`, 9-bit
 /// precision) or along a span (`DIR = false`, 8-bit precision).
 #[derive(Debug, Clone, Copy, Default)]

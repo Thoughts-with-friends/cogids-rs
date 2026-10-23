@@ -152,16 +152,10 @@ fn entry(item: &Item, ctx: &Ctx) -> Element {
                 (Some(action), true) => {
                     let action = action.clone();
                     let ctx = ctx.clone();
-                    let button = MenuButton::new()
+                    MenuButton::new()
                         .on_press(move |_| actions::run(&ctx, action.clone()))
-                        .child(row);
-                    match hint {
-                        Some(hint) => TooltipContainer::new(Tooltip::new_text(hint.clone()))
-                            .position(AttachedPosition::Right)
-                            .child(button)
-                            .into_element(),
-                        None => button.into_element(),
-                    }
+                        .child(with_tooltip(row, hint.clone()))
+                        .into_element()
                 }
                 // Selected radio entry without an action (the only choice).
                 (None, true) => disabled_row(row, None),
@@ -184,8 +178,10 @@ fn entry(item: &Item, ctx: &Ctx) -> Element {
             )
             .children(items.iter().map(|it| entry(it, ctx)))
             .into_element(),
+        // `fill_minimum`, not `fill`: inside a SubMenu, `fill` resolves to the
+        // window-wide wrapper freya puts around submenus (see with_tooltip).
         Item::Separator => rect()
-            .width(Size::fill())
+            .width(Size::fill_minimum())
             .height(Size::px(1.))
             .margin((5., 8.))
             .background(theme::hairline())
@@ -201,17 +197,28 @@ fn entry(item: &Item, ctx: &Ctx) -> Element {
 
 /// An entry that cannot be used: greyed out, the reason on hover.
 fn disabled_row(row: Element, reason: Option<String>) -> Element {
-    let body = rect()
+    rect()
         .padding((8., 14.))
         .min_width(Size::px(105.))
         .width(Size::fill_minimum())
         .color(theme::rgb(TEXT_FAINT))
-        .child(row);
-    match reason {
-        Some(reason) => TooltipContainer::new(Tooltip::new_text(reason))
+        .child(with_tooltip(row, reason))
+        .into_element()
+}
+
+/// Puts the tooltip `text` on the label row, inside the entry.
+///
+/// Entries are `Size::fill_minimum()` wide, which shrinks to the widest
+/// entry only when they are direct children of the menu. Wrapped in a
+/// `TooltipContainer` they filled the window-wide wrapper freya puts around
+/// a `SubMenu` instead (Open recent: path hints, Video settings: the
+/// disabled xBRZ reason).
+fn with_tooltip(row: Element, text: Option<String>) -> Element {
+    match text {
+        Some(text) => TooltipContainer::new(Tooltip::new_text(text))
             .position(AttachedPosition::Right)
-            .child(body)
+            .child(row)
             .into_element(),
-        None => body.into_element(),
+        None => row,
     }
 }

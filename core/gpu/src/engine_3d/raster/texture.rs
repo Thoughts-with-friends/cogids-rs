@@ -1,5 +1,35 @@
 //! Texture sampling: wrap / mirror / clamp and the 7 texture formats
 //! (melonDS `TextureLookup`). See GBATEK "DS 3D Texture Formats".
+//!
+//! ```text
+//!   texture coordinates S, T (12.4 fixed point, interpolated per pixel)
+//!   -> texel (s, t) in a texture of 8..1024 x 8..1024 texels
+//!      (TEXIMAGE_PARAM bits 20-22 width, 23-25 height)
+//!
+//!   outside 0..size-1 (per axis):
+//!     repeat (bit 16/17)          0 1 2 3 | 0 1 2 3 | 0 1 2 3
+//!     repeat + flip (bit 18/19)   0 1 2 3 | 3 2 1 0 | 0 1 2 3
+//!     clamp (no repeat)           0 0 0 0 | 0 1 2 3 | 3 3 3 3
+//!                                 (left)    texture   (right)
+//!
+//!   formats (TEXIMAGE_PARAM bits 26-28):
+//!     1 A3I5        8 bits/texel: color index 0-4, alpha 5-7
+//!     2 4-color     2 bits/texel
+//!     3 16-color    4 bits/texel
+//!     4 256-color   8 bits/texel
+//!     5 4x4 compressed: each 4x4 block = 32 bits of 2-bit indices (slot 0/2)
+//!                       + 16 bits in slot 1 choosing palette + mode
+//!                       (2 colors + mixes, or 3 colors + transparent, ...)
+//!     6 A5I3        8 bits/texel: color index 0-2, alpha 3-7
+//!     7 direct      16 bits/texel, BGR555 + bit 15 alpha
+//!   palette formats read colors from texture palette VRAM at PLTT_BASE;
+//!   bit 29 makes color 0 transparent (formats 2-4).
+//!
+//!   texture VRAM is 512K (4 slots of 128K), mapped from VRAM banks A-D.
+//! ```
+//!
+//! GBATEK: [DS 3D Texture Formats](https://problemkaputt.de/gbatek.htm#ds3dtextureformats),
+//! [DS 3D Texture Attributes](https://problemkaputt.de/gbatek.htm#ds3dtextureattributes)
 use super::{Frame, PAL_SIZE, TEX_SIZE};
 
 impl Frame<'_> {

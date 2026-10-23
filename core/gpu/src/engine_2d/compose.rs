@@ -13,6 +13,36 @@
 //!
 //! See GBATEK "DS Video BG Modes / Control", "DS Video OBJs" and "LCD I/O
 //! Color Special Effects".
+//!
+//! ## Per-pixel compositing
+//!
+//! ```text
+//!   for each x of the line:
+//!     m = window mask (window.rs)
+//!     walk priority 0..3; at each priority check OBJ, then BG0, BG1, BG2, BG3;
+//!     keep the first two opaque layers that m allows:
+//!         top    = first hit    (backdrop if none)
+//!         second = second hit   (backdrop if none)
+//!
+//!     m bit 5 clear, or top not a BLDCNT 1st target -> output top
+//!     otherwise by BLDCNT bits 6-7:
+//!         1 alpha     top*EVA/16 + second*EVB/16   (if second is a 2nd target)
+//!         2 brighten  top + (31 - top) * EVY/16
+//!         3 darken    top - top * EVY/16
+//!     always blended with second (if it is a 2nd target), whatever BLDCNT says:
+//!         semi-transparent OBJ  -> EVA / EVB
+//!         bitmap OBJ            -> its own alpha (attr2 bits 12-15)
+//!         3D pixel on BG0       -> the 3D pixel's own 5-bit alpha
+//!
+//!   example, alpha blending with EVA = EVB = 8 (50% / 50%):
+//!       top    red   (31, 0, 0)  \
+//!                                 >  (31*8 + 0*8)/16 = 15 ...  -> (15, 0, 15) purple
+//!       second blue  (0, 0, 31)  /
+//!
+//!   example, darken with EVY = 8:  (31, 31, 31) white -> (16, 16, 16) gray
+//! ```
+//!
+//! GBATEK: [LCD I/O Color Special Effects](https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects)
 use crate::Gpu;
 use crate::display::hires::hd_3d_info;
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};

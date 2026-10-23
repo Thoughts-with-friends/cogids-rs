@@ -1,6 +1,30 @@
 //! Per-pixel work: depth test variants and shading (modulate, decal, toon,
 //! highlight) of a polygon pixel (melonDS `RenderPixel`).
 //! See GBATEK "DS 3D Polygon Attributes" and "DS 3D Toon, Edge, Fog".
+//!
+//! ```text
+//!   depth test (POLYGON_ATTR bit 14):
+//!     LESS   draw when new depth <  stored depth   (normal)
+//!     EQUAL  draw when |new - stored| <= 200h (Z) / FFh (W)
+//!            (decals drawn on top of an already drawn surface)
+//!
+//!   shading (POLYGON_ATTR bits 4-5); V = vertex color, T = texel, 6-bit RGB:
+//!     0 modulate   out = ((T+1) * (V+1) - 1) / 64     texture tinted by V
+//!                  alpha = texel alpha * polygon alpha
+//!     1 decal      out = T*Ta + V*(31-Ta)  / 32       texture pasted on V
+//!                  alpha = polygon alpha
+//!     2 toon       V = TOON_TABLE[V.red], then modulate      (DISP3DCNT bit 1 = 0)
+//!       highlight  V = gray(V.red), modulate, + TOON_TABLE[V.red] (bit 1 = 1)
+//!     3 shadow     see band.rs
+//!
+//!   toon shading: V.red acts as a brightness index into a 32-color table,
+//!   turning smooth Gouraud shading into flat bands:
+//!     V.red:   0 ............................ 31
+//!     color:   [dark   ][  mid      ][ light  ]
+//! ```
+//!
+//! GBATEK: [DS 3D Texture Blending](https://problemkaputt.de/gbatek.htm#ds3dtextureblending),
+//! [DS 3D Polygon Attributes](https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes)
 use super::{Frame, expand6};
 use crate::engine_3d::state::Polygon;
 
