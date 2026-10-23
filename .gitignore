@@ -13,6 +13,7 @@ target/
 dist/
 logs/
 cheats/
+**/*/examples/*
 
 docs/design/
 docs/icon.drawio.svg
@@ -20,10 +21,8 @@ docs/icon.drawio.svg
 
 config.json
 
-*/examples/
 core/tests/
 core/system/tests/
-core/system/examples/
 
 # Local ROM test config and results (ROM names/paths are private)
 docs/cogids-rs/local/
