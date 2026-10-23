@@ -177,7 +177,8 @@ fn console(n: usize, rom: &str, frames: u32, out: &std::path::Path) {
     let mut emu = Emulator::new();
     emu.config.save_dir =
         Some(std::env::var(format!("SAVE{n}")).map_or_else(|_| dir.clone(), Into::into));
-    emu.config.mac_address = Some([0x00, 0x09, 0xBF, 0x00, 0x00, n as u8 + 1]);
+    // DS Wifi I/O Map: https://problemkaputt.de/gbatek.htm#dswifiiomap
+    emu.config.mac_address = Some([0x00, 0x09, 0xBF, 0x00, 0x00, n as u8 + 1]); // Nintendo OUI 00:09:BF, last byte = console number
     let counters = Arc::new(Counters::default());
     if std::env::var("NOLINK").is_err() {
         emu.set_mp_link(Some(Box::new(Counted(
@@ -209,7 +210,8 @@ fn console(n: usize, rom: &str, frames: u32, out: &std::path::Path) {
         });
         match pen {
             Some((x, y, ..)) => emu.touchscreen_press(*x, *y),
-            None if !touches.is_empty() => emu.touchscreen_press(0, 0xFFF),
+            // DS Touch Screen Controller (TSC): https://problemkaputt.de/gbatek.htm#dstouchscreencontrollertsc
+            None if !touches.is_empty() => emu.touchscreen_press(0, 0xFFF), // Y = FFFh releases the pen
             None => {}
         }
 

@@ -87,30 +87,31 @@ impl RegRomCtrl {
         let mut value = 0;
         value |= self.key1_gap;
         if self.key2_data_enabled {
-            value |= 1 << 13;
+            // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
+            value |= 1 << 13; // ROMCTRL bit 13: KEY2 encrypt data
         }
         if self.key2_apply_seed {
-            value |= 1 << 15;
+            value |= 1 << 15; // ROMCTRL bit 15: KEY2 apply seed
         }
 
-        value |= self.key2_gap << 16;
+        value |= self.key2_gap << 16; // ROMCTRL bit 16: KEY1 gap2 length (bits 16-21)
         if self.key2_cmd_enabled {
-            value |= 1 << 22;
+            value |= 1 << 22; // ROMCTRL bit 22: KEY2 encrypt command
         }
         if self.word_ready {
-            value |= 1 << 23;
+            value |= 1 << 23; // ROMCTRL bit 23: data word status (ready)
         }
-        value |= self.block_size << 24;
+        value |= self.block_size << 24; // ROMCTRL bit 24: data block size (bits 24-26)
         if self.slow_transfer {
-            value |= 1 << 27;
+            value |= 1 << 27; // ROMCTRL bit 27: transfer clock rate
         }
         if self.key1_gap_clocks {
-            value |= 1 << 28;
+            value |= 1 << 28; // ROMCTRL bit 28: KEY1 gap clocks
         }
         value |= 1 << 29; //Always one? Who knows
 
         if self.block_busy {
-            value |= 1 << 31;
+            value |= 1 << 31; // ROMCTRL bit 31: block start / busy
         }
 
         value
@@ -118,16 +119,18 @@ impl RegRomCtrl {
 
     /// Set register value from 32-bit word
     pub const fn set(&mut self, value: u32) {
-        self.key1_gap = value & 0x3F;
-        self.key2_data_enabled = (value & (1 << 6)) != 0;
-        self.key2_apply_seed = (value & (1 << 7)) != 0;
-        self.key2_gap = (value >> 8) & 0x3F;
-        self.key2_cmd_enabled = (value & (1 << 14)) != 0;
-        self.word_ready = (value & (1 << 15)) != 0;
-        self.block_size = (value >> 16) & 0x7;
-        self.slow_transfer = (value & (1 << 19)) != 0;
-        self.key1_gap_clocks = (value & (1 << 20)) != 0;
-        self.block_busy = (value & (1 << 31)) != 0;
+        // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
+        self.key1_gap = value & 0x3F; // KEY1 gap length (bits 0-5)
+        // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
+        self.key2_data_enabled = (value & (1 << 6)) != 0; // bit 6 of this packed value: KEY2 data enable
+        self.key2_apply_seed = (value & (1 << 7)) != 0; // bit 7: KEY2 apply seed
+        self.key2_gap = (value >> 8) & 0x3F; // KEY2 gap length (bits 8-13)
+        self.key2_cmd_enabled = (value & (1 << 14)) != 0; // bit 14: KEY2 command enable
+        self.word_ready = (value & (1 << 15)) != 0; // bit 15: data word ready
+        self.block_size = (value >> 16) & 0x7; // data block size (bits 16-18)
+        self.slow_transfer = (value & (1 << 19)) != 0; // bit 19: slow transfer clock
+        self.key1_gap_clocks = (value & (1 << 20)) != 0; // bit 20: KEY1 gap clocks
+        self.block_busy = (value & (1 << 31)) != 0; // bit 31: block busy
     }
 }
 
@@ -182,13 +185,14 @@ impl NDSCart {
     pub fn direct_read_word(&self, address: u32) -> u32 {
         let lo = self.direct_read_halfword(address) as u32;
         let hi = self.direct_read_halfword(address + 2) as u32;
-        lo | (hi << 16)
+        lo | (hi << 16) // little-endian halfwords to word
     }
 
     /// Size of the card's ROM chip: the image size rounded up to a power of
     /// two (melonDS `PadToPowerOf2`).
     fn chip_size(&self) -> u32 {
-        (self.rom.len().max(0x10_0000) as u32).next_power_of_two()
+        // DS Cartridge Protocol: https://problemkaputt.de/gbatek.htm#dscartridgeprotocol
+        (self.rom.len().max(0x10_0000) as u32).next_power_of_two() // chip size rounded up to a power of two, minimum 1MB
     }
 
     /// Chip ID returned by command B8 and stored by the firmware at
@@ -198,11 +202,12 @@ impl NDSCart {
     pub fn chip_id(&self) -> u32 {
         let size = self.chip_size();
         let size_code = if size <= 128 << 20 {
+            // chips up to 128MB use the plain size code
             (size >> 20) - 1
         } else {
-            0x100 - (size >> 28)
+            0x100 - (size >> 28) // chip ID size byte: 100h - size in 256MB units for large chips
         };
-        0xC2 | size_code << 8
+        0xC2 | size_code << 8 // chip ID: manufacturer C2h (Macronix), size code in byte 1
     }
 
     /// Reads a word for the KEY2 "Get Data" command (B7).
@@ -215,10 +220,12 @@ impl NDSCart {
     /// terminates unless the data matches the wrapped address.
     pub fn read_rom_b7_word(&self, address: u32) -> u32 {
         let mut address = address & (self.chip_size() - 1);
+        // DS Cartridge Protocol: https://problemkaputt.de/gbatek.htm#dscartridgeprotocol
         if address < 0x8000 {
-            address = 0x8000 + (address & 0x1FF);
+            // B7 reads below 8000h are redirected
+            address = 0x8000 + (address & 0x1FF); // into 8000h-81FFh
         }
-        let byte = |a: u32| self.rom.get(a as usize).copied().unwrap_or(0xFF);
+        let byte = |a: u32| self.rom.get(a as usize).copied().unwrap_or(0xFF); // unmapped ROM reads FFh
         u32::from_le_bytes([
             byte(address),
             byte(address + 1),
@@ -272,23 +279,26 @@ impl NDSCart {
 
         let old_transfer_busy = self.romctrl.block_busy;
 
-        self.romctrl.key1_gap = value & 0x1FFF;
+        // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
+        self.romctrl.key1_gap = value & 0x1FFF; // ROMCTRL KEY1 gap1 length (bits 0-12)
         self.romctrl.key2_data_enabled = ((value >> 13) & 1) != 0;
         self.romctrl.key2_apply_seed = ((value >> 15) & 1) != 0;
-        self.romctrl.key2_gap = (value >> 16) & 0x3F;
+        self.romctrl.key2_gap = (value >> 16) & 0x3F; // ROMCTRL KEY1 gap2 length (bits 16-21)
         self.romctrl.key2_cmd_enabled = ((value >> 22) & 1) != 0;
-        self.romctrl.block_size = (value >> 24) & 0x7;
+        self.romctrl.block_size = (value >> 24) & 0x7; // ROMCTRL data block size (bits 24-26)
         self.romctrl.slow_transfer = ((value >> 27) & 1) != 0;
         self.romctrl.key1_gap_clocks = ((value >> 28) & 1) != 0;
         self.romctrl.block_busy = ((value >> 31) & 1) != 0;
 
+        // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
         if !old_transfer_busy && self.romctrl.block_busy && self.auxspicnt & (1 << 15) != 0 {
+            // AUXSPICNT bit 15: NDS slot enable
             self.romctrl.word_ready = false;
 
             self.bytes_left = match self.romctrl.block_size {
                 0 => 0,
                 7 => 4,
-                n => 0x100 << n,
+                n => 0x100 << n, // block sizes 100h << n (bits 24-26 = 1..6)
             };
 
             if self.cmd_encrypt_mode != 0 {
@@ -332,36 +342,44 @@ impl NDSCart {
             log::trace!(target: "card", "cmd {:02X?} len {:X}", self.command_buffer, self.bytes_left);
 
             match self.command_buffer[0] {
-                0x9F => self.command_id = CartCommand::Dummy,
+                // DS Cartridge Protocol: https://problemkaputt.de/gbatek.htm#dscartridgeprotocol
+                0x9F => self.command_id = CartCommand::Dummy, // 9Fh: dummy (high-z read)
                 0x00 => {
+                    // 00h: get header
                     self.command_id = CartCommand::GetHeader;
                     self.rom_data_index = 0;
                 }
-                0x90 | 0xB8 => self.command_id = CartCommand::GetChipId,
-                0x3C => self.command_id = CartCommand::EnableKey1,
+                0x90 | 0xB8 => self.command_id = CartCommand::GetChipId, // 90h / B8h: get chip ID
+                0x3C => self.command_id = CartCommand::EnableKey1, // 3Ch: activate KEY1 encryption
                 0xB7 => {
+                    // B7h: encrypted data read
                     self.command_id = CartCommand::ReadRom;
 
-                    self.rom_data_index = (((self.command_buffer[1] as u32) << 24)
-                        | ((self.command_buffer[2] as u32) << 16)
-                        | ((self.command_buffer[3] as u32) << 8)
+                    self.rom_data_index = (((self.command_buffer[1] as u32) << 24) // B7 address byte (big-endian, command byte 1)
+                        | ((self.command_buffer[2] as u32) << 16) // B7 address byte (big-endian, command byte 2)
+                        | ((self.command_buffer[3] as u32) << 8) // B7 address byte (big-endian, command byte 3)
                         | (self.command_buffer[4] as u32))
                         as usize;
 
                     if self.bytes_left > 0x1000 {
+                        // reads are capped at 1000h bytes
                         #[cfg(feature = "log")]
-                        log::error!("ROM read bytes_left > 0x1000");
+                        log::error!("ROM read bytes_left > 0x1000"); // reads are capped at 1000h bytes
                     }
                 }
 
+                // DS Cartridge Secure Area: https://problemkaputt.de/gbatek.htm#dscartridgesecurearea
                 _ => match self.command_buffer[0] & 0xF0 {
-                    0x40 => self.command_id = CartCommand::Dummy,
-                    0x10 => self.command_id = CartCommand::GetChipId,
+                    // KEY1 command (bits 4-7 of the decrypted first byte)
+                    0x40 => self.command_id = CartCommand::Dummy, // 4xh: activate KEY2
+                    0x10 => self.command_id = CartCommand::GetChipId, // 1xh: get chip ID
                     0x20 => {
+                        // 2xh: get secure area block
                         self.command_id = CartCommand::GetSecureAreaBlock;
-                        self.secure_area_index = ((self.command_buffer[2] & 0xF0) as u32) << 8;
+                        self.secure_area_index = ((self.command_buffer[2] & 0xF0) as u32) << 8; // secure area block number (bits 4-7) in 4K steps
                     }
                     0xA0 => {
+                        // Axh: enter main data mode
                         self.command_id = CartCommand::Dummy;
                         self.cmd_encrypt_mode = 2;
                     }

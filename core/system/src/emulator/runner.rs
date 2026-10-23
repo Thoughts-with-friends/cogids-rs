@@ -1,6 +1,7 @@
 use crate::cpu::interpreter::arm_interpret;
 use crate::cpu::interpreter::thumb_instruction::thumb_interpret;
 use ds_cpu::arm_cpu::CpuType;
+use ds_cpu::{ARM_INST_WIDTH, THUMB_INST_WIDTH};
 
 use crate::emulator::Emulator;
 
@@ -154,13 +155,17 @@ impl Emulator {
             }
         }
 
-        // Fetch and execute instruction
+        // Fetch and execute thumb instruction
         let thumb_on = self.get_cpu_mut(cpu_type).cpsr.thumb_on;
         let pc = self.get_cpu(cpu_type).get_pc();
 
         if let Some((mask, at)) = self.config.trace_trigger
             && mask & (1 << cpu_id) != 0
-            && pc.wrapping_sub(if thumb_on { 2 } else { 4 }) == at
+            && pc.wrapping_sub(if thumb_on {
+                THUMB_INST_WIDTH
+            } else {
+                ARM_INST_WIDTH
+            }) == at
         {
             self.config.trace_cpus = mask;
             self.config.trace_trigger = None;
@@ -171,25 +176,25 @@ impl Emulator {
 
         if thumb_on {
             {
-                let value = self.read_halfword(pc - 2, cpu_type) as u32;
+                let value = self.read_halfword(pc - THUMB_INST_WIDTH, cpu_type) as u32;
                 let arm = self.get_cpu_mut(cpu_type);
 
                 arm.current_instr = value;
-                arm.record_pc(pc - 2);
-                arm.add_s16_code(pc - 2, 1);
-                arm.regs[15] = pc.wrapping_add(2);
+                arm.record_pc(pc - THUMB_INST_WIDTH);
+                arm.add_s16_code(pc - THUMB_INST_WIDTH, 1);
+                arm.regs[15] = pc.wrapping_add(THUMB_INST_WIDTH);
             }
             thumb_interpret(self, cpu_type);
         } else {
             {
-                let addr = pc.wrapping_sub(4);
+                let addr = pc.wrapping_sub(ARM_INST_WIDTH);
                 let value = self.read_word(addr, cpu_type);
                 let arm = self.get_cpu_mut(cpu_type);
 
                 arm.current_instr = value;
                 arm.record_pc(addr);
                 arm.add_s32_code(addr, 1);
-                arm.regs[15] = pc.wrapping_add(4);
+                arm.regs[15] = pc.wrapping_add(ARM_INST_WIDTH);
             }
             arm_interpret(self, cpu_type);
         }

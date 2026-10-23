@@ -188,27 +188,28 @@ impl Gpu2DEngine {
         let mut reg: u32 = 0;
 
         reg |= self.dispcnt.bg_mode as u32;
-        reg |= (self.dispcnt.bg_3d as u32) << 3;
-        reg |= (self.dispcnt.tile_obj_1d as u32) << 4;
-        reg |= (self.dispcnt.bitmap_obj_square as u32) << 5;
-        reg |= (self.dispcnt.bitmap_obj_1d as u32) << 6;
-        reg |= (self.dispcnt.display_bg0 as u32) << 8;
-        reg |= (self.dispcnt.display_bg1 as u32) << 9;
-        reg |= (self.dispcnt.display_bg2 as u32) << 10;
-        reg |= (self.dispcnt.display_bg3 as u32) << 11;
-        reg |= (self.dispcnt.display_obj as u32) << 12;
-        reg |= (self.dispcnt.display_win0 as u32) << 13;
-        reg |= (self.dispcnt.display_win1 as u32) << 14;
-        reg |= (self.dispcnt.obj_win_display as u32) << 15;
-        reg |= (self.dispcnt.display_mode as u32) << 16;
-        reg |= (self.dispcnt.vram_block as u32) << 18;
-        reg |= (self.dispcnt.tile_obj_1d_bound as u32) << 20;
-        reg |= (self.dispcnt.bitmap_obj_1d_bound as u32) << 22;
-        reg |= (self.dispcnt.hblank_obj_processing as u32) << 23;
-        reg |= (self.dispcnt.char_base as u32) << 24;
-        reg |= (self.dispcnt.screen_base as u32) << 27;
-        reg |= (self.dispcnt.bg_extended_palette as u32) << 30;
-        reg |= (self.dispcnt.obj_extended_palette as u32) << 31;
+        // LCD I/O Display Control: https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol
+        reg |= (self.dispcnt.bg_3d as u32) << 3; // DISPCNT bit 3: bg 3d
+        reg |= (self.dispcnt.tile_obj_1d as u32) << 4; // DISPCNT bit 4: tile obj 1d
+        reg |= (self.dispcnt.bitmap_obj_square as u32) << 5; // DISPCNT bit 5: bitmap obj square
+        reg |= (self.dispcnt.bitmap_obj_1d as u32) << 6; // DISPCNT bit 6: bitmap obj 1d
+        reg |= (self.dispcnt.display_bg0 as u32) << 8; // DISPCNT bit 8: display bg0
+        reg |= (self.dispcnt.display_bg1 as u32) << 9; // DISPCNT bit 9: display bg1
+        reg |= (self.dispcnt.display_bg2 as u32) << 10; // DISPCNT bit 10: display bg2
+        reg |= (self.dispcnt.display_bg3 as u32) << 11; // DISPCNT bit 11: display bg3
+        reg |= (self.dispcnt.display_obj as u32) << 12; // DISPCNT bit 12: display obj
+        reg |= (self.dispcnt.display_win0 as u32) << 13; // DISPCNT bit 13: display win0
+        reg |= (self.dispcnt.display_win1 as u32) << 14; // DISPCNT bit 14: display win1
+        reg |= (self.dispcnt.obj_win_display as u32) << 15; // DISPCNT bit 15: obj win display
+        reg |= (self.dispcnt.display_mode as u32) << 16; // DISPCNT bit 16: display mode
+        reg |= (self.dispcnt.vram_block as u32) << 18; // DISPCNT bit 18: vram block
+        reg |= (self.dispcnt.tile_obj_1d_bound as u32) << 20; // DISPCNT bit 20: tile obj 1d bound
+        reg |= (self.dispcnt.bitmap_obj_1d_bound as u32) << 22; // DISPCNT bit 22: bitmap obj 1d bound
+        reg |= (self.dispcnt.hblank_obj_processing as u32) << 23; // DISPCNT bit 23: hblank obj processing
+        reg |= (self.dispcnt.char_base as u32) << 24; // DISPCNT bit 24: char base
+        reg |= (self.dispcnt.screen_base as u32) << 27; // DISPCNT bit 27: screen base
+        reg |= (self.dispcnt.bg_extended_palette as u32) << 30; // DISPCNT bit 30: bg extended palette
+        reg |= (self.dispcnt.obj_extended_palette as u32) << 31; // DISPCNT bit 31: obj extended palette
 
         reg
     }
@@ -247,10 +248,11 @@ impl Gpu2DEngine {
             reg |= (self.winin.win1_bg_enabled[bit] as u16) << (bit + 8);
         }
 
-        reg |= (self.winin.win0_obj_enabled as u16) << 4;
-        reg |= (self.winin.win0_color_special as u16) << 5;
-        reg |= (self.winin.win1_obj_enabled as u16) << 12;
-        reg |= (self.winin.win1_color_special as u16) << 13;
+        // LCD I/O Window Feature: https://problemkaputt.de/gbatek.htm#lcdiowindowfeature
+        reg |= (self.winin.win0_obj_enabled as u16) << 4; // WININ bit 4: win0 obj enabled
+        reg |= (self.winin.win0_color_special as u16) << 5; // WININ bit 5: win0 color special
+        reg |= (self.winin.win1_obj_enabled as u16) << 12; // WININ bit 12: win1 obj enabled
+        reg |= (self.winin.win1_color_special as u16) << 13; // WININ bit 13: win1 color special
 
         reg
     }
@@ -264,10 +266,11 @@ impl Gpu2DEngine {
             reg |= (self.winout.objwin_bg_enabled[bit] as u16) << (bit + 8);
         }
 
-        reg |= (self.winout.outside_obj_enabled as u16) << 4;
-        reg |= (self.winout.outside_color_special as u16) << 5;
-        reg |= (self.winout.objwin_obj_enabled as u16) << 12;
-        reg |= (self.winout.objwin_color_special as u16) << 13;
+        // LCD I/O Window Feature: https://problemkaputt.de/gbatek.htm#lcdiowindowfeature
+        reg |= (self.winout.outside_obj_enabled as u16) << 4; // WINOUT bit 4: outside obj enabled
+        reg |= (self.winout.outside_color_special as u16) << 5; // WINOUT bit 5: outside color special
+        reg |= (self.winout.objwin_obj_enabled as u16) << 12; // WINOUT bit 12: objwin obj enabled
+        reg |= (self.winout.objwin_color_special as u16) << 13; // WINOUT bit 13: objwin color special
 
         reg
     }
@@ -281,11 +284,12 @@ impl Gpu2DEngine {
             reg |= (self.bldcnt.bg_second_target_pix[bit] as u16) << (bit + 8);
         }
 
-        reg |= (self.bldcnt.obj_first_target_pix as u16) << 4;
-        reg |= (self.bldcnt.obj_second_target_pix as u16) << 12;
-        reg |= (self.bldcnt.bd_first_target_pix as u16) << 5;
-        reg |= (self.bldcnt.bd_second_target_pix as u16) << 13;
-        reg |= (self.bldcnt.effect as u16) << 6;
+        // LCD I/O Color Special Effects: https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects
+        reg |= (self.bldcnt.obj_first_target_pix as u16) << 4; // BLDCNT bit 4: obj first target pix
+        reg |= (self.bldcnt.obj_second_target_pix as u16) << 12; // BLDCNT bit 12: obj second target pix
+        reg |= (self.bldcnt.bd_first_target_pix as u16) << 5; // BLDCNT bit 5: bd first target pix
+        reg |= (self.bldcnt.bd_second_target_pix as u16) << 13; // BLDCNT bit 13: bd second target pix
+        reg |= (self.bldcnt.effect as u16) << 6; // BLDCNT bit 6: effect
 
         reg
     }
@@ -308,15 +312,16 @@ impl Gpu2DEngine {
 
         let mut reg: u32 = 0;
         reg |= self.dispcapcnt.eva as u32;
-        reg |= (self.dispcapcnt.evb as u32) << 8;
-        reg |= (self.dispcapcnt.vram_write_block as u32) << 16;
-        reg |= (self.dispcapcnt.vram_write_offset as u32) << 18;
-        reg |= (self.dispcapcnt.capture_size as u32) << 20;
-        reg |= (self.dispcapcnt.a_3d_only as u32) << 24;
-        reg |= (self.dispcapcnt.b_display_fifo as u32) << 25;
-        reg |= (self.dispcapcnt.vram_read_offset as u32) << 26;
-        reg |= (self.dispcapcnt.capture_source as u32) << 29;
-        reg |= (self.dispcapcnt.enable_busy as u32) << 31;
+        // DS Video Capture and Main Memory Display Mode: https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode
+        reg |= (self.dispcapcnt.evb as u32) << 8; // DISPCAPCNT bit 8: evb
+        reg |= (self.dispcapcnt.vram_write_block as u32) << 16; // DISPCAPCNT bit 16: vram write block
+        reg |= (self.dispcapcnt.vram_write_offset as u32) << 18; // DISPCAPCNT bit 18: vram write offset
+        reg |= (self.dispcapcnt.capture_size as u32) << 20; // DISPCAPCNT bit 20: capture size
+        reg |= (self.dispcapcnt.a_3d_only as u32) << 24; // DISPCAPCNT bit 24: a 3d only
+        reg |= (self.dispcapcnt.b_display_fifo as u32) << 25; // DISPCAPCNT bit 25: b display fifo
+        reg |= (self.dispcapcnt.vram_read_offset as u32) << 26; // DISPCAPCNT bit 26: vram read offset
+        reg |= (self.dispcapcnt.capture_source as u32) << 29; // DISPCAPCNT bit 29: capture source
+        reg |= (self.dispcapcnt.enable_busy as u32) << 31; // DISPCAPCNT bit 31: enable busy
 
         reg
     }
@@ -327,34 +332,37 @@ impl Gpu2DEngine {
 
     /// Sets the low 16 bits of DISPCNT.
     pub fn set_dispcnt_lo(&mut self, halfword: u16) {
-        self.dispcnt.bg_mode = (halfword & 0x7) as i32;
-        self.dispcnt.bg_3d = (halfword & (1 << 3)) != 0;
-        self.dispcnt.tile_obj_1d = (halfword & (1 << 4)) != 0;
-        self.dispcnt.bitmap_obj_square = (halfword & (1 << 5)) != 0;
-        self.dispcnt.bitmap_obj_1d = (halfword & (1 << 6)) != 0;
-        self.dispcnt.display_bg0 = (halfword & (1 << 8)) != 0;
-        self.dispcnt.display_bg1 = (halfword & (1 << 9)) != 0;
-        self.dispcnt.display_bg2 = (halfword & (1 << 10)) != 0;
-        self.dispcnt.display_bg3 = (halfword & (1 << 11)) != 0;
-        self.dispcnt.display_obj = (halfword & (1 << 12)) != 0;
-        self.dispcnt.display_win0 = (halfword & (1 << 13)) != 0;
-        self.dispcnt.display_win1 = (halfword & (1 << 14)) != 0;
-        self.dispcnt.obj_win_display = (halfword & (1 << 15)) != 0;
+        // LCD I/O Display Control: https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol
+        self.dispcnt.bg_mode = (halfword & 0x7) as i32; // BG mode (bits 0-2)
+        // LCD I/O Display Control: https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol
+        self.dispcnt.bg_3d = (halfword & (1 << 3)) != 0; // DISPCNT bit 3: bg 3d
+        self.dispcnt.tile_obj_1d = (halfword & (1 << 4)) != 0; // DISPCNT bit 4: tile obj 1d
+        self.dispcnt.bitmap_obj_square = (halfword & (1 << 5)) != 0; // DISPCNT bit 5: bitmap obj square
+        self.dispcnt.bitmap_obj_1d = (halfword & (1 << 6)) != 0; // DISPCNT bit 6: bitmap obj 1d
+        self.dispcnt.display_bg0 = (halfword & (1 << 8)) != 0; // DISPCNT bit 8: display bg0
+        self.dispcnt.display_bg1 = (halfword & (1 << 9)) != 0; // DISPCNT bit 9: display bg1
+        self.dispcnt.display_bg2 = (halfword & (1 << 10)) != 0; // DISPCNT bit 10: display bg2
+        self.dispcnt.display_bg3 = (halfword & (1 << 11)) != 0; // DISPCNT bit 11: display bg3
+        self.dispcnt.display_obj = (halfword & (1 << 12)) != 0; // DISPCNT bit 12: display obj
+        self.dispcnt.display_win0 = (halfword & (1 << 13)) != 0; // DISPCNT bit 13: display win0
+        self.dispcnt.display_win1 = (halfword & (1 << 14)) != 0; // DISPCNT bit 14: display win1
+        self.dispcnt.obj_win_display = (halfword & (1 << 15)) != 0; // DISPCNT bit 15: obj win display
     }
 
     /// Sets the full 32-bit DISPCNT.
     pub fn set_dispcnt(&mut self, word: u32) {
-        self.set_dispcnt_lo((word & 0xFFFF) as u16);
+        self.set_dispcnt_lo((word & 0xFFFF) as u16); // lower halfword
 
-        self.dispcnt.display_mode = ((word >> 16) & 0x3) as i32;
-        self.dispcnt.vram_block = ((word >> 18) & 0x3) as i32;
-        self.dispcnt.tile_obj_1d_bound = ((word >> 20) & 0x3) as i32;
-        self.dispcnt.bitmap_obj_1d_bound = (word & (1 << 22)) != 0;
-        self.dispcnt.hblank_obj_processing = (word & (1 << 23)) != 0;
-        self.dispcnt.char_base = ((word >> 24) & 0x7) as i32;
-        self.dispcnt.screen_base = ((word >> 27) & 0x7) as i32;
-        self.dispcnt.bg_extended_palette = (word & (1 << 30)) != 0;
-        self.dispcnt.obj_extended_palette = (word & (1 << 31)) != 0;
+        self.dispcnt.display_mode = ((word >> 16) & 0x3) as i32; // display mode (bits 16-17)
+        self.dispcnt.vram_block = ((word >> 18) & 0x3) as i32; // VRAM block for display mode 2 (bits 18-19)
+        self.dispcnt.tile_obj_1d_bound = ((word >> 20) & 0x3) as i32; // tile OBJ 1D boundary (bits 20-21)
+        // LCD I/O Display Control: https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol
+        self.dispcnt.bitmap_obj_1d_bound = (word & (1 << 22)) != 0; // DISPCNT bit 22: bitmap obj 1d bound
+        self.dispcnt.hblank_obj_processing = (word & (1 << 23)) != 0; // DISPCNT bit 23: hblank obj processing
+        self.dispcnt.char_base = ((word >> 24) & 0x7) as i32; // character base (bits 24-26)
+        self.dispcnt.screen_base = ((word >> 27) & 0x7) as i32; // screen base (bits 27-29)
+        self.dispcnt.bg_extended_palette = (word & (1 << 30)) != 0; // DISPCNT bit 30: bg extended palette
+        self.dispcnt.obj_extended_palette = (word & (1 << 31)) != 0; // DISPCNT bit 31: obj extended palette
 
         log::trace!(
             target: "gpu_2d",
@@ -385,12 +393,14 @@ impl Gpu2DEngine {
     pub fn set_bgcnt(&mut self, halfword: u16, index: usize) {
         self.bgcnt[index] = halfword;
 
-        let priority = halfword & 0x3;
-        let char_base = (halfword >> 2) & 0xF;
-        let mosaic = (halfword & (1 << 6)) != 0;
-        let color_mode_256 = (halfword & (1 << 7)) != 0;
-        let screen_base = (halfword >> 8) & 0x1F;
-        let screen_size = (halfword >> 14) & 0x3;
+        // LCD I/O BG Control: https://problemkaputt.de/gbatek.htm#lcdiobgcontrol
+        let priority = halfword & 0x3; // BG priority (bits 0-1)
+        let char_base = (halfword >> 2) & 0xF; // character base block (bits 2-5)
+        // LCD I/O BG Control: https://problemkaputt.de/gbatek.htm#lcdiobgcontrol
+        let mosaic = (halfword & (1 << 6)) != 0; // BGxCNT bit 6
+        let color_mode_256 = (halfword & (1 << 7)) != 0; // BGxCNT bit 7
+        let screen_base = (halfword >> 8) & 0x1F; // screen base block (bits 8-12)
+        let screen_size = (halfword >> 14) & 0x3; // screen size (bits 14-15)
 
         log::trace!(
             target: "gpu_bg",
@@ -488,10 +498,11 @@ impl Gpu2DEngine {
             self.winin.win0_bg_enabled[bit] = (halfword & (1 << bit)) != 0;
             self.winin.win1_bg_enabled[bit] = (halfword & (1 << (bit + 8))) != 0;
         }
-        self.winin.win0_obj_enabled = (halfword & (1 << 4)) != 0;
-        self.winin.win0_color_special = (halfword & (1 << 5)) != 0;
-        self.winin.win1_obj_enabled = (halfword & (1 << 12)) != 0;
-        self.winin.win1_color_special = (halfword & (1 << 13)) != 0;
+        // LCD I/O Window Feature: https://problemkaputt.de/gbatek.htm#lcdiowindowfeature
+        self.winin.win0_obj_enabled = (halfword & (1 << 4)) != 0; // WININ bit 4: win0 obj enabled
+        self.winin.win0_color_special = (halfword & (1 << 5)) != 0; // WININ bit 5: win0 color special
+        self.winin.win1_obj_enabled = (halfword & (1 << 12)) != 0; // WININ bit 12: win1 obj enabled
+        self.winin.win1_color_special = (halfword & (1 << 13)) != 0; // WININ bit 13: win1 color special
     }
 
     /// Decodes WINOUT into outside / OBJ-window layer flags.
@@ -500,10 +511,11 @@ impl Gpu2DEngine {
             self.winout.outside_bg_enabled[bit] = (halfword & (1 << bit)) != 0;
             self.winout.objwin_bg_enabled[bit] = (halfword & (1 << (bit + 8))) != 0;
         }
-        self.winout.outside_obj_enabled = (halfword & (1 << 4)) != 0;
-        self.winout.outside_color_special = (halfword & (1 << 5)) != 0;
-        self.winout.objwin_obj_enabled = (halfword & (1 << 12)) != 0;
-        self.winout.objwin_color_special = (halfword & (1 << 13)) != 0;
+        // LCD I/O Window Feature: https://problemkaputt.de/gbatek.htm#lcdiowindowfeature
+        self.winout.outside_obj_enabled = (halfword & (1 << 4)) != 0; // WINOUT bit 4: outside obj enabled
+        self.winout.outside_color_special = (halfword & (1 << 5)) != 0; // WINOUT bit 5: outside color special
+        self.winout.objwin_obj_enabled = (halfword & (1 << 12)) != 0; // WINOUT bit 12: objwin obj enabled
+        self.winout.objwin_color_special = (halfword & (1 << 13)) != 0; // WINOUT bit 13: objwin color special
     }
 
     /// Decodes BLDCNT (first/second targets, effect).
@@ -512,13 +524,15 @@ impl Gpu2DEngine {
             self.bldcnt.bg_first_target_pix[bit] = (halfword & (1 << bit)) != 0;
             self.bldcnt.bg_second_target_pix[bit] = (halfword & (1 << (bit + 8))) != 0;
         }
-        self.bldcnt.obj_first_target_pix = (halfword & (1 << 4)) != 0;
-        self.bldcnt.obj_second_target_pix = (halfword & (1 << 12)) != 0;
+        // LCD I/O Color Special Effects: https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects
+        self.bldcnt.obj_first_target_pix = (halfword & (1 << 4)) != 0; // BLDCNT bit 4: obj first target pix
+        self.bldcnt.obj_second_target_pix = (halfword & (1 << 12)) != 0; // BLDCNT bit 12: obj second target pix
 
-        self.bldcnt.bd_first_target_pix = (halfword & (1 << 5)) != 0;
-        self.bldcnt.bd_second_target_pix = (halfword & (1 << 13)) != 0;
+        self.bldcnt.bd_first_target_pix = (halfword & (1 << 5)) != 0; // BLDCNT bit 5: bd first target pix
+        self.bldcnt.bd_second_target_pix = (halfword & (1 << 13)) != 0; // BLDCNT bit 13: bd second target pix
 
-        self.bldcnt.effect = ((halfword >> 6) & 0x3) as u8;
+        // LCD I/O Color Special Effects: https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects
+        self.bldcnt.effect = ((halfword >> 6) & 0x3) as u8; // color special effect (bits 6-7)
     }
 
     /// Stores BLDALPHA (EVA/EVB).
@@ -558,7 +572,8 @@ impl Gpu2DEngine {
         // Flags
         self.dispcapcnt.a_3d_only = (word & (1 << 24)) != 0;
 
-        self.dispcapcnt.b_display_fifo = (word & (1 << 25)) != 0;
+        // DS Video Capture and Main Memory Display Mode: https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode
+        self.dispcapcnt.b_display_fifo = (word & (1 << 25)) != 0; // DISPCAPCNT bit 25: b display fifo
 
         // VRAM read offset (2 bits)
         self.dispcapcnt.vram_read_offset = ((word >> 26) & 0x3) as u8;

@@ -91,7 +91,8 @@ impl NDSCart {
     /// Create new cartridge controller
     pub fn new() -> Self {
         Self {
-            key1_buffer: vec![0_u8; 0x1048],
+            // DS Encryption by Gamecode/Idcode (KEY1): https://problemkaputt.de/gbatek.htm#dsencryptionbygamecodeidcodekey1
+            key1_buffer: vec![0_u8; 0x1048], // KEY1 table: 1048h bytes copied from ARM7 BIOS offset 30h
             cmd_encrypt_mode: 0,
             rom: Vec::new(),
             save_database: Vec::new(),

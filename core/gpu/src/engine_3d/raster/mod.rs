@@ -65,7 +65,8 @@ impl Dims {
 #[inline]
 fn expand6(c: u32) -> (u32, u32, u32) {
     let e = |v: u32| if v != 0 { v + 1 } else { 0 };
-    (e((c << 1) & 0x3E), e((c >> 4) & 0x3E), e((c >> 9) & 0x3E))
+    // DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing: https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing
+    (e((c << 1) & 0x3E), e((c >> 4) & 0x3E), e((c >> 9) & 0x3E)) // BGR555 components widened to 6 bits
 }
 
 /// Inputs of one frame.
@@ -301,8 +302,9 @@ impl Raster {
     /// edge marking); the visible rows are cleared by the bands.
     fn clear_borders(&mut self, st: &RenderState) {
         let d = self.dims;
-        let clear_z = ((st.clear_attr2 & 0x7FFF) * 0x200 + 0x1FF) as i32;
-        let poly_id = st.clear_attr1 & 0x3F00_0000;
+        // DS 3D Rear-Plane: https://problemkaputt.de/gbatek.htm#ds3drearplane
+        let clear_z = ((st.clear_attr2 & 0x7FFF) * 0x200 + 0x1FF) as i32; // CLEAR_DEPTH (bits 0-14) to 24-bit depth: value * 200h + 1FFh
+        let poly_id = st.clear_attr1 & 0x3F00_0000; // CLEAR_COLOR polygon ID (bits 24-29)
         for range in [0..d.pitch, d.pitch * (d.height + 1)..d.layer] {
             self.color[range.clone()].fill(0);
             self.depth[range.clone()].fill(clear_z);
@@ -316,9 +318,12 @@ impl Raster {
         if dst_alpha == 0 {
             return src;
         }
-        let (mut r, mut g, mut b) = (src & 0x3F, (src >> 8) & 0x3F, (src >> 16) & 0x3F);
+        // DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing: https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing
+        let (mut r, mut g, mut b) = (src & 0x3F, (src >> 8) & 0x3F, (src >> 16) & 0x3F); // 6-bit RGB of the source pixel (bits 0-5, 8-13, 16-21)
+        // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
         if st.disp_cnt & (1 << 3) != 0 {
-            let (dr, dg, db) = (dst & 0x3F, (dst >> 8) & 0x3F, (dst >> 16) & 0x3F);
+            // DISP3DCNT bit 3: alpha blending enable
+            let (dr, dg, db) = (dst & 0x3F, (dst >> 8) & 0x3F, (dst >> 16) & 0x3F); // 6-bit RGB of the destination pixel
             alpha += 1;
             r = (r * alpha + dr * (32 - alpha)) >> 5;
             g = (g * alpha + dg * (32 - alpha)) >> 5;
@@ -328,7 +333,7 @@ impl Raster {
         if alpha > dst_alpha {
             dst_alpha = alpha;
         }
-        r | (g << 8) | (b << 16) | (dst_alpha << 24)
+        r | (g << 8) | (b << 16) | (dst_alpha << 24) // pack 6-bit RGB (bits 0/8/16) and alpha (bits 24-28)
     }
 
     /// Edge marking, fog and anti-aliasing of one finished line.
@@ -356,8 +361,9 @@ fn clear_rows(
     y0: usize,
 ) {
     let st = f.st;
-    let clear_z = ((st.clear_attr2 & 0x7FFF) * 0x200 + 0x1FF) as i32;
-    let poly_id = st.clear_attr1 & 0x3F00_0000;
+    // DS 3D Rear-Plane: https://problemkaputt.de/gbatek.htm#ds3drearplane
+    let clear_z = ((st.clear_attr2 & 0x7FFF) * 0x200 + 0x1FF) as i32; // CLEAR_DEPTH (bits 0-14) to 24-bit depth: value * 200h + 1FFh
+    let poly_id = st.clear_attr1 & 0x3F00_0000; // CLEAR_COLOR polygon ID (bits 24-29)
 
     // Borders (outside the visible area) only matter for edge marking.
     color.fill(0);
@@ -369,7 +375,7 @@ fn clear_rows(
         // Rear-plane bitmap from texture slots 2 (color) and 3 (depth),
         // one DS pixel per scale x scale block.
         let yoff0 = ((st.clear_attr2 >> 24) & 0xFF) as u8;
-        let xoff0 = ((st.clear_attr2 >> 16) & 0xFF) as u8;
+        let xoff0 = ((st.clear_attr2 >> 16) & 0xFF) as u8; // CLRIMAGE_OFFSET X scroll (bits 16-23 of the packed register)
         for row in 0..rows {
             let yoff = yoff0.wrapping_add(((y0 + row) / d.scale) as u8);
             for x in 0..d.width {
@@ -379,21 +385,21 @@ fn clear_rows(
                     let a = a as usize;
                     u32::from(u16::from_le_bytes([f.tex[a], f.tex[a + 1]]))
                 };
-                let val2 = rd(0x40000 + ofs);
-                let val3 = rd(0x60000 + ofs);
+                let val2 = rd(0x40000 + ofs); // rear-plane color bitmap in texture slot 2
+                let val3 = rd(0x60000 + ofs); // rear-plane depth bitmap in texture slot 3
                 let (r, g, b) = expand6(val2);
-                let a = if val2 & 0x8000 != 0 { 0x1F00_0000 } else { 0 };
+                let a = if val2 & 0x8000 != 0 { 0x1F00_0000 } else { 0 }; // color bitmap bit 15: alpha (opaque/transparent)
                 let addr = row * d.pitch + 1 + x;
-                color[addr] = r | (g << 8) | (b << 16) | a;
-                depth[addr] = ((val3 & 0x7FFF) * 0x200 + 0x1FF) as i32;
-                attr[addr] = poly_id | (val3 & 0x8000);
+                color[addr] = r | (g << 8) | (b << 16) | a; // pack 6-bit RGB with alpha
+                depth[addr] = ((val3 & 0x7FFF) * 0x200 + 0x1FF) as i32; // depth bitmap bits 0-14 to 24-bit depth
+                attr[addr] = poly_id | (val3 & 0x8000); // depth bitmap bit 15: fog enable
             }
         }
     } else {
         let (r, g, b) = expand6(st.clear_attr1);
-        let a = (st.clear_attr1 >> 16) & 0x1F;
-        let clear_color = r | (g << 8) | (b << 16) | (a << 24);
-        let clear_attr = poly_id | (st.clear_attr1 & 0x8000);
+        let a = (st.clear_attr1 >> 16) & 0x1F; // CLEAR_COLOR alpha (bits 16-20)
+        let clear_color = r | (g << 8) | (b << 16) | (a << 24); // pack 6-bit RGB and alpha (bits 24-28)
+        let clear_attr = poly_id | (st.clear_attr1 & 0x8000); // CLEAR_COLOR fog enable (bit 15)
         for row in 0..rows {
             let start = row * d.pitch + 1;
             color[start..start + d.width].fill(clear_color);
@@ -444,9 +450,10 @@ impl Pixels<'_> {
         } else {
             let z = ((z - st.fog_offset) >> 2) << st.fog_shift;
             let id = (z >> 17) as usize;
-            if id >= 32 { (32, 0) } else { (id, z & 0x1FFFF) }
+            // DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing: https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing
+            if id >= 32 { (32, 0) } else { (id, z & 0x1FFFF) } // fog table index and 17-bit fraction between entries
         };
-        let d = (u32::from(st.fog_density[id]) * (0x20000 - frac)
+        let d = (u32::from(st.fog_density[id]) * (0x20000 - frac) // linear interpolation between two FOG_TABLE entries
             + u32::from(st.fog_density[id + 1]) * frac)
             >> 17;
         if d >= 127 { 128 } else { d }
@@ -454,22 +461,25 @@ impl Pixels<'_> {
 
     /// Mixes the fog color into the pixel at `addr` (pixels with the fog attribute bit only).
     fn apply_fog(&mut self, st: &RenderState, addr: usize) {
+        // DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing: https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing
         if self.attr[addr] & (1 << 15) == 0 {
+            // bit 15: fog enable for this pixel
             return;
         }
         let density = self.fog_density(st, addr);
         let src = self.color[addr];
-        let (mut r, mut g, mut b) = (src & 0x3F, (src >> 8) & 0x3F, (src >> 16) & 0x3F);
-        let mut a = (src >> 24) & 0x1F;
+        let (mut r, mut g, mut b) = (src & 0x3F, (src >> 8) & 0x3F, (src >> 16) & 0x3F); // 6-bit RGB of the pixel
+        let mut a = (src >> 24) & 0x1F; // 5-bit alpha (bits 24-28)
         if st.disp_cnt & (1 << 6) == 0 {
+            // DISP3DCNT bit 6: fog mode (0 = color and alpha, 1 = alpha only)
             let (fr, fg, fb) = expand6(st.fog_color);
             r = (fr * density + r * (128 - density)) >> 7;
             g = (fg * density + g * (128 - density)) >> 7;
             b = (fb * density + b * (128 - density)) >> 7;
         }
-        let fa = (st.fog_color >> 16) & 0x1F;
+        let fa = (st.fog_color >> 16) & 0x1F; // FOG_COLOR alpha (bits 16-20)
         a = (fa * density + a * (128 - density)) >> 7;
-        self.color[addr] = r | (g << 8) | (b << 16) | (a << 24);
+        self.color[addr] = r | (g << 8) | (b << 16) | (a << 24); // pack 6-bit RGB and alpha
     }
 
     /// Edge marking, fog and anti-aliasing of the `width` pixels from
@@ -478,10 +488,12 @@ impl Pixels<'_> {
         let (pitch, layer) = (self.pitch, self.layer);
 
         if st.disp_cnt & (1 << 5) != 0 {
+            // DISP3DCNT bit 5: edge marking
             for x in 0..width {
                 let addr = row + x;
                 let attr = self.attr[addr];
                 if attr & 0xF == 0 {
+                    // edge flags (bits 0-3) clear: not an edge pixel
                     continue;
                 }
                 let id = attr >> 24;
@@ -493,32 +505,37 @@ impl Pixels<'_> {
                     || differs(addr + pitch)
                 {
                     let (r, g, b) = expand6(u32::from(st.edge_table[(id >> 3) as usize & 7]));
-                    self.color[addr] = r | (g << 8) | (b << 16) | (self.color[addr] & 0xFF00_0000);
-                    self.attr[addr] = (self.attr[addr] & 0xFFFF_E0FF) | 0x1000;
+                    self.color[addr] = r | (g << 8) | (b << 16) | (self.color[addr] & 0xFF00_0000); // edge color replaces RGB, alpha is kept
+                    self.attr[addr] = (self.attr[addr] & 0xFFFF_E0FF) | 0x1000; // clear coverage (bits 8-12) and set it to half (10h)
                 }
             }
         }
 
         if st.disp_cnt & (1 << 7) != 0 {
+            // DISP3DCNT bit 7: fog enable
             for x in 0..width {
                 let addr = row + x;
                 let attr = self.attr[addr];
                 self.apply_fog(st, addr);
                 if attr & 0xF != 0 {
+                    // edge flags (bits 0-3)
                     self.apply_fog(st, addr + layer);
                 }
             }
         }
 
         if st.disp_cnt & (1 << 4) != 0 {
+            // DISP3DCNT bit 4: anti-aliasing
             for x in 0..width {
                 let addr = row + x;
                 let attr = self.attr[addr];
                 if attr & 0xF == 0 {
+                    // edge flags (bits 0-3)
                     continue;
                 }
-                let mut coverage = (attr >> 8) & 0x1F;
+                let mut coverage = (attr >> 8) & 0x1F; // anti-aliasing coverage (bits 8-12)
                 if coverage == 0x1F {
+                    // full coverage
                     continue;
                 }
                 let bot = self.color[addr + layer];
@@ -527,10 +544,10 @@ impl Pixels<'_> {
                     continue;
                 }
                 let top = self.color[addr];
-                let ch = |c: u32, s: u32| (c >> s) & 0x3F;
+                let ch = |c: u32, s: u32| (c >> s) & 0x3F; // 6-bit color channel
                 let (mut r, mut g, mut b) = (ch(top, 0), ch(top, 8), ch(top, 16));
-                let mut a = (top >> 24) & 0x1F;
-                let bot_a = (bot >> 24) & 0x1F;
+                let mut a = (top >> 24) & 0x1F; // 5-bit alpha (bits 24-28)
+                let bot_a = (bot >> 24) & 0x1F; // 5-bit alpha (bits 24-28)
                 coverage += 1;
                 if bot_a > 0 {
                     r = (r * coverage + ch(bot, 0) * (32 - coverage)) >> 5;
@@ -538,7 +555,7 @@ impl Pixels<'_> {
                     b = (b * coverage + ch(bot, 16) * (32 - coverage)) >> 5;
                 }
                 a = (a * coverage + bot_a * (32 - coverage)) >> 5;
-                self.color[addr] = r | (g << 8) | (b << 16) | (a << 24);
+                self.color[addr] = r | (g << 8) | (b << 16) | (a << 24); // pack 6-bit RGB and alpha
             }
         }
     }

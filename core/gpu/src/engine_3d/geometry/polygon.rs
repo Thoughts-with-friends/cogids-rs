@@ -22,7 +22,8 @@ impl Gpu3D {
         let idx = self.vertex_num_in_poly;
         let mut vt = Vertex {
             position: transform(v, &self.clip_matrix),
-            color: self.vertex_color.map(|c| (i32::from(c) << 12) + 0xFFF),
+            // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
+            color: self.vertex_color.map(|c| (i32::from(c) << 12) + 0xFFF), // 5-bit color to fixed point, low bits filled
             ..Vertex::default()
         };
         if self.tex_param >> 30 == 3 {
@@ -132,7 +133,9 @@ impl Gpu3D {
             .wrapping_add(i64::from(v1.position[1]).wrapping_mul(ny))
             .wrapping_add(i64::from(v1.position[3]).wrapping_mul(nz));
         let facing_view = dot <= 0;
+        // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
         if (dot < 0 && attr & (1 << 7) == 0) || (dot > 0 && attr & (1 << 6) == 0) {
+            // POLYGON_ATTR bit 7: render front surface, bit 6: render back surface
             self.last_strip_polygon = None;
             return;
         }
@@ -173,7 +176,7 @@ impl Gpu3D {
 
         nverts = clip_polygon(
             true,
-            attr & (1 << 12) != 0,
+            attr & (1 << 12) != 0, // POLYGON_ATTR bit 12: far plane intersecting polygons
             &mut clipped,
             nverts,
             clip_start,
@@ -184,14 +187,16 @@ impl Gpu3D {
         }
         if self.num_polygons >= MAX_POLYGONS || self.num_vertices + nverts > MAX_VERTICES {
             self.last_strip_polygon = None;
-            self.disp_cnt |= 1 << 13;
+            // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
+            self.disp_cnt |= 1 << 13; // DISP3DCNT bit 13: polygon/vertex RAM overflow
             return;
         }
 
         // Viewport transform (32-bit divider, as on hardware).
         let vp = self.viewport;
         for vtx in &mut clipped[clip_start..nverts] {
-            vtx.position[3] &= 0x00FF_FFFF;
+            // DS 3D Polygon Definitions by Vertices: https://problemkaputt.de/gbatek.htm#ds3dpolygondefinitionsbyvertices
+            vtx.position[3] &= 0x00FF_FFFF; // W is kept to 24 bits
             let w = vtx.position[3] as u32;
             let (pos_x, pos_y, fine) = if w == 0 {
                 (0, 0, [0, 0])
@@ -200,6 +205,7 @@ impl Gpu3D {
                 let mut py = (vtx.position[1] as u32).wrapping_neg().wrapping_add(w);
                 let mut den = w;
                 if w > 0xFFFF {
+                    // W wider than 16 bits: normalize before dividing
                     px >>= 1;
                     py >>= 1;
                     den >>= 1;
@@ -217,8 +223,8 @@ impl Gpu3D {
                     [fine(px, vp.width, vp.x0), fine(py, vp.height, vp.y1)],
                 )
             };
-            vtx.final_position = [(pos_x & 0x1FF) as i32, (pos_y & 0xFF) as i32];
-            vtx.hires_position = [fine[0] & 0x1FFF, fine[1] & 0xFFF];
+            vtx.final_position = [(pos_x & 0x1FF) as i32, (pos_y & 0xFF) as i32]; // screen X is 9 bits, Y is 8 bits
+            vtx.hires_position = [fine[0] & 0x1FFF, fine[1] & 0xFFF]; // hi-res subpixel coordinates (13 / 12 bits)
         }
 
         // Zero-dot polygons far behind are rejected unless bit 13 is set.
@@ -243,17 +249,18 @@ impl Gpu3D {
         }
 
         let tex_fmt = (self.tex_param >> 26) & 7;
-        let alpha = (attr >> 16) & 0x1F;
+        // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
+        let alpha = (attr >> 16) & 0x1F; // POLYGON_ATTR alpha (bits 16-20)
         let mut poly = Polygon {
             attr,
             tex_param: self.tex_param,
             tex_palette: self.tex_palette,
             facing_view,
             translucent: tex_fmt == 1 || tex_fmt == 6 || (alpha > 0 && alpha < 31),
-            is_shadow_mask: attr & 0x3F00_0030 == 0x30,
+            is_shadow_mask: attr & 0x3F00_0030 == 0x30, // shadow mask polygon: mode 3 (bits 4-5) with polygon ID 0 (bits 24-29)
             ..Polygon::default()
         };
-        poly.is_shadow = attr & 0x30 == 0x30 && !poly.is_shadow_mask;
+        poly.is_shadow = attr & 0x30 == 0x30 && !poly.is_shadow_mask; // shadow polygon: mode 3 (bits 4-5) with a non-zero ID
 
         let vram = &mut self.vertex_ram[bank];
         if self.last_strip_polygon.is_some() && clip_start > 0 {
@@ -273,7 +280,7 @@ impl Gpu3D {
             let mut vtx = *src;
             for k in 0..3 {
                 let c = vtx.color[k] >> 12;
-                vtx.final_color[k] = if c != 0 { (c << 4) + 0xF } else { 0 };
+                vtx.final_color[k] = if c != 0 { (c << 4) + 0xF } else { 0 }; // 5-bit color component expanded to 9 bits
             }
             vram[self.num_vertices] = vtx;
             poly.vertices[i] = self.num_vertices;
@@ -314,7 +321,8 @@ impl Gpu3D {
         }
         poly.sort_key = ((ybot as u32) << 8) | ytop as u32;
         if poly.translucent {
-            poly.sort_key |= 0x10000;
+            // DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing: https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing
+            poly.sort_key |= 0x10000; // translucent polygons sort after opaque ones
         }
         poly.w_buffer = self.flush_attributes & 2 != 0;
 
@@ -330,11 +338,12 @@ impl Gpu3D {
             let z = if poly.w_buffer {
                 i64::from(wshifted)
             } else if v.position[3] != 0 {
-                (i64::from(v.position[2]) * 0x4000 / i64::from(v.position[3]) + 0x3FFF) * 0x200
+                // DS 3D Matrix Types: https://problemkaputt.de/gbatek.htm#ds3dmatrixtypes
+                (i64::from(v.position[2]) * 0x4000 / i64::from(v.position[3]) + 0x3FFF) * 0x200 // Z-buffer depth: z / w scaled to 24 bits
             } else {
-                0x7F_FE00
+                0x7F_FE00 // W-buffering depth limit
             };
-            poly.final_z[i] = z.clamp(0, 0xFF_FFFF) as i32;
+            poly.final_z[i] = z.clamp(0, 0xFF_FFFF) as i32; // depth buffer is 24 bits
             poly.final_w[i] = w;
         }
 

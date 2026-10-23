@@ -17,15 +17,19 @@ impl SpuBus<'_> {
     /// The 4 bytes at word address `addr` in main RAM / WRAM, or `None`.
     fn locate(&mut self, addr: u32) -> Option<&mut [u8]> {
         let (mem, off): (&mut [u8], usize) = match addr >> 24 {
-            0x02 => (&mut *self.main_ram, (addr & MAIN_RAM_MASK) as usize),
+            // DS Memory Maps: https://problemkaputt.de/gbatek.htm#dsmemorymaps
+            0x02 => (&mut *self.main_ram, (addr & MAIN_RAM_MASK) as usize), // Main RAM
             0x03 if addr >= ARM7_WRAM_START => {
+                // ARM7 WRAM
                 (&mut *self.arm7_wram, (addr & ARM7_WRAM_MASK) as usize)
             }
+            // DS Memory Control - WRAM: https://problemkaputt.de/gbatek.htm#dsmemorycontrolwram
             0x03 => match self.wram_cnt & 3 {
+                // shared WRAM as seen by ARM7, per WRAMCNT
                 0 => (&mut *self.arm7_wram, (addr & ARM7_WRAM_MASK) as usize),
-                1 => (&mut *self.shared_wram, (addr & 0x3FFF) as usize),
-                2 => (&mut *self.shared_wram, ((addr & 0x3FFF) + 0x4000) as usize),
-                _ => (&mut *self.shared_wram, (addr & 0x7FFF) as usize),
+                1 => (&mut *self.shared_wram, (addr & 0x3FFF) as usize), // WRAMCNT 1: ARM7 gets the first 16K
+                2 => (&mut *self.shared_wram, ((addr & 0x3FFF) + 0x4000) as usize), // WRAMCNT 2: ARM7 gets the second 16K
+                _ => (&mut *self.shared_wram, (addr & 0x7FFF) as usize), // WRAMCNT 3: ARM7 gets all 32K
             },
             _ => return None,
         };

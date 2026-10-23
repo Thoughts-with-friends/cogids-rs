@@ -69,34 +69,37 @@ impl RegSpiCnt {
     /// Get register value as 16-bit halfword
     pub const fn get(&self) -> u16 {
         let mut value = 0_u16;
-        value |= (self.bandwidth & 0x3) as u16;
+        // DS Serial Peripheral Interface Bus (SPI): https://problemkaputt.de/gbatek.htm#dsserialperipheralinterfacebusspi
+        value |= (self.bandwidth & 0x3) as u16; // SPICNT baudrate (bits 0-1)
         if self.busy {
-            value |= 1 << 7;
+            // DS Serial Peripheral Interface Bus (SPI): https://problemkaputt.de/gbatek.htm#dsserialperipheralinterfacebusspi
+            value |= 1 << 7; // SPICNT bit 7: busy
         }
-        value |= ((self.device & 0x3) as u16) << 8;
+        value |= ((self.device & 0x3) as u16) << 8; // SPICNT device select (bits 8-9)
         if self.transfer_16bit {
-            value |= 1 << 10;
+            value |= 1 << 10; // SPICNT bit 10: transfer size (16-bit)
         }
         if self.chipselect_hold {
-            value |= 1 << 11;
+            value |= 1 << 11; // SPICNT bit 11: chipselect hold
         }
         if self.irq_after_transfer {
-            value |= 1 << 14;
+            value |= 1 << 14; // SPICNT bit 14: interrupt request enable
         }
         if self.enabled {
-            value |= 1 << 15;
+            value |= 1 << 15; // SPICNT bit 15: SPI bus enable
         }
         value
     }
 
     /// Set register value from 16-bit halfword
     pub const fn set(&mut self, value: u16) {
-        self.bandwidth = (value & 0x3) as u32;
-        self.device = ((value >> 8) & 0x3) as u32;
-        self.transfer_16bit = (value & (1 << 10)) != 0;
-        self.chipselect_hold = (value & (1 << 11)) != 0;
-        self.irq_after_transfer = (value & (1 << 14)) != 0;
-        self.enabled = (value & (1 << 15)) != 0;
+        self.bandwidth = (value & 0x3) as u32; // SPICNT baudrate (bits 0-1)
+        self.device = ((value >> 8) & 0x3) as u32; // SPICNT device select (bits 8-9)
+        // DS Serial Peripheral Interface Bus (SPI): https://problemkaputt.de/gbatek.htm#dsserialperipheralinterfacebusspi
+        self.transfer_16bit = (value & (1 << 10)) != 0; // SPICNT bit 10: transfer size (16-bit)
+        self.chipselect_hold = (value & (1 << 11)) != 0; // SPICNT bit 11: chipselect hold
+        self.irq_after_transfer = (value & (1 << 14)) != 0; // SPICNT bit 14: interrupt request enable
+        self.enabled = (value & (1 << 15)) != 0; // SPICNT bit 15: SPI bus enable
     }
 }
 

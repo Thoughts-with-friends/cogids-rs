@@ -83,12 +83,13 @@ impl Firmware {
 
         // Read USER1 sequence number and compare against USER0
         let user0_seq = self.read_u16((self.user_data + 0x70) as usize);
-        let user1_seq = self.read_u16((self.user_data + 0x170) as usize);
+        // DS Firmware User Settings: https://problemkaputt.de/gbatek.htm#dsfirmwareusersettings
+        let user1_seq = self.read_u16((self.user_data + 0x170) as usize); // user settings update counter (offset 70h)
 
         if user1_seq == ((user0_seq + 1) & 0x7F) {
             // Verify CRC of USER1 data
             #[rustfmt::skip]
-            let verify = self.verify_crc(0xFFFF, (self.user_data + 0x100) as usize, 0x70, (self.user_data + 0x172) as usize);
+            let verify = self.verify_crc(0xFFFF, (self.user_data + 0x100) as usize, 0x70, (self.user_data + 0x172) as usize); // CRC16 over 70h bytes of user settings, stored at offset 72h
             if verify {
                 // Switch to USER1 block
                 self.user_data += 0x100;
@@ -99,15 +100,18 @@ impl Firmware {
 
         // Recalculate firmware header CRC
         let header_len = self.read_u16(0x2C) as usize;
-        let header_crc = Self::create_crc(&self.raw_firmware[0x2C..], header_len, 0x0000);
-        self.write_u16(0x2A, header_crc);
+        // DS Firmware Header: https://problemkaputt.de/gbatek.htm#dsfirmwareheader
+        let header_crc = Self::create_crc(&self.raw_firmware[0x2C..], header_len, 0x0000); // header CRC16 over the data starting at 2Ch
+        self.write_u16(0x2A, header_crc); // header CRC16 at offset 2Ah
 
         // Debug output of CRC verification results
         #[cfg(feature = "log")]
         {
             log::error!(
                 "\nFW: USER0 CRC16 = {}",
+                // DS Firmware User Settings: https://problemkaputt.de/gbatek.htm#dsfirmwareusersettings
                 if self.verify_crc(0xFFFF, 0x3FE00, 0x70, 0x3FE72) {
+                    // user settings copy 0 at 3FE00h, CRC at 3FE72h
                     "GOOD"
                 } else {
                     "BAD"
@@ -116,6 +120,7 @@ impl Firmware {
             log::error!(
                 "FW: USER1 CRC16 = {}",
                 if self.verify_crc(0xFFFF, 0x3FF00, 0x70, 0x3FF72) {
+                    // user settings copy 1 at 3FF00h, CRC at 3FF72h
                     "GOOD"
                 } else {
                     "BAD"
@@ -142,12 +147,12 @@ impl Firmware {
 
         // Empty settings: fill in sane defaults (melonDS `UserData`).
         if self.read_u16(base) == 0 || self.read_u16(base) == 0xFFFF {
-            self.raw_firmware[base..base + 0x70].fill(0);
+            self.raw_firmware[base..base + 0x70].fill(0); // 70h bytes of user settings
             self.write_u16(base, 5); // version
             self.raw_firmware[base + 0x03] = 1; // birthday month
             self.raw_firmware[base + 0x04] = 1; // birthday day
             for (i, ch) in "Lunaris".encode_utf16().enumerate() {
-                self.write_u16(base + 0x06 + i * 2, ch);
+                self.write_u16(base + 0x06 + i * 2, ch); // nickname (offset 06h, UTF-16)
             }
             self.write_u16(base + 0x1A, 7); // nickname length
             // Language 0 (Japanese), backlight max.
@@ -157,39 +162,41 @@ impl Firmware {
         // Touch screen calibration: ADC (0,0) = pixel (0,0),
         // ADC (255<<4, 191<<4) = pixel (255,191).
         self.write_u16(base + 0x58, 0);
-        self.write_u16(base + 0x5A, 0);
-        self.raw_firmware[base + 0x5C] = 0;
-        self.raw_firmware[base + 0x5D] = 0;
-        self.write_u16(base + 0x5E, 255 << 4);
-        self.write_u16(base + 0x60, 191 << 4);
-        self.raw_firmware[base + 0x62] = 255;
-        self.raw_firmware[base + 0x63] = 191;
+        self.write_u16(base + 0x5A, 0); // touch calibration ADC X1/Y1 (offset 58h-5Bh)
+        self.raw_firmware[base + 0x5C] = 0; // touch calibration screen X1 (offset 5Ch)
+        self.raw_firmware[base + 0x5D] = 0; // touch calibration screen Y1 (offset 5Dh)
+        self.write_u16(base + 0x5E, 255 << 4); // touch calibration ADC X2 (offset 5Eh)
+        self.write_u16(base + 0x60, 191 << 4); // touch calibration ADC Y2 (offset 60h)
+        self.raw_firmware[base + 0x62] = 255; // touch calibration screen X2 (offset 62h)
+        self.raw_firmware[base + 0x63] = 191; // touch calibration screen Y2 (offset 63h)
 
-        let crc = Self::create_crc(&self.raw_firmware[base..], 0x70, 0xFFFF);
-        self.write_u16(base + 0x72, crc);
+        let crc = Self::create_crc(&self.raw_firmware[base..], 0x70, 0xFFFF); // CRC16 over the 70h bytes of user settings
+        self.write_u16(base + 0x72, crc); // user settings CRC16 at offset 72h
 
         // Same settings (and update counter) in the other slot.
         let other = 0x3FE00 + ((base - 0x3FE00) ^ 0x100);
-        self.raw_firmware.copy_within(base..base + 0x100, other);
+        self.raw_firmware.copy_within(base..base + 0x100, other); // copy the 100h byte user settings block
     }
 
     /// Replaces the Wi-Fi MAC address (header 0x36..0x3B) and fixes the
     /// Wi-Fi config CRC (0x2A). Consoles playing together need distinct
     /// MACs, or the host cannot tell its clients apart.
     pub fn set_mac_address(&mut self, mac: [u8; 6]) {
+        // DS Firmware Header: https://problemkaputt.de/gbatek.htm#dsfirmwareheader
         if self.raw_firmware.len() < 0x200 {
+            // image too small to hold the header
             return;
         }
-        self.raw_firmware[0x36..0x3C].copy_from_slice(&mac);
-        let len = usize::from(self.read_u16(0x2C)).min(self.raw_firmware.len() - 0x2C);
-        let crc = Self::create_crc(&self.raw_firmware[0x2C..], len, 0x0000);
-        self.write_u16(0x2A, crc);
+        self.raw_firmware[0x36..0x3C].copy_from_slice(&mac); // Wifi MAC address (offset 36h-3Bh)
+        let len = usize::from(self.read_u16(0x2C)).min(self.raw_firmware.len() - 0x2C); // header data length at 2Ch
+        let crc = Self::create_crc(&self.raw_firmware[0x2C..], len, 0x0000); // header CRC16 over the data starting at 2Ch
+        self.write_u16(0x2A, crc); // header CRC16 at offset 2Ah
     }
 
     /// The Wi-Fi MAC address (header 0x36..0x3B).
     pub fn mac_address(&self) -> [u8; 6] {
         let mut mac = [0; 6];
-        mac.copy_from_slice(&self.raw_firmware[0x36..0x3C]);
+        mac.copy_from_slice(&self.raw_firmware[0x36..0x3C]); // Wifi MAC address (offset 36h-3Bh)
         mac
     }
 
@@ -224,7 +231,9 @@ impl Firmware {
     pub fn create_crc(data: &[u8], length: usize, mut start: u32) -> u16 {
         // CRC polynomial lookup table (identical to C++ code)
         let stuff: [u16; 8] = [
-            0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001,
+            // BIOS Misc Functions: https://problemkaputt.de/gbatek.htm#biosmiscfunctions
+            0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001,
+            0xA001, // CRC16 table (BIOS GetCRC16)
         ];
 
         // Process each byte
@@ -235,6 +244,7 @@ impl Firmware {
             // Process each bit
             for (j, &v) in stuff.iter().enumerate() {
                 if (start & 0x1) != 0 {
+                    // CRC16 polynomial step
                     start >>= 1;
                     start ^= (v as u32) << (7 - j);
                 } else {
@@ -290,8 +300,9 @@ impl Firmware {
             // them only on a following byte left the write enable latch
             // clear, so the SDK's NVRAM writes retried forever.
             match input {
-                0x06 => self.status_reg |= 0x02,
-                0x04 => self.status_reg &= !0x02,
+                // DS Firmware Serial Flash Memory: https://problemkaputt.de/gbatek.htm#dsfirmwareserialflashmemory
+                0x06 => self.status_reg |= 0x02, // WREN: set write enable latch (status bit 1)
+                0x04 => self.status_reg &= !0x02, // WRDI: clear write enable latch (status bit 1)
                 _ => {}
             }
             return 0;
@@ -302,7 +313,7 @@ impl Firmware {
         match self.command {
             // READ / FAST READ (FAST READ has one extra dummy byte)
             0x03 | 0x0B => {
-                let data_start = if self.command == 0x0B { 5 } else { 4 };
+                let data_start = if self.command == 0x0B { 5 } else { 4 }; // FAST READ (0Bh) has a dummy byte after the address
                 if pos < 4 {
                     self.address = (self.address << 8) | u32::from(input);
                     0
@@ -316,11 +327,13 @@ impl Firmware {
                 }
             }
             0x04 => {
+                // WRDI
                 self.status_reg &= !0x02; // WRDI
                 0
             }
             0x05 => self.status_reg, // RDSR
             0x06 => {
+                // WREN
                 self.status_reg |= 0x02; // WREN
                 0
             }
@@ -329,6 +342,7 @@ impl Firmware {
                 if pos < 4 {
                     self.address = (self.address << 8) | u32::from(input);
                 } else if self.status_reg & 0x02 != 0 {
+                    // status bit 1: write enable latch
                     let len = self.raw_firmware.len() as u32;
                     self.raw_firmware[(self.address % len) as usize] = input;
                     self.address = self.address.wrapping_add(1);
@@ -337,12 +351,12 @@ impl Firmware {
             }
             // RDID: manufacturer / device ID
             0x9F => match pos {
-                1 => 0x20,
-                2 => 0x40,
-                3 => 0x12,
+                1 => 0x20, // RDID byte 1: manufacturer 20h (ST)
+                2 => 0x40, // RDID byte 2: memory type 40h
+                3 => 0x12, // RDID byte 3: capacity 12h (256K)
                 _ => 0,
             },
-            _ => 0xFF,
+            _ => 0xFF, // data bus idle level
         }
     }
 
@@ -350,7 +364,8 @@ impl Firmware {
     /// byte starts a new command. Write commands also drop the write latch.
     pub const fn release(&mut self) {
         if self.selected && matches!(self.command, 0x0A | 0x02) {
-            self.status_reg &= !0x02;
+            // PW (page write) / PP (page program) finished
+            self.status_reg &= !0x02; // clear write enable latch
         }
         self.selected = false;
         self.command = 0;

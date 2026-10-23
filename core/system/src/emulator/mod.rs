@@ -275,7 +275,8 @@ impl Emulator {
     /// yields quotient = -1 (or +1 for a negative numerator) and remainder =
     /// numerator, and bit 14 flags a zero 64-bit denominator.
     pub fn start_division(&mut self) {
-        let mode = self.divcnt & 0x3;
+        // DS Maths: https://problemkaputt.de/gbatek.htm#dsmaths
+        let mode = self.divcnt & 0x3; // DIVCNT division mode (bits 0-1)
         let num64 = self.div_numer as i64;
         let den64 = self.div_denom as i64;
 
@@ -311,7 +312,7 @@ impl Emulator {
         // word only; the upper word still follows the sign.
         let quot = if mode == 0 && (self.div_denom as u32) == 0 {
             let lo = quot as u32;
-            let hi: u32 = if (num64 as i32) < 0 { 0xFFFF_FFFF } else { 0 };
+            let hi: u32 = if (num64 as i32) < 0 { 0xFFFF_FFFF } else { 0 }; // sign-extend the 32-bit numerator
             (u64::from(hi) << 32 | u64::from(lo)) as i64
         } else {
             quot
@@ -320,25 +321,28 @@ impl Emulator {
         self.div_result = quot as u64;
         self.div_remresult = rem as u64;
         if self.div_denom == 0 {
-            self.divcnt |= 1 << 14;
+            // DS Maths: https://problemkaputt.de/gbatek.htm#dsmaths
+            self.divcnt |= 1 << 14; // DIVCNT bit 14: division by zero
         } else {
-            self.divcnt &= !(1 << 14);
+            self.divcnt &= !(1 << 14); // DIVCNT bit 14: division by zero (clear)
         }
     }
 
     /// Writes one 32-bit half of a divider operand and restarts the division
     /// (ARM9 writes to 0x04000290..0x0400029F -> start_division()).
     pub fn write_div_operand(&mut self, address: u32, word: u32) {
+        // DS Maths: https://problemkaputt.de/gbatek.htm#dsmaths
         let (field, high) = match address & 0xC {
-            0x0 => (&mut self.div_numer, false),
-            0x4 => (&mut self.div_numer, true),
-            0x8 => (&mut self.div_denom, false),
+            // DIV_NUMER / DIV_DENOM word (address bits 2-3)
+            0x0 => (&mut self.div_numer, false), // DIV_NUMER low word
+            0x4 => (&mut self.div_numer, true),  // DIV_NUMER high word
+            0x8 => (&mut self.div_denom, false), // DIV_DENOM low word
             _ => (&mut self.div_denom, true),
         };
         *field = if high {
-            (*field & 0xFFFF_FFFF) | (u64::from(word) << 32)
+            (*field & 0xFFFF_FFFF) | (u64::from(word) << 32) // replace the high 32 bits
         } else {
-            (*field & !0xFFFF_FFFF) | u64::from(word)
+            (*field & !0xFFFF_FFFF) | u64::from(word) // replace the low 32 bits
         };
         self.start_division();
     }
@@ -351,7 +355,8 @@ impl Emulator {
         let param = if self.sqrtcnt & 1 != 0 {
             self.sqrt_param
         } else {
-            self.sqrt_param & 0xFFFF_FFFF
+            // DS Maths: https://problemkaputt.de/gbatek.htm#dsmaths
+            self.sqrt_param & 0xFFFF_FFFF // SQRTCNT mode 0: 32-bit parameter
         };
         self.sqrt_result = param.isqrt() as u32;
     }
@@ -360,9 +365,9 @@ impl Emulator {
     /// (ARM9 writes to 0x040002B8..0x040002BF -> start_sqrt()).
     pub fn write_sqrt_param(&mut self, address: u32, word: u32) {
         self.sqrt_param = if address & 4 != 0 {
-            (self.sqrt_param & 0xFFFF_FFFF) | (u64::from(word) << 32)
+            (self.sqrt_param & 0xFFFF_FFFF) | (u64::from(word) << 32) // replace the high 32 bits
         } else {
-            (self.sqrt_param & !0xFFFF_FFFF) | u64::from(word)
+            (self.sqrt_param & !0xFFFF_FFFF) | u64::from(word) // replace the low 32 bits
         };
         self.start_sqrt();
     }
@@ -403,9 +408,11 @@ impl Emulator {
         self.spu.power_on();
         self.nds_timing.power_on();
         self.rtc.init();
+
         self.total_timestamp = 20; //Give the processors some time to run
         self.pow_cnt2.speakers = true;
         self.pow_cnt2.wifi = false;
+
         if let Some(mac) = self.config.mac_address {
             self.spi.firmware.set_mac_address(mac);
         }
@@ -413,7 +420,7 @@ impl Emulator {
         self.wifi.set_power_cnt(false);
 
         self.system_timestamp = 0;
-        self.next_event_time = 0xffffffff;
+        self.next_event_time = 0xffffffff; // no event scheduled
         self.gpu_event.activation_time = 0;
         self.gpu_event.id = 0;
         self.dma_event.activation_time = 0;
@@ -519,7 +526,8 @@ impl Emulator {
         // those locks permanently "held".
         for address in (0..0x170).step_by(4) {
             let word = self.cart.direct_read_word(address);
-            let offset = ((0x027F_FE00 + address) & MAIN_RAM_MASK) as usize;
+            // BIOS RAM Usage: https://problemkaputt.de/gbatek.htm#biosramusage
+            let offset = ((0x027F_FE00 + address) & MAIN_RAM_MASK) as usize; // NDS cart header copy at 27FFE00h
             self.main_ram[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
         }
 
@@ -540,7 +548,6 @@ impl Emulator {
         // boot_info[5] = 0x2380000: ARM7 Entry Point
         // boot_info[6] = 0x2380000: RAM offset for ARM7 code
         // boot_info[7] = 0x002642C: ARM7 code size
-
         #[cfg(feature = "log")]
         log::trace!("boot_info={boot_info:#08X?}");
 
@@ -551,32 +558,37 @@ impl Emulator {
         self.arm9.set_high_vectors(self.arm9_cp15.high_vectors());
 
         // Write the ROM chip-id into main RAM
+        // NDS BIOS RAM Usage: https://problemkaputt.de/gbatek.htm#:~:text=NDS%20BIOS%20RAM,and%20DSi%20mode).
         let chip_id = self.cart.chip_id();
-        self.arm7_write_word(0x027FF800, chip_id);
-        self.arm7_write_word(0x027FF804, chip_id);
-        self.arm7_write_word(0x027FFC00, chip_id);
-        self.arm7_write_word(0x027FFC04, chip_id);
+        self.arm7_write_word(0x027FF800, chip_id); // NDS Gamecart Chip ID 1
+        self.arm7_write_word(0x027FF804, chip_id); // NDS Gamecart Chip ID 2
+        self.arm7_write_word(0x027FFC00, chip_id); // NDS Gamecart Chip ID 1 (copy of 27FF800h)
+        self.arm7_write_word(0x027FFC04, chip_id); // NDS Gamecart Chip ID 2 (copy of 27FF804h)
 
         // other bullshit
-        self.arm7_write_halfword(0x027FF808, self.cart.direct_read_halfword(0x015E));
-        self.arm7_write_halfword(0x027FF80A, self.cart.direct_read_halfword(0x006C));
-        self.arm7_write_halfword(0x027FF850, 0x5835);
+        self.arm7_write_halfword(0x027FF808, self.cart.direct_read_halfword(0x015E)); // Header CRC
+        self.arm7_write_halfword(0x027FF80A, self.cart.direct_read_halfword(0x006C)); // Secure Area CRC
+        self.arm7_write_halfword(0x027FF850, 0x5835); // NDS7 BIOS CRC (5835h)
 
-        self.arm7_write_halfword(0x027FFC08, self.cart.direct_read_halfword(0x015E));
-        self.arm7_write_halfword(0x027FFC0A, self.cart.direct_read_halfword(0x006C));
+        self.arm7_write_halfword(0x027FFC08, self.cart.direct_read_halfword(0x015E)); // Header CRC
+        self.arm7_write_halfword(0x027FFC0A, self.cart.direct_read_halfword(0x006C)); // Secure Area CRC
 
-        self.arm7_write_halfword(0x027FFC10, 0x5835);
-        self.arm7_write_halfword(0x027FFC30, 0xFFFF);
-        self.arm7_write_halfword(0x027FFC40, 0x0001);
+        self.arm7_write_halfword(0x027FFC10, 0x5835); // NDS7 BIOS CRC
+        self.arm7_write_halfword(0x027FFC30, 0xFFFF); // GBA Cartridge Header[BEh]
+        self.arm7_write_halfword(0x027FFC40, 0x0001); // GBA Cartridge Header[B5h..B7h]
 
         self.postflg7 = 1;
         self.postflg9 = 1;
-        self.r_cnt = 0x8000;
+        // DS I/O Maps: https://problemkaputt.de/gbatek.htm#dsiomaps
+        self.r_cnt = 0x8000; // Debug RCNT: post-boot value
+
         // Post-boot EXMEMCNT and AUXSPICNT (melonDS `NDS::SetupDirectBoot`).
         self.ex_mem_cnt = 0xE880;
-        self.cart.set_auxspicnt(0x8000);
+        // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
+        self.cart.set_auxspicnt(0x8000); // AUXSPICNT bit 15: NDS slot enable
 
-        self.bios_prot = 0x1204;
+        // DS Memory Control - BIOS: https://problemkaputt.de/gbatek.htm#dsmemorycontrolbios
+        self.bios_prot = 0x1204; // BIOSPROT: ARM7 BIOS protected from 1204h
         self.wram_cnt = 3;
 
         // Load ROM into Main RAM for ARM9
@@ -627,23 +639,30 @@ impl Emulator {
     /// from: direct_boot() step 7
     /// to:   read by the game's OS_GetOwnerInfo / TP calibration at boot
     /// ```
+    ///
     fn firmware_direct_boot(&mut self) {
+        // Wifi FLASH User Settings Bad (0=Okay, 1=Bad)
         self.arm7_write_word(0x27FF864, 0);
 
+        // Wifi FLASH User Settings FLASH Address
         let data = self.spi.firmware.read_u16(0x20) << 3;
-        self.arm7_write_word(0x27FF868, data as u32);
+        // BIOS RAM Usage: https://problemkaputt.de/gbatek.htm#biosramusage
+        self.arm7_write_word(0x27FF868, data as u32); // Wifi FLASH User Settings FLASH Address (fmw[20h]*8)
 
+        // Wifi FLASH firmware part5 crc16 (359Ah) (fmw[026h])
         let data = self.spi.firmware.read_u16(0x26);
-        self.arm7_write_halfword(0x027FF874, data);
+        self.arm7_write_halfword(0x027FF874, data); // Wifi FLASH firmware part5 crc16 (fmw[026h])
 
+        // Wifi FLASH firmware part3/part4 crc16 (fmw[004h] or ZERO)
         let data = self.spi.firmware.read_u16(0x04);
-        self.arm7_write_halfword(0x027FF876, data);
+        self.arm7_write_halfword(0x027FF876, data); // Wifi FLASH firmware part3/part4 crc16 (fmw[004h])
 
         for i in (0..0x70).step_by(4) {
+            // 70h bytes of firmware user settings
             let user_data = self.spi.firmware.user_data;
             let index = (user_data + i) as usize;
             let data = self.spi.firmware.read_u32(index);
-            self.arm7_write_word((0x027FFC80 + i) as u32, data);
+            self.arm7_write_word((0x027FFC80 + i) as u32, data); // Wifi FLASH User Settings at 27FFC80h
         }
     }
 
@@ -841,6 +860,7 @@ impl Emulator {
         // iterations = faster emulation (CorgiDS used 20).
         // const SLICE_CYCLES: i32 = 64;
         const SLICE_CYCLES: i32 = 64;
+
         // Next pending event (`next_event_time` alone only ever decreased,
         // so it stayed in the past after the first event).
         let mut next = self.gpu_event.activation_time;
@@ -848,6 +868,7 @@ impl Emulator {
             next = next.min(self.dma_event.activation_time);
         }
         self.next_event_time = next;
+
         let cycles = self.next_event_time.wrapping_sub(self.system_timestamp) as i32;
         self.system_timestamp += match cycles {
             1..=SLICE_CYCLES => cycles as u64,
@@ -875,7 +896,8 @@ impl Emulator {
     ///       sampling buffer)
     /// ```
     pub fn touchscreen_press(&mut self, x: i32, y: i32) {
-        self.ext_key_in.pen_down = y != 0xfff;
+        // DS Touch Screen Controller (TSC): https://problemkaputt.de/gbatek.htm#dstouchscreencontrollertsc
+        self.ext_key_in.pen_down = y != 0xfff; // Y = FFFh: pen not touching the screen
         self.spi.touchscreen_press(x, y);
     }
 
@@ -885,18 +907,21 @@ impl Emulator {
     /// Copies the KEY1 seed table (ARM7 BIOS 0x30..0x1077) into `buffer`
     /// (CorgiDS API; the cartridge crate now reads the BIOS itself).
     pub fn cart_copy_keybuffer(&self, buffer: &mut [u8]) {
+        // DS Encryption by Gamecode/Idcode (KEY1): https://problemkaputt.de/gbatek.htm#dsencryptionbygamecodeidcodekey1
         if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
-            buffer[..0x1048].copy_from_slice(bios);
+            // KEY1 table: 1048h bytes at ARM7 BIOS offset 30h
+            buffer[..0x1048].copy_from_slice(bios); // KEY1 table size
         } else {
             #[cfg(feature = "log")]
-            log::warn!("arm7_bios need: 0x30..0x30 + 0x1048");
+            log::warn!("arm7_bios need: 0x30..0x30 + 0x1048"); // KEY1 table location in the ARM7 BIOS
         }
     }
 
     /// Writes a halfword of the cartridge header copy at 0x027FFE00
     /// (CorgiDS API; unused).
     pub fn cart_write_header(&mut self, address: u32, halfword: u16) {
-        let addr = ((0x027FFE00 + (address & 0x1FF)) & MAIN_RAM_MASK) as usize;
+        // BIOS RAM Usage: https://problemkaputt.de/gbatek.htm#biosramusage
+        let addr = ((0x027FFE00 + (address & 0x1FF)) & MAIN_RAM_MASK) as usize; // NDS cart header copy at 27FFE00h (1FFh bytes)
 
         if addr + 1 < self.main_ram.len() {
             let bytes = halfword.to_le_bytes();

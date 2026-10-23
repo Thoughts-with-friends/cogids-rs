@@ -17,10 +17,11 @@ pub type Mtx = [i32; 16];
 
 #[rustfmt::skip]
 pub const IDENTITY: Mtx = [
-    0x1000, 0, 0, 0,
-    0, 0x1000, 0, 0,
-    0, 0, 0x1000, 0,
-    0, 0, 0, 0x1000,
+    // DS 3D Matrix Types: https://problemkaputt.de/gbatek.htm#ds3dmatrixtypes
+    0x1000, 0, 0, 0, // 1.0 in 20.12 fixed point
+    0, 0x1000, 0, 0, // 1.0 in 20.12 fixed point
+    0, 0, 0x1000, 0, // 1.0 in 20.12 fixed point
+    0, 0, 0, 0x1000, // 1.0 in 20.12 fixed point
 ];
 
 /// Viewport (melonDS `Viewport[6]`): x0, y0 (bottom), x1, y1 (top),

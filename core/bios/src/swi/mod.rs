@@ -54,24 +54,28 @@ pub trait SwiContext {
 /// `SWI` number from the instruction before the return address.
 fn opcode(ctx: &mut impl SwiContext) -> u8 {
     let swi = ctx.pc() - if ctx.is_thumb() { 2 } else { 4 };
-    (ctx.read16(swi - 2) & 0xFF) as u8
+    // BIOS Functions: https://problemkaputt.de/gbatek.htm#biosfunctions
+    (ctx.read16(swi - 2) & 0xFF) as u8 // SWI number = low byte of the Thumb SWI opcode
 }
 
 /// ARM9 BIOS functions. Returns the cycles taken.
 pub fn arm9(ctx: &mut impl SwiContext) -> i32 {
     match opcode(ctx) {
+        // BIOS Function Summary: https://problemkaputt.de/gbatek.htm#biosfunctionsummary
         0x03 => {
+            // SWI 03h: WaitByLoop
             let value = ctx.reg(0) * 2;
             ctx.add_cycles(value as i32);
         }
         0x04 => {
+            // SWI 04h: IntrWait
             let mask = ctx.reg(1);
             ctx.wait_for_interrupt(mask);
         }
         0x05 => ctx.wait_for_interrupt(1), // VBlank (IE/IF bit 0)
-        0x06 => ctx.halt(),
-        0x0B => cpu_set(ctx, true),
-        0x0E => get_crc16(ctx),
+        0x06 => ctx.halt(),                // SWI 06h: Halt
+        0x0B => cpu_set(ctx, true),        // SWI 0Bh: CpuSet
+        0x0E => get_crc16(ctx),            // SWI 0Eh: GetCRC16
         _opcode => {
             #[cfg(feature = "log")]
             log::error!("Unrecognized HLE SWI9 ${_opcode:02X}");
@@ -85,16 +89,18 @@ pub fn arm7(ctx: &mut impl SwiContext) -> i32 {
     let opcode = opcode(ctx);
     match opcode {
         0x03 => {
+            // SWI 03h: WaitByLoop
             let value = ctx.reg(0) * 4;
             ctx.add_cycles(value as i32);
         }
         0x04 => {
+            // SWI 04h: IntrWait
             let mask = ctx.reg(1);
             ctx.wait_for_interrupt(mask);
         }
         0x05 => ctx.wait_for_interrupt(1), // VBlank (IE/IF bit 0)
-        0x06 => ctx.halt(),
-        0x0B => cpu_set(ctx, false),
+        0x06 => ctx.halt(),                // SWI 06h: Halt
+        0x0B => cpu_set(ctx, false),       // SWI 0Bh: CpuSet
         0x0E => get_crc16(ctx),
         // Sound helpers used by the SDK sound driver to turn notes and
         // decibels into timer / volume values. Out-of-range indexes return
@@ -102,8 +108,8 @@ pub fn arm7(ctx: &mut impl SwiContext) -> i32 {
         0x1A..=0x1C => {
             let index = ctx.reg(0) as usize;
             let value = match opcode {
-                0x1A => tables::SINE_TABLE.get(index).map(|&v| u32::from(v)),
-                0x1B => tables::PITCH_TABLE.get(index).map(|&v| u32::from(v)),
+                0x1A => tables::SINE_TABLE.get(index).map(|&v| u32::from(v)), // SWI 1Ah: GetSineTable (ARM7 only)
+                0x1B => tables::PITCH_TABLE.get(index).map(|&v| u32::from(v)), // SWI 1Bh: GetPitchTable (ARM7 only)
                 _ => tables::VOLUME_TABLE.get(index).map(|&v| u32::from(v)),
             };
             ctx.set_reg(0, value.unwrap_or(0));
@@ -123,13 +129,15 @@ fn cpu_set(ctx: &mut impl SwiContext, arm9: bool) {
     let mut dest = ctx.reg(1);
     let flags = ctx.reg(2);
 
+    // BIOS Memory Copy: https://problemkaputt.de/gbatek.htm#biosmemorycopy
     if !arm9 && source < 0x4000 && dest < 0x4000 {
+        // ARM7 BIOS refuses to copy from/to the BIOS area (below 4000h)
         return;
     }
 
-    let mut len = flags & 0x1F_FFFF;
-    let memfill = flags & (1 << 24) != 0;
-    let size_word = flags & (1 << 26) != 0;
+    let mut len = flags & 0x1F_FFFF; // CpuSet length/mode: word count (bits 0-20)
+    let memfill = flags & (1 << 24) != 0; // CpuSet bit 24: fill (else copy)
+    let size_word = flags & (1 << 26) != 0; // CpuSet bit 26: 32-bit units (else 16-bit)
 
     while len != 0 {
         if size_word {
@@ -154,7 +162,8 @@ fn cpu_set(ctx: &mut impl SwiContext, arm9: bool) {
 /// Functions"), the same checksum the firmware stores for its user
 /// settings.
 fn get_crc16(ctx: &mut impl SwiContext) {
-    let mut crc = (ctx.reg(0) & 0xFFFF) as u16;
+    // BIOS Misc Functions: https://problemkaputt.de/gbatek.htm#biosmiscfunctions
+    let mut crc = (ctx.reg(0) & 0xFFFF) as u16; // GetCRC16: initial CRC in r0 (16 bits)
     let addr = ctx.reg(1);
     let len = ctx.reg(2);
 
@@ -162,7 +171,7 @@ fn get_crc16(ctx: &mut impl SwiContext) {
         crc ^= u16::from(ctx.read8(addr.wrapping_add(i)));
         for _ in 0..8 {
             crc = if crc & 1 != 0 {
-                (crc >> 1) ^ 0xA001
+                (crc >> 1) ^ 0xA001 // CRC16 polynomial (reflected 8005h)
             } else {
                 crc >> 1
             };

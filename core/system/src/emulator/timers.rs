@@ -46,7 +46,9 @@ impl Emulator {
             let count_up = count_up_timing && enabled;
 
             if count_up {
+                // DS Timers: https://problemkaputt.de/gbatek.htm#dstimers
                 if self.nds_timing.timers[index + 1].counter == 0xFFFF {
+                    // count-up timer about to overflow
                     self.overflow(index + 1);
                 } else {
                     self.nds_timing.timers[index + 1].counter += 1;
@@ -101,6 +103,7 @@ impl Emulator {
             self.nds_timing.timers[index].cycles_left += div;
             let timer = &mut self.nds_timing.timers[index];
             if timer.counter == 0xFFFF {
+                // counter about to overflow
                 self.overflow(index);
             } else {
                 timer.counter += 1;

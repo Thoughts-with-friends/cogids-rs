@@ -120,7 +120,8 @@ impl BackupMemory {
 
         Self {
             chip,
-            data: vec![0xFF; size],
+            // DS Cartridge Backup: https://problemkaputt.de/gbatek.htm#dscartridgebackup
+            data: vec![0xFF; size], // blank save memory reads FFh
             path: None,
             pos: 0,
             cmd: 0,
@@ -280,25 +281,25 @@ impl BackupMemory {
     /// Status/write-enable commands common to all chips, then the chip-specific protocol.
     fn transfer_chip(&mut self, value: u8) -> u8 {
         if self.chip == SaveChip::None {
-            return 0xFF;
+            return 0xFF; // data bus idle
         }
 
         let reply = if self.pos == 0 {
             match value {
                 // Write disable / write enable.
                 0x04 => self.status &= !STATUS_WEL,
-                0x06 => self.status |= STATUS_WEL,
+                0x06 => self.status |= STATUS_WEL, // 06h: WREN (set write enable latch)
                 _ => {}
             }
             self.cmd = value;
             self.addr = 0;
-            0xFF
+            0xFF // data bus idle
         } else {
             match self.chip {
                 SaveChip::EepromTiny => self.eeprom_tiny(value),
                 SaveChip::Eeprom => self.eeprom(value),
                 SaveChip::Flash => self.flash(value),
-                SaveChip::None => 0xFF,
+                SaveChip::None => 0xFF, // no chip: data bus idle
             }
         };
 
@@ -321,9 +322,9 @@ impl BackupMemory {
 /// Commands after which the chip clears its write enable latch.
 const fn is_write_command(chip: SaveChip, cmd: u8) -> bool {
     match chip {
-        SaveChip::EepromTiny => matches!(cmd, 0x01 | 0x02 | 0x0A),
-        SaveChip::Eeprom => matches!(cmd, 0x01 | 0x02),
-        SaveChip::Flash => matches!(cmd, 0x02 | 0x0A | 0xDB | 0xD8 | 0xC7),
+        SaveChip::EepromTiny => matches!(cmd, 0x01 | 0x02 | 0x0A), // WRSR / WRITE / WRITE high half
+        SaveChip::Eeprom => matches!(cmd, 0x01 | 0x02),            // WRSR / WRITE
+        SaveChip::Flash => matches!(cmd, 0x02 | 0x0A | 0xDB | 0xD8 | 0xC7), // PROGRAM / PAGE WRITE / PAGE ERASE / SECTOR ERASE / CHIP ERASE
         SaveChip::None => false,
     }
 }
@@ -342,10 +343,10 @@ mod tests {
     #[test]
     fn eeprom_write_then_read() {
         let mut mem = BackupMemory::new(3); // 64 KiB
-        cycle(&mut mem, &[0x06]);
-        cycle(&mut mem, &[0x02, 0x12, 0x34, 0xAA, 0xBB]);
+        cycle(&mut mem, &[0x06]); // WREN
+        cycle(&mut mem, &[0x02, 0x12, 0x34, 0xAA, 0xBB]); // WRITE 1234h: AAh BBh
         assert!(mem.is_dirty());
-        let out = cycle(&mut mem, &[0x03, 0x12, 0x34, 0, 0]);
+        let out = cycle(&mut mem, &[0x03, 0x12, 0x34, 0, 0]); // READ 1234h
         assert_eq!(&out[3..], &[0xAA, 0xBB]);
         // The write enable latch is cleared after the write.
         assert_eq!(cycle(&mut mem, &[0x05, 0])[1] & STATUS_WEL, 0);
@@ -354,45 +355,45 @@ mod tests {
     #[test]
     fn eeprom_tiny_high_half() {
         let mut mem = BackupMemory::new(1);
-        cycle(&mut mem, &[0x06]);
-        cycle(&mut mem, &[0x0A, 0x10, 0x5A]);
-        assert_eq!(mem.data()[0x110], 0x5A);
-        assert_eq!(cycle(&mut mem, &[0x0B, 0x10, 0])[2], 0x5A);
+        cycle(&mut mem, &[0x06]); // WREN
+        cycle(&mut mem, &[0x0A, 0x10, 0x5A]); // WRITE high half (0Ah), address 10h
+        assert_eq!(mem.data()[0x110], 0x5A); // offset 110h = 100h + 10h
+        assert_eq!(cycle(&mut mem, &[0x0B, 0x10, 0])[2], 0x5A); // READ high half (0Bh)
     }
 
     #[test]
     fn flash_erase_program_read() {
         let mut mem = BackupMemory::new(6); // 512 KiB
-        assert_eq!(cycle(&mut mem, &[0x9F, 0, 0, 0])[1..], [0x20, 0x40, 0x13]);
-        cycle(&mut mem, &[0x06]);
+        assert_eq!(cycle(&mut mem, &[0x9F, 0, 0, 0])[1..], [0x20, 0x40, 0x13]); // RDID: 20h 40h 13h (512K)
+        cycle(&mut mem, &[0x06]); // WREN
         cycle(&mut mem, &[0x0A, 0x01, 0x00, 0xFF, 0x11, 0x22]);
         // Wrapped within the page.
         assert_eq!(mem.data()[0x100FF], 0x11);
-        assert_eq!(mem.data()[0x10000], 0x22);
-        cycle(&mut mem, &[0x06]);
-        cycle(&mut mem, &[0xDB, 0x01, 0x00, 0x00]);
-        assert!(mem.data()[0x10000..0x10100].iter().all(|&b| b == 0xFF));
-        cycle(&mut mem, &[0x06]);
-        cycle(&mut mem, &[0x02, 0x01, 0x00, 0x00, 0x0F]);
-        let out = cycle(&mut mem, &[0x0B, 0x01, 0x00, 0x00, 0, 0]);
-        assert_eq!(out[5], 0x0F);
+        assert_eq!(mem.data()[0x10000], 0x22); // address 10000h
+        cycle(&mut mem, &[0x06]); // WREN
+        cycle(&mut mem, &[0xDB, 0x01, 0x00, 0x00]); // PAGE ERASE at 10000h
+        assert!(mem.data()[0x10000..0x10100].iter().all(|&b| b == 0xFF)); // erased page reads FFh
+        cycle(&mut mem, &[0x06]); // WREN
+        cycle(&mut mem, &[0x02, 0x01, 0x00, 0x00, 0x0F]); // PROGRAM 10000h: 0Fh
+        let out = cycle(&mut mem, &[0x0B, 0x01, 0x00, 0x00, 0, 0]); // FAST READ 10000h
+        assert_eq!(out[5], 0x0F); // programmed byte
     }
 
     #[test]
     fn infrared_pass_through() {
         let mut mem = BackupMemory::new(6);
         mem.set_infrared(true);
-        cycle(&mut mem, &[0x00, 0x06]);
-        let out = cycle(&mut mem, &[0x00, 0x05, 0]);
+        cycle(&mut mem, &[0x00, 0x06]); // IR pass-through prefix 00h, then WREN
+        let out = cycle(&mut mem, &[0x00, 0x05, 0]); // IR pass-through, RDSR
         assert_eq!(out[2] & STATUS_WEL, STATUS_WEL);
-        assert_eq!(cycle(&mut mem, &[0x08, 0])[1], 0xAA);
+        assert_eq!(cycle(&mut mem, &[0x08, 0])[1], 0xAA); // IR command 08h: test
     }
 
     #[test]
     fn writes_need_write_enable() {
         let mut mem = BackupMemory::new(2);
-        cycle(&mut mem, &[0x02, 0x00, 0x00, 0x55]);
-        assert_eq!(mem.data()[0], 0xFF);
+        cycle(&mut mem, &[0x02, 0x00, 0x00, 0x55]); // WRITE without WREN
+        assert_eq!(mem.data()[0], 0xFF); // ignored: still blank
         assert!(!mem.is_dirty());
     }
 }

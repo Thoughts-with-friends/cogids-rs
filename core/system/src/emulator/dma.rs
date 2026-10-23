@@ -272,7 +272,9 @@ impl Emulator {
             dma.destination,
             dma.length
         );
+        // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
         if !old_enabled && (cnt & (1 << 15) != 0) {
+            // DMAxCNT_H bit 15: enable (0 -> 1 edge)
             dma.internal_source = dma.source;
             dma.internal_dest = dma.destination;
             dma.internal_len = 0;
@@ -295,7 +297,8 @@ impl Emulator {
             return;
         }
 
-        self.dma.write_len(index, (word & 0xFFFF) as u16);
+        // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
+        self.dma.write_len(index, (word & 0xFFFF) as u16); // DMAxCNT_L word count (lower halfword)
         self.dma_write_cnt(index, (word >> 16) as u16);
     }
 

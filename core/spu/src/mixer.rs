@@ -30,7 +30,9 @@ impl Spu {
         let (mut left, mut right) = (0_i32, 0_i32);
         let (mut left_out, mut right_out) = (0_i32, 0_i32);
 
+        // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
         if self.soundcnt & (1 << 15) != 0 {
+            // SOUNDCNT bit 15: master enable
             let mut out = [0_i32; 16];
             for (o, ch) in out.iter_mut().zip(self.channels.iter_mut()) {
                 *o = ch.run(cycles, bus);
@@ -39,6 +41,7 @@ impl Spu {
                 // SOUNDCNT bits 12/13: channel 1/3 not sent to the mixer.
                 if (i == 1 && self.soundcnt & (1 << 12) != 0)
                     || (i == 3 && self.soundcnt & (1 << 13) != 0)
+                // SOUNDCNT bit 13: channel 3 not output to the mixer
                 {
                     continue;
                 }
@@ -47,8 +50,10 @@ impl Spu {
 
             // Sound capture of the left / right mixer.
             for (i, mixed) in [left, right].into_iter().enumerate() {
+                // DS Sound Capture: https://problemkaputt.de/gbatek.htm#dssoundcapture
                 if self.captures[i].cnt & 0x80 != 0 {
-                    let sample = (mixed >> 8).clamp(-0x8000, 0x7FFF);
+                    // SNDCAPxCNT bit 7: capture running
+                    let sample = (mixed >> 8).clamp(-0x8000, 0x7FFF); // clamp to signed 16 bits
                     self.captures[i].run(cycles, sample, bus);
                 }
             }
@@ -72,7 +77,8 @@ impl Spu {
             };
         }
 
-        let mut master = i64::from(self.soundcnt & 0x7F);
+        // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
+        let mut master = i64::from(self.soundcnt & 0x7F); // SOUNDCNT master volume (bits 0-6)
         if master == 127 {
             master = 128;
         }
@@ -80,7 +86,7 @@ impl Spu {
             // The SOUNDBIAS used by commercial games (0x200) is the DC
             // offset of an unsigned DAC; it is removed here.
             let v = ((i64::from(v) * master) >> 7) >> 8;
-            v.clamp(-0x8000, 0x7FFF) as i16
+            v.clamp(-0x8000, 0x7FFF) as i16 // clamp to signed 16 bits
         };
         // Without a consumer (headless use) keep at most ~2 s of audio.
         if self.samples.len() >= SAMPLE_RATE as usize * 4 {

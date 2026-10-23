@@ -26,7 +26,7 @@ use crate::emulator::Emulator;
 /// ```
 pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     // NOTE: log output is gated behind the `log` feature
-    let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF;
+    let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF; // Thumb opcodes are 16 bits wide
     let cpu_id = emu.get_cpu(cpu_type).get_id();
 
     if cpu_id > 0 && emu.config.test {
@@ -85,7 +85,7 @@ pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
             #[cfg(feature = "log")]
             log::error!(
                 "Unrecognized Thumb opcode ${:04X}",
-                emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF
+                emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF // Thumb opcodes are 16 bits wide
             );
             return;
         }
@@ -106,27 +106,30 @@ pub fn thumb_decode(instruction: u32) -> ThumbInstr {
     let instr10 = instruction >> 10;
 
     match instr11 {
-        0x4 => return ThumbInstr::MovImm,
-        0x5 => return ThumbInstr::CmpImm,
-        0x6 => return ThumbInstr::AddImm,
-        0x7 => return ThumbInstr::SubImm,
-        0x9 => return ThumbInstr::PcRelLoad,
-        0x10 => return ThumbInstr::StoreHalfword,
-        0x11 => return ThumbInstr::LoadHalfword,
-        0x12 => return ThumbInstr::SpRelStore,
-        0x13 => return ThumbInstr::SpRelLoad,
-        0x18 => return ThumbInstr::StoreMultiple,
-        0x19 => return ThumbInstr::LoadMultiple,
-        0x1C => return ThumbInstr::Branch,
-        0x1D => return ThumbInstr::LongBlx,
+        // THUMB Instruction Summary: https://problemkaputt.de/gbatek.htm#thumbinstructionsummary
+        0x4 => return ThumbInstr::MovImm,    // 001 00: MOV Rd,#nn
+        0x5 => return ThumbInstr::CmpImm,    // 001 01: CMP Rd,#nn
+        0x6 => return ThumbInstr::AddImm,    // 001 10: ADD Rd,#nn
+        0x7 => return ThumbInstr::SubImm,    // 001 11: SUB Rd,#nn
+        0x9 => return ThumbInstr::PcRelLoad, // 01001: LDR Rd,[PC,#nn]
+        0x10 => return ThumbInstr::StoreHalfword, // 10000: STRH Rd,[Rb,#nn]
+        0x11 => return ThumbInstr::LoadHalfword, // 10001: LDRH Rd,[Rb,#nn]
+        0x12 => return ThumbInstr::SpRelStore, // 10010: STR Rd,[SP,#nn]
+        0x13 => return ThumbInstr::SpRelLoad, // 10011: LDR Rd,[SP,#nn]
+        0x18 => return ThumbInstr::StoreMultiple, // 11000: STMIA Rb!,{Rlist}
+        0x19 => return ThumbInstr::LoadMultiple, // 11001: LDMIA Rb!,{Rlist}
+        0x1C => return ThumbInstr::Branch,   // 11100: B label
+        0x1D => return ThumbInstr::LongBlx,  // 11101: BLX label (second half, ARM9 only)
         _ => {}
     }
 
     if instr13 == 0 {
         if (instr11 & 0x3) != 0x3 {
+            // bits 11-12 != 11b: LSL/LSR/ASR (format 1), else ADD/SUB (format 2)
             return ThumbInstr::MovShift;
         } else {
             if (instruction & (1 << 9)) != 0 {
+                // bit 9: SUB (format 2)
                 return ThumbInstr::SubReg;
             }
             return ThumbInstr::AddReg;
@@ -134,24 +137,28 @@ pub fn thumb_decode(instruction: u32) -> ThumbInstr {
     }
 
     match instr10 {
-        0x10 => return ThumbInstr::AluOp,
-        0x11 => return ThumbInstr::HiRegOp,
+        0x10 => return ThumbInstr::AluOp, // 010000: ALU operations (format 4)
+        0x11 => return ThumbInstr::HiRegOp, // 010001: hi register operations / BX (format 5)
         _ => {}
     }
 
     match instr12 {
         0x5 => {
+            // 0101: load/store with register offset (formats 7/8)
             if (instruction & (1 << 9)) == 0 {
                 if (instruction & (1 << 11)) == 0 {
+                    // bit 11: load (L)
                     return ThumbInstr::StoreRegOffset;
                 }
                 return ThumbInstr::LoadRegOffset;
             }
             return ThumbInstr::LoadStoreSignHalfword;
         }
-        0xA => return ThumbInstr::LoadAddress,
+        0xA => return ThumbInstr::LoadAddress, // 1010: ADD Rd,PC/SP,#nn (format 12)
         0xB => {
+            // 1011: misc - SP offset / PUSH / POP
             if ((instruction >> 9) & 0x3) == 0x2 {
+                // bits 9-10 == 10b: PUSH/POP (format 14)
                 if (instruction & (1 << 11)) != 0 {
                     return ThumbInstr::Pop;
                 }
@@ -159,8 +166,9 @@ pub fn thumb_decode(instruction: u32) -> ThumbInstr {
             }
             return ThumbInstr::OffsetSp;
         }
-        0xD => return ThumbInstr::CondBranch,
+        0xD => return ThumbInstr::CondBranch, // 1101: conditional branch / SWI (format 16/17)
         0xF => {
+            // 1111: BL/BLX long branch (format 19)
             if (instruction & (1 << 11)) == 0 {
                 return ThumbInstr::LongBranchPrep;
             }
@@ -170,6 +178,7 @@ pub fn thumb_decode(instruction: u32) -> ThumbInstr {
     }
 
     if instr13 == 0x3 {
+        // 011: load/store with immediate offset (format 9)
         if (instruction & (1 << 11)) == 0 {
             return ThumbInstr::StoreImmOffset;
         }
@@ -183,10 +192,11 @@ pub fn thumb_decode(instruction: u32) -> ThumbInstr {
 #[allow(clippy::missing_const_for_fn)]
 pub fn thumb_mov_shift(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
-    let opcode = ((instruction >> 11) & 0x3) as u32;
-    let mut shift = ((instruction >> 6) & 0x1F) as u32;
-    let source = ((instruction >> 3) & 0x7) as u32;
-    let destination = (instruction & 0x7) as u32;
+    // THUMB Opcodes: Register Operations (ALU, BX): https://problemkaputt.de/gbatek.htm#thumbopcodesregisteroperationsalubx
+    let opcode = ((instruction >> 11) & 0x3) as u32; // opcode (bits 11-12): LSL/LSR/ASR
+    let mut shift = ((instruction >> 6) & 0x1F) as u32; // immediate shift amount (bits 6-10)
+    let source = ((instruction >> 3) & 0x7) as u32; // Rs (bits 3-5)
+    let destination = (instruction & 0x7) as u32; // Rd (bits 0-2)
 
     let mut value: u32 = emu.get_cpu_mut(cpu_type).get_register(source as i32);
 
@@ -230,10 +240,10 @@ pub fn thumb_mov_shift(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: ADD register
 pub fn thumb_add_reg(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
-    let destination = (instruction & 0x7) as u32;
-    let source = ((instruction >> 3) & 0x7) as u32;
-    let mut operand = ((instruction >> 6) & 0x7) as u32;
-    let is_imm = (instruction & (1 << 10)) != 0;
+    let destination = (instruction & 0x7) as u32; // Rd (bits 0-2)
+    let source = ((instruction >> 3) & 0x7) as u32; // Rs (bits 3-5)
+    let mut operand = ((instruction >> 6) & 0x7) as u32; // Rn / 3-bit immediate (bits 6-8)
+    let is_imm = (instruction & (1 << 10)) != 0; // I bit (10): 3-bit immediate operand
 
     if !is_imm {
         // if emu.get_cpu(cpu_type).get_id() > 0 {
@@ -252,10 +262,10 @@ pub fn thumb_add_reg(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: SUB register
 pub fn thumb_sub_reg(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
-    let destination = (instruction & 0x7) as u32;
-    let source = ((instruction >> 3) & 0x7) as u32;
-    let mut operand = ((instruction >> 6) & 0x7) as u32;
-    let is_imm = (instruction & (1 << 10)) != 0;
+    let destination = (instruction & 0x7) as u32; // Rd (bits 0-2)
+    let source = ((instruction >> 3) & 0x7) as u32; // Rs (bits 3-5)
+    let mut operand = ((instruction >> 6) & 0x7) as u32; // Rn / 3-bit immediate (bits 6-8)
+    let is_imm = (instruction & (1 << 10)) != 0; // I bit (10): 3-bit immediate operand
 
     if !is_imm {
         // if emu.get_cpu(cpu_type).get_id() > 0 {
@@ -274,8 +284,8 @@ pub fn thumb_sub_reg(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: MOV immediate
 pub fn thumb_mov(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
-    let offset = (instruction & 0xFF) as u32;
-    let reg = ((instruction >> 8) & 0x7) as u32;
+    let offset = (instruction & 0xFF) as u32; // 8-bit immediate (bits 0-7)
+    let reg = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
 
     // if emu.get_cpu(cpu_type).get_id() > 0 {
     //     // println!("MOV {{{}}}, ${:02X}", reg, offset);
@@ -287,8 +297,8 @@ pub fn thumb_mov(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: CMP
 pub fn thumb_cmp(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
-    let offset: u32 = (instruction & 0xFF) as u32;
-    let reg: u32 = ((instruction >> 8) & 0x7) as u32;
+    let offset: u32 = (instruction & 0xFF) as u32; // 8-bit immediate (bits 0-7)
+    let reg: u32 = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
 
     // if emu.get_cpu(cpu_type).get_id() > 0 {
     //     // println!("CMP {{{}}}, ${:02X}", reg, offset);
@@ -301,8 +311,8 @@ pub fn thumb_cmp(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: ADD
 pub fn thumb_add(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
-    let offset: u32 = (instruction & 0xFF) as u32;
-    let reg: u32 = ((instruction >> 8) & 0x7) as u32;
+    let offset: u32 = (instruction & 0xFF) as u32; // 8-bit immediate (bits 0-7)
+    let reg: u32 = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
 
     // if emu.get_cpu(cpu_type).get_id() > 0 {
     //     // println!("ADD {{{}}}, ${:02X}", reg, offset);
@@ -315,8 +325,8 @@ pub fn thumb_add(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: SUB
 pub fn thumb_sub(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
-    let offset: u32 = (instruction & 0xFF) as u32;
-    let reg: u32 = ((instruction >> 8) & 0x7) as u32;
+    let offset: u32 = (instruction & 0xFF) as u32; // 8-bit immediate (bits 0-7)
+    let reg: u32 = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
 
     // if emu.get_cpu(cpu_type).get_id() > 0 {
     //     // println!("SUB {{{}}}, ${:02X}", reg, offset);
@@ -330,12 +340,13 @@ pub fn thumb_sub(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
 
-    let destination = (instruction & 0x7) as u32;
-    let source = ((instruction >> 3) & 0x7) as u32;
-    let opcode = ((instruction >> 6) & 0xF) as u32;
+    let destination = (instruction & 0x7) as u32; // Rd (bits 0-2)
+    let source = ((instruction >> 3) & 0x7) as u32; // Rs (bits 3-5)
+    let opcode = ((instruction >> 6) & 0xF) as u32; // ALU opcode (bits 6-9)
 
     match opcode {
         0x0 => {
+            // AND
             // AND
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("AND {{{}}}, {{{}}}", destination, source);
@@ -347,6 +358,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
         }
         0x1 => {
             // EOR
+            // EOR
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("EOR {{{}}}, {{{}}}", destination, source);
             // }
@@ -357,38 +369,42 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
         }
         0x2 => {
             // LSL
+            // LSL
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("LSL {{{}}}, {{{}}}", destination, source);
             // }
             let mut reg = emu.get_cpu_mut(cpu_type).get_register(destination as i32);
-            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32;
+            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32; // shift amount is the low byte of Rs
             reg = emu.get_cpu_mut(cpu_type).lsl(reg, shift, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
         }
         0x3 => {
             // LSR
+            // LSR
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("LSR {{{}}}, {{{}}}", destination, source);
             // }
             let mut reg = emu.get_cpu_mut(cpu_type).get_register(destination as i32);
-            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32;
+            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32; // shift amount is the low byte of Rs
             reg = emu.get_cpu_mut(cpu_type).lsr(reg, shift, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
         }
         0x4 => {
             // ASR
+            // ASR
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("ASR {{{}}}, {{{}}}", destination, source);
             // }
             let mut reg = emu.get_cpu_mut(cpu_type).get_register(destination as i32);
-            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32;
+            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32; // shift amount is the low byte of Rs
             reg = emu.get_cpu_mut(cpu_type).asr(reg, shift, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
         }
         0x5 => {
+            // ADC
             // ADC
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("ADC {{{}}}, {{{}}}", destination, source);
@@ -400,6 +416,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
         }
         0x6 => {
             // SBC
+            // SBC
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("SBC {{{}}}, {{{}}}", destination, source);
             // }
@@ -410,16 +427,18 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
         }
         0x7 => {
             // ROR
+            // ROR
             if emu.get_cpu(cpu_type).get_id() > 0 {
                 // println!("ROR {{{}}}, {{{}}}", destination, source);
             }
             let mut reg = emu.get_cpu(cpu_type).get_register(destination as i32);
-            let c = emu.get_cpu(cpu_type).get_register(source as i32) & 0xFF;
+            let c = emu.get_cpu(cpu_type).get_register(source as i32) & 0xFF; // rotate amount is the low byte of Rs
             reg = emu.get_cpu_mut(cpu_type).rotr32(reg, c, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
         }
         0x8 => {
+            // TST
             // TST
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("TST {{{}}}, {{{}}}", destination, source);
@@ -430,6 +449,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
         }
         0x9 => {
             // NEG
+            // NEG
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("NEG {{{}}}, {{{}}}", destination, source);
             // }
@@ -438,6 +458,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             emu.get_cpu_mut(cpu_type).sub(destination, 0, operand, true);
         }
         0xA => {
+            // CMP
             // CMP
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("CMP {{{}}}, {{{}}}", destination, source);
@@ -448,6 +469,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
         }
         0xB => {
             // CMN
+            // CMN
             if emu.get_cpu(cpu_type).get_id() > 0 {
                 // println!("CMN {{{}}}, {{{}}}", destination, source);
             }
@@ -456,6 +478,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             emu.get_cpu_mut(cpu_type).cmn(x, y);
         }
         0xC => {
+            // ORR
             // ORR
             if emu.get_cpu(cpu_type).get_id() > 0 {
                 // println!("ORR {{{}}}, {{{}}}", destination, source);
@@ -466,6 +489,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
                 .orr(destination as i32, reg, src, true);
         }
         0xD => {
+            // MUL
             // MUL
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("MUL {{{}}}, {{{}}}", destination, source);
@@ -479,10 +503,13 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             } else {
                 let multiplicand = emu.get_cpu_mut(cpu_type).get_register(destination as i32);
                 if multiplicand & 0xFF000000 != 0 {
+                    // multiplier timing: 4 internal cycles if any of bits 24-31 set
                     emu.get_cpu_mut(cpu_type).add_internal_cycles(4);
                 } else if multiplicand & 0x00FF0000 != 0 {
+                    // 3 cycles if bits 16-23 set
                     emu.get_cpu_mut(cpu_type).add_internal_cycles(3);
                 } else if multiplicand & 0x0000FF00 != 0 {
+                    // 2 cycles if bits 8-15 set
                     emu.get_cpu_mut(cpu_type).add_internal_cycles(2);
                 } else {
                     emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
@@ -490,6 +517,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             }
         }
         0xE => {
+            // BIC
             // BIC
             if emu.get_cpu(cpu_type).get_id() > 0 {
                 // println!("BIC {{{}}}, {{{}}}", destination, source);
@@ -500,6 +528,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
                 .bic(destination, src, operand, true);
         }
         0xF => {
+            // MVN
             // MVN
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("MVN {{{}}}, {{{}}}", destination, source);
@@ -520,22 +549,23 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_hi_reg_op(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let opcode: u32 = ((instruction >> 8) & 0x3) as u32;
-    let high_source: bool = (instruction & (1 << 6)) != 0;
-    let high_dest: bool = (instruction & (1 << 7)) != 0;
+    let opcode: u32 = ((instruction >> 8) & 0x3) as u32; // opcode (bits 8-9): ADD/CMP/MOV/BX
+    let high_source: bool = (instruction & (1 << 6)) != 0; // H2 bit (6): Rs is R8-R15
+    let high_dest: bool = (instruction & (1 << 7)) != 0; // H1 bit (7): Rd is R8-R15
 
-    let mut source: u32 = ((instruction >> 3) & 0x7) as u32;
+    let mut source: u32 = ((instruction >> 3) & 0x7) as u32; // Rs (bits 3-5), MSBs (bit 6) adds 8
     if high_source {
         source |= 8;
     }
 
-    let mut destination: u32 = (instruction & 0x7) as u32;
+    let mut destination: u32 = (instruction & 0x7) as u32; // Rd (bits 0-2), MSBd (bit 7) adds 8
     if high_dest {
         destination |= 8;
     }
 
     match opcode {
         0x0 => {
+            // ADD
             // ADD
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("ADD {{{}}}, {{{}}}", destination, source);
@@ -553,6 +583,7 @@ pub fn thumb_hi_reg_op(emu: &mut Emulator, cpu_type: CpuType) {
         }
         0x1 => {
             // CMP
+            // CMP
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("CMP {{{}}}, {{{}}}", destination, source);
             // }
@@ -561,6 +592,7 @@ pub fn thumb_hi_reg_op(emu: &mut Emulator, cpu_type: CpuType) {
             emu.get_cpu_mut(cpu_type).cmp(x, y);
         }
         0x2 => {
+            // MOV
             // MOV
             // if emu.get_cpu(cpu_type).get_id() > 0 {
             //     // println!("MOV {{{}}}, {{{}}}", destination, source);
@@ -574,6 +606,7 @@ pub fn thumb_hi_reg_op(emu: &mut Emulator, cpu_type: CpuType) {
             }
         }
         0x3 => {
+            // BX / BLX
             // BX / BLX
             if high_dest {
                 // if emu.get_cpu(cpu_type).get_id() > 0 {
@@ -596,9 +629,10 @@ pub fn thumb_hi_reg_op(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_pc_rel_load(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
 
-    let destination: u32 = ((instruction >> 8) & 0x7) as u32;
+    // THUMB Opcodes: Memory Addressing (ADD PC/SP): https://problemkaputt.de/gbatek.htm#thumbopcodesmemoryaddressingaddpcsp
+    let destination: u32 = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
     let mut address: u32 = emu.get_cpu(cpu_type).get_pc();
-    address = address.wrapping_add(((instruction & 0xFF) as u32) << 2);
+    address = address.wrapping_add(((instruction & 0xFF) as u32) << 2); // 8-bit word offset (bits 0-7) * 4
     address &= !0x3; // 4-byte alignment
 
     // if emu.get_cpu(cpu_type).get_id() > 0 {
@@ -617,9 +651,10 @@ pub fn thumb_store_reg_offset(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
 
     let is_byte: bool = (instruction & (1 << 10)) != 0;
-    let base: u32 = ((instruction >> 3) & 0x7) as u32;
-    let source: u32 = (instruction & 0x7) as u32;
-    let offset: u32 = ((instruction >> 6) & 0x7) as u32;
+    // THUMB Opcodes: Memory Load/Store (LDR/STR): https://problemkaputt.de/gbatek.htm#thumbopcodesmemoryloadstoreldrstr
+    let base: u32 = ((instruction >> 3) & 0x7) as u32; // Rb - base register (bits 3-5)
+    let source: u32 = (instruction & 0x7) as u32; // Rd (bits 0-2)
+    let offset: u32 = ((instruction >> 6) & 0x7) as u32; // Ro - offset register (bits 6-8)
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(base as i32);
     address = address.wrapping_add(emu.get_cpu(cpu_type).get_register(offset as i32));
@@ -631,7 +666,7 @@ pub fn thumb_store_reg_offset(emu: &mut Emulator, cpu_type: CpuType) {
         //     // println!("STRB {{{}}}, [{{{}}}, {{{}}}]", source, base, offset);
         // }
         emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
-        emu.write_byte(address, (source_contents & 0xFF) as u8, cpu_type);
+        emu.write_byte(address, (source_contents & 0xFF) as u8, cpu_type); // STRB stores only the low byte
     } else {
         if emu.get_cpu(cpu_type).get_id() > 0 {
             // println!("STR {{{}}}, [{{{}}}, {{{}}}]", source, base, offset);
@@ -645,10 +680,10 @@ pub fn thumb_store_reg_offset(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_load_reg_offset(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let is_byte: bool = (instruction & (1 << 10)) != 0;
-    let base = ((instruction >> 3) & 0x7) as u32;
-    let destination = (instruction & 0x7) as u32;
-    let offset = ((instruction >> 6) & 0x7) as u32;
+    let is_byte: bool = (instruction & (1 << 10)) != 0; // B bit (10): byte transfer
+    let base = ((instruction >> 3) & 0x7) as u32; // Rb - base register (bits 3-5)
+    let destination = (instruction & 0x7) as u32; // Rd (bits 0-2)
+    let offset = ((instruction >> 6) & 0x7) as u32; // Ro - offset register (bits 6-8)
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(base as i32);
     address = address.wrapping_add(emu.get_cpu(cpu_type).get_register(offset as i32));
@@ -668,8 +703,8 @@ pub fn thumb_load_reg_offset(emu: &mut Emulator, cpu_type: CpuType) {
         }
         emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
         emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
-        let aligned_addr = address & !0x3;
-        let rotate = (address & 0x3) * 8;
+        let aligned_addr = address & !0x3; // word-align the address
+        let rotate = (address & 0x3) * 8; // misaligned LDR rotates the word by (address & 3) * 8
         let addr = emu.read_word(aligned_addr, cpu_type);
         let word = emu.get_cpu_mut(cpu_type).rotr32(addr, rotate, false);
         emu.get_cpu_mut(cpu_type)
@@ -681,15 +716,15 @@ pub fn thumb_load_reg_offset(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_store_halfword(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
 
-    let offset: u32 = (((instruction >> 6) & 0x1F) << 1) as u32;
-    let base: u32 = ((instruction >> 3) & 0x7) as u32;
-    let source: u32 = (instruction & 0x7) as u32;
+    let offset: u32 = (((instruction >> 6) & 0x1F) << 1) as u32; // 5-bit halfword offset (bits 6-10) * 2
+    let base: u32 = ((instruction >> 3) & 0x7) as u32; // Rb (bits 3-5)
+    let source: u32 = (instruction & 0x7) as u32; // Rd (bits 0-2)
 
     let address: u32 = emu
         .get_cpu_mut(cpu_type)
         .get_register(base as i32)
         .wrapping_add(offset);
-    let value = (emu.get_cpu(cpu_type).get_register(source as i32) & 0xFFFF) as u16;
+    let value = (emu.get_cpu(cpu_type).get_register(source as i32) & 0xFFFF) as u16; // STRH stores only the low halfword
 
     if emu.get_cpu(cpu_type).get_id() > 0 {
         // println!("STRH {{{}}}, [{{{}}}, ${:04X}]", source, base, offset);
@@ -703,9 +738,9 @@ pub fn thumb_store_halfword(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_load_halfword(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let offset: u32 = (((instruction >> 6) & 0x1F) << 1) as u32;
-    let base = ((instruction >> 3) & 0x7) as u32;
-    let destination = (instruction & 0x7) as u32;
+    let offset: u32 = (((instruction >> 6) & 0x1F) << 1) as u32; // 5-bit halfword offset (bits 6-10) * 2
+    let base = ((instruction >> 3) & 0x7) as u32; // Rb (bits 3-5)
+    let destination = (instruction & 0x7) as u32; // Rd (bits 0-2)
 
     let address: u32 = emu
         .get_cpu(cpu_type)
@@ -726,10 +761,10 @@ pub fn thumb_load_halfword(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_store_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let source: i32 = (instruction & 0x7) as u32 as i32;
-    let base: u32 = ((instruction >> 3) & 0x7) as u32;
-    let mut offset: u32 = ((instruction >> 6) & 0x1F) as u32;
-    let is_byte: bool = (instruction & (1 << 12)) != 0;
+    let source: i32 = (instruction & 0x7) as u32 as i32; // Rd (bits 0-2)
+    let base: u32 = ((instruction >> 3) & 0x7) as u32; // Rb (bits 3-5)
+    let mut offset: u32 = ((instruction >> 6) & 0x1F) as u32; // 5-bit immediate offset (bits 6-10)
+    let is_byte: bool = (instruction & (1 << 12)) != 0; // B bit (12): byte transfer
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(base as i32);
 
@@ -741,7 +776,7 @@ pub fn thumb_store_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
         }
 
         emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
-        let value = (emu.get_cpu_mut(cpu_type).get_register(source) & 0xFF) as u8;
+        let value = (emu.get_cpu_mut(cpu_type).get_register(source) & 0xFF) as u8; // STRB stores only the low byte
         emu.write_byte(address, value, cpu_type);
     } else {
         offset <<= 2;
@@ -761,10 +796,10 @@ pub fn thumb_store_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let destination: u32 = (instruction & 0x7) as u32;
-    let base: u32 = ((instruction >> 3) & 0x7) as u32;
-    let mut offset: u32 = ((instruction >> 6) & 0x1F) as u32;
-    let is_byte: bool = (instruction & (1 << 12)) != 0;
+    let destination: u32 = (instruction & 0x7) as u32; // Rd (bits 0-2)
+    let base: u32 = ((instruction >> 3) & 0x7) as u32; // Rb (bits 3-5)
+    let mut offset: u32 = ((instruction >> 6) & 0x1F) as u32; // 5-bit immediate offset (bits 6-10)
+    let is_byte: bool = (instruction & (1 << 12)) != 0; // B bit (12): byte transfer
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(base as i32);
 
@@ -790,8 +825,8 @@ pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
 
         emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
 
-        let aligned_addr = address & !0x3;
-        let rotate = (address & 0x3) * 8;
+        let aligned_addr = address & !0x3; // word-align the address
+        let rotate = (address & 0x3) * 8; // misaligned LDR rotates the word by (address & 3) * 8
         let addr = emu.read_word(aligned_addr, cpu_type);
         let word = emu.get_cpu_mut(cpu_type).rotr32(addr, rotate, false);
 
@@ -806,10 +841,10 @@ pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_load_store_sign_halfword(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
 
-    let destination: i32 = (instruction & 0x7) as u32 as i32;
-    let base: u32 = ((instruction >> 3) & 0x7) as u32;
-    let offset: u32 = ((instruction >> 6) & 0x7) as u32;
-    let opcode: u32 = ((instruction >> 10) & 0x3) as u32;
+    let destination: i32 = (instruction & 0x7) as u32 as i32; // Rd (bits 0-2)
+    let base: u32 = ((instruction >> 3) & 0x7) as u32; // Rb (bits 3-5)
+    let offset: u32 = ((instruction >> 6) & 0x7) as u32; // Ro (bits 6-8)
+    let opcode: u32 = ((instruction >> 10) & 0x3) as u32; // opcode (bits 10-11): STRH/LDSB/LDRH/LDSH
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(base as i32);
     address = address.wrapping_add(emu.get_cpu(cpu_type).get_register(offset as i32));
@@ -820,7 +855,7 @@ pub fn thumb_load_store_sign_halfword(emu: &mut Emulator, cpu_type: CpuType) {
             if emu.get_cpu(cpu_type).get_id() > 0 {
                 // println!("STRH {{{}}}, [{{{}}}, {{{}}}]", destination, base, offset);
             }
-            let value = (emu.get_cpu(cpu_type).get_register(destination) & 0xFFFF) as u16;
+            let value = (emu.get_cpu(cpu_type).get_register(destination) & 0xFFFF) as u16; // STRH stores only the low halfword
             emu.write_halfword(address, value, cpu_type);
             emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
         }
@@ -872,8 +907,8 @@ pub fn thumb_load_store_sign_halfword(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_sp_rel_store(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let source: u32 = ((instruction >> 8) & 0x7) as u32;
-    let offset: u32 = ((instruction & 0x00FF) as u32) << 2;
+    let source: u32 = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
+    let offset: u32 = ((instruction & 0x00FF) as u32) << 2; // 8-bit word offset (bits 0-7) * 4
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(REG_SP as i32);
     address = address.wrapping_add(offset);
@@ -891,8 +926,8 @@ pub fn thumb_sp_rel_store(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_sp_rel_load(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let destination: u32 = ((instruction >> 8) & 0x7) as u32;
-    let offset: u32 = ((instruction & 0x00FF) as u32) << 2;
+    let destination: u32 = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
+    let offset: u32 = ((instruction & 0x00FF) as u32) << 2; // 8-bit word offset (bits 0-7) * 4
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(REG_SP as i32);
     address = address.wrapping_add(offset);
@@ -913,9 +948,11 @@ pub fn thumb_sp_rel_load(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_offset_sp(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let mut offset: i16 = ((instruction & 0x007F) << 2) as i16;
+    // THUMB Opcodes: Memory Addressing (ADD PC/SP): https://problemkaputt.de/gbatek.htm#thumbopcodesmemoryaddressingaddpcsp
+    let mut offset: i16 = ((instruction & 0x007F) << 2) as i16; // 7-bit word offset (bits 0-6) * 4
 
     if (instruction & (1 << 7)) != 0 {
+        // bit 7: subtract the offset from SP
         offset = -offset;
     }
 
@@ -932,15 +969,15 @@ pub fn thumb_offset_sp(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_load_address(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let destination: u32 = ((instruction >> 8) & 0x7) as u32;
-    let offset: u32 = ((instruction & 0x00FF) as u32) << 2;
-    let adding_sp: bool = (instruction & (1 << 11)) != 0;
+    let destination: u32 = ((instruction >> 8) & 0x7) as u32; // Rd (bits 8-10)
+    let offset: u32 = ((instruction & 0x00FF) as u32) << 2; // 8-bit word offset (bits 0-7) * 4
+    let adding_sp: bool = (instruction & (1 << 11)) != 0; // SP bit (11): ADD Rd,SP (else PC)
 
     let address: u32 = if adding_sp {
         emu.get_cpu(cpu_type).get_register(REG_SP as i32)
     } else {
         // Set bit 1 to zero for alignment safety
-        emu.get_cpu(cpu_type).get_pc() & !0x2
+        emu.get_cpu(cpu_type).get_pc() & !0x2 // PC is word-aligned (bit 1 forced to 0)
     };
 
     // if emu.get_cpu_mut(cpu_type).can_disassemble() {
@@ -954,7 +991,8 @@ pub fn thumb_load_address(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: PUSH
 pub fn thumb_push(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
-    let reg_list: u8 = (instruction & 0x00FF) as u8;
+    // THUMB Opcodes: Memory Multiple Load/Store (PUSH/POP and LDM/STM): https://problemkaputt.de/gbatek.htm#thumbopcodesmemorymultipleloadstorepushpopandldmstm
+    let reg_list: u8 = (instruction & 0x00FF) as u8; // register list R0-R7 (bits 0-7)
 
     let mut stack_pointer: u32 = emu.get_cpu(cpu_type).get_register(REG_SP as i32);
 
@@ -965,6 +1003,7 @@ pub fn thumb_push(emu: &mut Emulator, cpu_type: CpuType) {
     let mut regs: i32 = 0;
 
     if (instruction & (1 << 8)) != 0 {
+        // R bit (8): also push LR
         regs += 1;
         stack_pointer = stack_pointer.wrapping_sub(4);
         let lr = emu.get_cpu(cpu_type).get_register(REG_LR as i32);
@@ -994,7 +1033,7 @@ pub fn thumb_push(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: POP
 pub fn thumb_pop(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
-    let reg_list: u8 = (instruction & 0x00FF) as u8;
+    let reg_list: u8 = (instruction & 0x00FF) as u8; // register list R0-R7 (bits 0-7)
 
     let mut stack_pointer: u32 = emu.get_cpu(cpu_type).get_register(REG_SP as i32);
 
@@ -1038,8 +1077,8 @@ pub fn thumb_pop(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: Store multiple registers
 pub fn thumb_store_multiple(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
-    let reg_list: u8 = (instruction & 0x00FF) as u8;
-    let base = ((instruction >> 8) & 0x7) as i32;
+    let reg_list: u8 = (instruction & 0x00FF) as u8; // register list R0-R7 (bits 0-7)
+    let base = ((instruction >> 8) & 0x7) as i32; // Rb - base register (bits 8-10)
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(base);
 
@@ -1070,8 +1109,8 @@ pub fn thumb_store_multiple(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: Load multiple registers
 fn thumb_load_multiple(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
-    let reg_list: u8 = (instruction & 0x00FF) as u8;
-    let base: u32 = ((instruction >> 8) & 0x7) as u32;
+    let reg_list: u8 = (instruction & 0x00FF) as u8; // register list R0-R7 (bits 0-7)
+    let base: u32 = ((instruction >> 8) & 0x7) as u32; // Rb - base register (bits 8-10)
 
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(base as i32);
 
@@ -1109,7 +1148,8 @@ pub fn thumb_branch(emu: &mut Emulator, cpu_type: CpuType) {
     let mut address: u32 = emu.get_cpu(cpu_type).get_pc();
 
     // int16_t offset = (instruction & 0x7FF) << 1;
-    let mut offset: i16 = ((instruction & 0x07FF) << 1) as i16;
+    // THUMB Opcodes: Jumps and Calls: https://problemkaputt.de/gbatek.htm#thumbopcodesjumpsandcalls
+    let mut offset: i16 = ((instruction & 0x07FF) << 1) as i16; // 11-bit signed halfword offset (bits 0-10) * 2
 
     // Sign extend 12-bit offset
     offset = (offset << 4) >> 4;
@@ -1126,9 +1166,10 @@ pub fn thumb_branch(emu: &mut Emulator, cpu_type: CpuType) {
 /// Thumb instruction: Conditional branch
 fn thumb_cond_branch(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
-    let condition: u32 = ((instruction >> 8) & 0xF) as u32;
+    let condition: u32 = ((instruction >> 8) & 0xF) as u32; // condition code (bits 8-11)
 
     if condition == 0xF {
+        // condition 1111b = SWI
         // if emu.get_cpu_mut(cpu_type).can_disassemble() {
         //     println!("SWI ${:02X}", instruction & 0xFF);
         // }
@@ -1166,7 +1207,7 @@ pub fn thumb_long_branch_prep(emu: &mut Emulator, cpu_type: CpuType) {
     let mut upper_address: u32 = emu.get_cpu(cpu_type).get_pc();
 
     // int32_t offset = ((instruction & 0x7FF) << 21) >> 9;
-    let offset: i32 = (((instruction & 0x07FF) as i32) << 21) >> 9;
+    let offset: i32 = (((instruction & 0x07FF) as i32) << 21) >> 9; // upper 11 bits of the BL target, sign-extended and shifted left by 12
     upper_address = upper_address.wrapping_add(offset as u32);
 
     // if emu.get_cpu_mut(cpu_type).can_disassemble() {
@@ -1183,7 +1224,7 @@ pub fn thumb_long_branch(emu: &mut Emulator, cpu_type: CpuType) {
     let mut address: u32 = emu.get_cpu(cpu_type).get_register(REG_LR as i32);
 
     // address += (instruction & 0x7FF) << 1;
-    address = address.wrapping_add(((instruction & 0x07FF) as u32) << 1);
+    address = address.wrapping_add(((instruction & 0x07FF) as u32) << 1); // lower 11 bits of the BL target (halfword offset)
 
     let mut new_lr: u32 = emu.get_cpu(cpu_type).get_pc().wrapping_sub(2);
     new_lr |= 0x1; // Preserve Thumb mode

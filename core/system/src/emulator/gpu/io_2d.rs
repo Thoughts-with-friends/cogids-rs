@@ -18,14 +18,16 @@ pub const IO_2D_SIZE: usize = 0x70;
 /// DISPSTAT/VCOUNT (0x04000004..7) are shared registers and are excluded.
 pub const fn is_2d_reg(address: u32) -> bool {
     let offset = address & 0xFFF;
-    (address & !0xFFF == 0x0400_0000 || address & !0xFFF == 0x0400_1000)
+    // DS Video BG Modes / Control: https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol
+    (address & !0xFFF == 0x0400_0000 || address & !0xFFF == 0x0400_1000) // DISPCNT - LCD Control / Engine B DISPCNT - LCD Control
         && offset < IO_2D_SIZE as u32
         && !(offset >= 4 && offset < 8)
 }
 
 /// Engine index (0 = A, 1 = B) and register offset of a 2D register address.
 const fn split(address: u32) -> (usize, usize) {
-    (((address >> 12) & 1) as usize, (address & 0xFFF) as usize)
+    // DS I/O Maps: https://problemkaputt.de/gbatek.htm#dsiomaps
+    (((address >> 12) & 1) as usize, (address & 0xFFF) as usize) // bit 12 selects engine B (04001000h), low 12 bits = register offset
 }
 
 impl Emulator {
@@ -39,7 +41,7 @@ impl Emulator {
     fn io_2d_u32(&self, engine: usize, offset: usize) -> u32 {
         let lo = u32::from(self.io_2d_u16(engine, offset & !3));
         let hi = u32::from(self.io_2d_u16(engine, (offset & !3) + 2));
-        lo | (hi << 16)
+        lo | (hi << 16) // two 16-bit registers per word
     }
 
     /// Byte write to a 2D engine register.
@@ -81,7 +83,9 @@ impl Emulator {
         self.io_2d[engine][offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         // 32-bit registers are applied once with the whole value.
         self.apply_io_2d(engine, offset);
+        // GBA I/O Map: https://problemkaputt.de/gbatek.htm#gbaiomap
         if !matches!(offset, 0x00 | 0x28 | 0x2C | 0x38 | 0x3C | 0x64) {
+            // 32-bit registers: DISPCNT, BG2X, BG2Y, BG3X, BG3Y, DISPCAPCNT
             self.apply_io_2d(engine, offset + 2);
         }
     }
@@ -90,9 +94,11 @@ impl Emulator {
     /// the shadow is refreshed from the GPU before a partial write merges
     /// into it.
     fn sync_dispcapcnt(&mut self, engine: usize, offset: usize) {
+        // DS Video Capture and Main Memory Display Mode: https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode
         if engine == 0 && (0x64..0x68).contains(&offset) {
+            // DISPCAPCNT (engine A only)
             let current = self.gpu.get_dispcapcnt_a();
-            self.io_2d[0][0x64..0x68].copy_from_slice(&current.to_le_bytes());
+            self.io_2d[0][0x64..0x68].copy_from_slice(&current.to_le_bytes()); // DISPCAPCNT
         }
     }
 
@@ -108,6 +114,7 @@ impl Emulator {
                 self.io_2d_u16(engine, offset)
             }
             0x64..=0x67 if engine == 0 => {
+                // DISPCAPCNT (engine A only)
                 let word = self.gpu.get_dispcapcnt_a();
                 if offset & 2 == 0 {
                     word as u16
@@ -135,7 +142,7 @@ impl Emulator {
     pub fn read_io_2d_u32(&self, address: u32) -> u32 {
         let address = address & !3;
         u32::from(self.read_io_2d_u16(address))
-            | (u32::from(self.read_io_2d_u16(address + 2)) << 16)
+            | (u32::from(self.read_io_2d_u16(address + 2)) << 16) // upper halfword
     }
 
     /// Forwards the (complete) register containing halfword `offset` to the GPU
@@ -147,23 +154,29 @@ impl Emulator {
         let gpu = &mut self.gpu;
         let a = engine == 0;
         match offset {
+            // LCD I/O Display Control: https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol
             0x00 | 0x02 => {
+                // DISPCNT
                 if a {
                     gpu.set_dispcnt_a(word);
                 } else {
                     gpu.set_dispcnt_b(word);
                 }
             }
+            // LCD I/O BG Control: https://problemkaputt.de/gbatek.htm#lcdiobgcontrol
             0x08..=0x0E => {
-                let index = (offset - 0x08) / 2;
+                // BG0CNT-BG3CNT
+                let index = (offset - 0x08) / 2; // BGxCNT index (2 bytes each)
                 if a {
                     gpu.set_bgcnt_a(half, index);
                 } else {
                     gpu.set_bgcnt_b(half, index);
                 }
             }
+            // LCD I/O BG Scrolling: https://problemkaputt.de/gbatek.htm#lcdiobgscrolling
             0x10..=0x1E => {
-                let index = (offset - 0x10) / 4;
+                // BG0HOFS-BG3VOFS
+                let index = (offset - 0x10) / 4; // BGxHOFS/VOFS pair index (4 bytes per BG)
                 match (a, offset & 2 == 0) {
                     (true, true) => gpu.set_bghofs_a(half, index),
                     (true, false) => gpu.set_bgvofs_a(half, index),
@@ -171,8 +184,10 @@ impl Emulator {
                     (false, false) => gpu.set_bgvofs_b(half, index),
                 }
             }
+            // LCD I/O BG Rotation/Scaling: https://problemkaputt.de/gbatek.htm#lcdiobgrotationscaling
             0x20..=0x26 => {
-                let index = (offset - 0x20) / 2;
+                // BG2PA-BG2PD
+                let index = (offset - 0x20) / 2; // parameter index (2 bytes each)
                 if a {
                     gpu.set_bg2p_a(half, index);
                 } else {
@@ -180,7 +195,8 @@ impl Emulator {
                 }
             }
             0x30..=0x36 => {
-                let index = (offset - 0x30) / 2;
+                // BG3PA-BG3PD
+                let index = (offset - 0x30) / 2; // parameter index (2 bytes each)
                 if a {
                     gpu.set_bg3p_a(half, index);
                 } else {
@@ -190,16 +206,18 @@ impl Emulator {
             // BG2X/BG2Y/BG3X/BG3Y: 28-bit reference points; any write reloads
             // the internal counter.
             0x28..=0x2E | 0x38..=0x3E => match (a, offset & !3) {
-                (true, 0x28) => gpu.set_bg2x_a(word),
-                (true, 0x2C) => gpu.set_bg2y_a(word),
-                (true, 0x38) => gpu.set_bg3x_a(word),
+                (true, 0x28) => gpu.set_bg2x_a(word), // BG2X
+                (true, 0x2C) => gpu.set_bg2y_a(word), // BG2Y
+                (true, 0x38) => gpu.set_bg3x_a(word), // BG3X
                 (true, _) => gpu.set_bg3y_a(word),
-                (false, 0x28) => gpu.set_bg2x_b(word),
-                (false, 0x2C) => gpu.set_bg2y_b(word),
-                (false, 0x38) => gpu.set_bg3x_b(word),
+                (false, 0x28) => gpu.set_bg2x_b(word), // BG2X
+                (false, 0x2C) => gpu.set_bg2y_b(word), // BG2Y
+                (false, 0x38) => gpu.set_bg3x_b(word), // BG3X
                 (false, _) => gpu.set_bg3y_b(word),
             },
+            // LCD I/O Window Feature: https://problemkaputt.de/gbatek.htm#lcdiowindowfeature
             0x40 => {
+                // WIN0H
                 if a {
                     gpu.set_win0h_a(half);
                 } else {
@@ -207,6 +225,7 @@ impl Emulator {
                 }
             }
             0x42 => {
+                // WIN1H
                 if a {
                     gpu.set_win1h_a(half);
                 } else {
@@ -214,6 +233,7 @@ impl Emulator {
                 }
             }
             0x44 => {
+                // WIN0V
                 if a {
                     gpu.set_win0v_a(half);
                 } else {
@@ -221,6 +241,7 @@ impl Emulator {
                 }
             }
             0x46 => {
+                // WIN1V
                 if a {
                     gpu.set_win1v_a(half);
                 } else {
@@ -228,6 +249,7 @@ impl Emulator {
                 }
             }
             0x48 => {
+                // WININ
                 if a {
                     gpu.set_winin_a(half);
                 } else {
@@ -235,20 +257,25 @@ impl Emulator {
                 }
             }
             0x4A => {
+                // WINOUT
                 if a {
                     gpu.set_winout_a(half);
                 } else {
                     gpu.set_winout_b(half);
                 }
             }
+            // LCD I/O Mosaic Function: https://problemkaputt.de/gbatek.htm#lcdiomosaicfunction
             0x4C => {
+                // MOSAIC
                 if a {
                     gpu.set_mosaic_a(half);
                 } else {
                     gpu.set_mosaic_b(half);
                 }
             }
+            // LCD I/O Color Special Effects: https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects
             0x50 => {
+                // BLDCNT
                 if a {
                     gpu.set_bldcnt_a(half);
                 } else {
@@ -256,6 +283,7 @@ impl Emulator {
                 }
             }
             0x52 => {
+                // BLDALPHA
                 if a {
                     gpu.set_bldalpha_a(half);
                 } else {
@@ -263,17 +291,23 @@ impl Emulator {
                 }
             }
             0x54 => {
+                // BLDY
                 if a {
                     gpu.set_bldy_a(half as u8);
                 } else {
                     gpu.set_bldy_b(half as u8);
                 }
             }
-            0x60 if a => gpu.set_disp3dcnt(half),
+            // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
+            0x60 if a => gpu.set_disp3dcnt(half), // DISP3DCNT (engine A only)
+            // DS Video Capture and Main Memory Display Mode: https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode
             0x64 | 0x66 if a => {
+                // DISPCAPCNT (engine A only)
                 gpu.set_dispcapcnt(word);
             }
+            // DS Video Stuff: https://problemkaputt.de/gbatek.htm#dsvideostuff
             0x6C => {
+                // MASTER_BRIGHT
                 if a {
                     gpu.set_master_bright_a(half);
                 } else {

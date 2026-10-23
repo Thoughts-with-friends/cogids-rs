@@ -39,11 +39,12 @@ pub(super) struct LineLayers {
 /// BGR555 -> 0xFFRRGGBB with 5-to-8-bit expansion.
 #[inline]
 pub(crate) const fn rgb555_to_888(c: u16) -> u32 {
-    let r = (c & 0x1F) as u32;
-    let g = ((c >> 5) & 0x1F) as u32;
-    let b = ((c >> 10) & 0x1F) as u32;
-    0xFF00_0000
-        | (((r << 3) | (r >> 2)) << 16)
+    // LCD Color Palettes: https://problemkaputt.de/gbatek.htm#lcdcolorpalettes
+    let r = (c & 0x1F) as u32; // red (bits 0-4)
+    let g = ((c >> 5) & 0x1F) as u32; // green (bits 5-9)
+    let b = ((c >> 10) & 0x1F) as u32; // blue (bits 10-14)
+    0xFF00_0000 // opaque alpha
+        | (((r << 3) | (r >> 2)) << 16) // 5-bit red widened to 8 bits, placed in bits 16-23
         | (((g << 3) | (g >> 2)) << 8)
         | ((b << 3) | (b >> 2))
 }
@@ -52,8 +53,9 @@ pub(crate) const fn rgb555_to_888(c: u16) -> u32 {
 #[inline]
 fn blend(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
-        let ca = u32::from((a >> shift) & 0x1F);
-        let cb = u32::from((b >> shift) & 0x1F);
+        // LCD I/O Color Special Effects: https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects
+        let ca = u32::from((a >> shift) & 0x1F); // 5-bit color component
+        let cb = u32::from((b >> shift) & 0x1F); // 5-bit color component
         (((ca * eva + cb * evb) >> 4).min(31) as u16) << shift
     };
     ch(0) | ch(5) | ch(10)
@@ -63,8 +65,8 @@ fn blend(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
 #[inline]
 pub(crate) fn blend32(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
-        let ca = u32::from((a >> shift) & 0x1F);
-        let cb = u32::from((b >> shift) & 0x1F);
+        let ca = u32::from((a >> shift) & 0x1F); // 5-bit color component
+        let cb = u32::from((b >> shift) & 0x1F); // 5-bit color component
         (((ca * eva + cb * evb) >> 5).min(31) as u16) << shift
     };
     ch(0) | ch(5) | ch(10)
@@ -74,7 +76,7 @@ pub(crate) fn blend32(a: u16, b: u16, eva: u32, evb: u32) -> u16 {
 #[inline]
 pub(crate) fn brighten(c: u16, evy: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
-        let v = u32::from((c >> shift) & 0x1F);
+        let v = u32::from((c >> shift) & 0x1F); // 5-bit color component
         ((v + (((31 - v) * evy) >> 4)) as u16) << shift
     };
     ch(0) | ch(5) | ch(10)
@@ -84,7 +86,7 @@ pub(crate) fn brighten(c: u16, evy: u32) -> u16 {
 #[inline]
 pub(crate) fn darken(c: u16, evy: u32) -> u16 {
     let ch = |shift: u16| -> u16 {
-        let v = u32::from((c >> shift) & 0x1F);
+        let v = u32::from((c >> shift) & 0x1F); // 5-bit color component
         ((v - ((v * evy) >> 4)) as u16) << shift
     };
     ch(0) | ch(5) | ch(10)
@@ -98,7 +100,8 @@ impl Gpu {
         } else {
             &self.palette_lower
         };
-        let i = 0x200 + ((index as usize * 2) & 0x1FF);
+        // LCD Color Palettes: https://problemkaputt.de/gbatek.htm#lcdcolorpalettes
+        let i = 0x200 + ((index as usize * 2) & 0x1FF); // OBJ palette starts at offset 200h
         u16::from_le_bytes([pal[i], pal[i + 1]])
     }
 
@@ -109,7 +112,7 @@ impl Gpu {
         } else {
             &self.palette_lower
         };
-        let i = (index as usize * 2) & 0x1FF;
+        let i = (index as usize * 2) & 0x1FF; // BG palette at offset 0-1FFh
         u16::from_le_bytes([pal[i], pal[i + 1]])
     }
 
@@ -210,13 +213,14 @@ impl Gpu {
     /// Picks the top two visible layers per pixel and applies BLDCNT.
     fn composite(&mut self, a: bool, line: usize, layers: &LineLayers) {
         let masks = self.window_masks(a, line, layers);
-        let backdrop = self.bg_palette_color(a, 0) & 0x7FFF;
+        let backdrop = self.bg_palette_color(a, 0) & 0x7FFF; // backdrop = BG palette color 0
         let e = self.engine(a);
         let bgcnt = e.bgcnt;
         let bld = e.bldcnt;
-        let eva = u32::from(e.bldalpha & 0x1F).min(16);
-        let evb = u32::from((e.bldalpha >> 8) & 0x1F).min(16);
-        let evy = u32::from(e.bldy & 0x1F).min(16);
+        // LCD I/O Color Special Effects: https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects
+        let eva = u32::from(e.bldalpha & 0x1F).min(16); // BLDALPHA EVA (bits 0-4), capped at 16
+        let evb = u32::from((e.bldalpha >> 8) & 0x1F).min(16); // BLDALPHA EVB (bits 8-12), capped at 16
+        let evy = u32::from(e.bldy & 0x1F).min(16); // BLDY EVY (bits 0-4), capped at 16
         let first_target = |layer: usize| match layer {
             0..=3 => bld.bg_first_target_pix[layer],
             4 => bld.obj_first_target_pix,
@@ -239,6 +243,7 @@ impl Gpu {
             'search: for prio in 0..4u32 {
                 let obj = layers.obj[x];
                 if obj & OPAQUE != 0 && (obj >> 16) & 3 == prio && mask & 0x10 != 0 {
+                    // window mask bit 4: OBJ enabled
                     found[count] = (4, obj);
                     count += 1;
                     if count == 2 {
@@ -260,9 +265,9 @@ impl Gpu {
 
             let (top_layer, top) = found[0];
             let (second_layer, second) = found[1];
-            let top_color = (top & 0x7FFF) as u16;
-            let second_color = (second & 0x7FFF) as u16;
-            let effects = mask & 0x20 != 0;
+            let top_color = (top & 0x7FFF) as u16; // BGR555 color
+            let second_color = (second & 0x7FFF) as u16; // BGR555 color
+            let effects = mask & 0x20 != 0; // window mask bit 5: color special effects enabled
 
             let color = if !effects {
                 top_color
@@ -272,7 +277,7 @@ impl Gpu {
             {
                 // Semi-transparent / bitmap OBJs blend regardless of BLDCNT mode.
                 if top & OBJ_BITMAP != 0 {
-                    let alpha = ((top >> 20) & 0xF) + 1;
+                    let alpha = ((top >> 20) & 0xF) + 1; // bitmap OBJ alpha (bits 20-23) + 1
                     blend(top_color, second_color, alpha, 16 - alpha)
                 } else {
                     blend(top_color, second_color, eva, evb)

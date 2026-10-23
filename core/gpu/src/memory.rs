@@ -139,7 +139,8 @@ impl Gpu {
     }
 }
 
-const OAM_MASK: u32 = 0x7FF;
+// DS Memory Maps: https://problemkaputt.de/gbatek.htm#dsmemorymaps
+const OAM_MASK: u32 = 0x7FF; // 2K OAM (engine A + engine B)
 
 impl Gpu {
     /// Byte read from OAM (0x07000000, engine A; +0x400 engine B).
@@ -174,19 +175,19 @@ impl Gpu {
 impl Gpu {
     /// Write to palette A (`address` may be absolute; only bits 0-9 count).
     pub fn write_palette_a(&mut self, address: u32, value: u16) {
-        let index = (address & 0x3FE) as usize;
+        let index = (address & 0x3FE) as usize; // halfword-aligned offset in 1K palette RAM
         self.palette_upper[index..index + 2].copy_from_slice(&value.to_le_bytes());
     }
 
     /// Write to palette B (`address` may be absolute; only bits 0-9 count).
     pub fn write_palette_b(&mut self, address: u32, value: u16) {
-        let index = (address & 0x3FE) as usize;
+        let index = (address & 0x3FE) as usize; // halfword-aligned offset in 1K palette RAM
         self.palette_lower[index..index + 2].copy_from_slice(&value.to_le_bytes());
     }
 
     /// Halfword write to OAM (0x07000000, 2 KB).
     pub fn write_oam(&mut self, address: u32, halfword: u16) {
-        let index = (address & 0x7FE) as usize;
+        let index = (address & 0x7FE) as usize; // halfword-aligned offset in 2K OAM
         self.oam[index..index + 2].copy_from_slice(&halfword.to_le_bytes());
     }
 }

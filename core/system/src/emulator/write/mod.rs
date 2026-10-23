@@ -7,7 +7,8 @@ use ds_cpu::arm_cpu::CpuType;
 /// Folds main RAM mirrors together so a watchpoint matches any of them.
 const fn watch_key(address: u32) -> u32 {
     if address >> 24 == 0x02 {
-        address & 0x023F_FFFC
+        // Main RAM
+        address & 0x023F_FFFC // 4MB Main RAM, word aligned
     } else {
         address & !3
     }

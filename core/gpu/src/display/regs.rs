@@ -64,7 +64,8 @@ impl DispStatReg {
         if self.irq_on_vcounter {
             value |= 32;
         }
-        value |= (self.vcounter & 0xFF) << 8;
+        // LCD I/O Interrupts and Status: https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus
+        value |= (self.vcounter & 0xFF) << 8; // DISPSTAT V-count setting (bits 8-15)
         value
     }
 
@@ -76,7 +77,7 @@ impl DispStatReg {
         self.irq_on_vblank = (value & 8) != 0;
         self.irq_on_hblank = (value & 16) != 0;
         self.irq_on_vcounter = (value & 32) != 0;
-        self.vcounter = (value >> 8) & 0xFF;
+        self.vcounter = (value >> 8) & 0xFF; // DISPSTAT V-count setting (bits 8-15)
     }
 }
 
@@ -136,10 +137,11 @@ impl PowerCtrlReg {
             value |= 8;
         }
         if self.engine_lower {
-            value |= 1 << 9;
+            // DS Power Control: https://problemkaputt.de/gbatek.htm#dspowercontrol
+            value |= 1 << 9; // POWCNT1 bit 9: 2D graphics engine B enable
         }
         if self.swap_display {
-            value |= 1 << 15;
+            value |= 1 << 15; // POWCNT1 bit 15: display swap (engine A on top)
         }
         value
     }
@@ -153,7 +155,8 @@ impl PowerCtrlReg {
         // GBATEK "DS Power Control": bit 9 = 2D engine B, bit 15 = display
         // swap (1 = engine A on the upper screen).
         self.engine_lower = (value & (1 << 9)) != 0;
-        self.swap_display = (value & (1 << 15)) != 0;
+        // DS Power Control: https://problemkaputt.de/gbatek.htm#dspowercontrol
+        self.swap_display = (value & (1 << 15)) != 0; // POWCNT1 bit 15: display swap (engine A on top)
     }
 }
 

@@ -22,7 +22,8 @@ pub(super) fn mtx_mult_4x3(m: &mut Mtx, s: &[i32]) {
         for c in 0..4 {
             let mut v: i64 = (0..3).map(|k| mul(s[r * 3 + k], t[k * 4 + c])).sum();
             if r == 3 {
-                v += mul(0x1000, t[12 + c]);
+                // DS 3D Matrix Load/Multiply: https://problemkaputt.de/gbatek.htm#ds3dmatrixloadmultiply
+                v += mul(0x1000, t[12 + c]); // 1.0 in 20.12 fixed point
             }
             m[r * 4 + c] = (v >> 12) as i32;
         }
@@ -63,7 +64,7 @@ pub(super) fn mtx_load_4x3(m: &mut Mtx, s: &[i32]) {
         s[0], s[1], s[2], 0, //
         s[3], s[4], s[5], 0, //
         s[6], s[7], s[8], 0, //
-        s[9], s[10], s[11], 0x1000,
+        s[9], s[10], s[11], 0x1000, // 1.0 in 20.12 fixed point
     ];
 }
 
@@ -73,7 +74,7 @@ pub(super) fn transform(v: [i32; 3], m: &Mtx) -> [i32; 4] {
         i64::from(v[0]),
         i64::from(v[1]),
         i64::from(v[2]),
-        0x1000_i64,
+        0x1000_i64, // w = 1.0 in 20.12 fixed point
     ];
     core::array::from_fn(|c| {
         ((v[0] * i64::from(m[c])
@@ -88,12 +89,12 @@ impl Gpu3D {
     /// Matrix load/multiply commands 0x16-0x1C.
     pub(super) fn matrix_command(&mut self, cmd: u8, p: &[i32; 32]) {
         let apply = |m: &mut Mtx| match cmd {
-            0x16 => m.copy_from_slice(&p[..16]),
-            0x17 => mtx_load_4x3(m, p),
-            0x18 => mtx_mult_4x4(m, p),
-            0x19 => mtx_mult_4x3(m, p),
-            0x1A => mtx_mult_3x3(m, p),
-            0x1B => mtx_scale(m, p),
+            0x16 => m.copy_from_slice(&p[..16]), // MTX_LOAD_4x4
+            0x17 => mtx_load_4x3(m, p),          // MTX_LOAD_4x3
+            0x18 => mtx_mult_4x4(m, p),          // MTX_MULT_4x4
+            0x19 => mtx_mult_4x3(m, p),          // MTX_MULT_4x3
+            0x1A => mtx_mult_3x3(m, p),          // MTX_MULT_3x3
+            0x1B => mtx_scale(m, p),             // MTX_SCALE
             _ => mtx_translate(m, p),
         };
         match self.matrix_mode {
@@ -106,6 +107,7 @@ impl Gpu3D {
                 apply(&mut self.pos_matrix);
                 // SCALE never touches the vector matrix.
                 if mode == 2 && cmd != 0x1B {
+                    // MTX_SCALE never modifies the vector matrix
                     apply(&mut self.vec_matrix);
                 }
                 self.clip_matrix_dirty = true;

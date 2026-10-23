@@ -26,7 +26,8 @@ impl Gpu3D {
         });
 
         let mut c = 0_u32;
-        let mut buf: [u32; 3] = self.mat_emission.map(|e| u32::from(e) << 14);
+        // DS 3D Polygon Light Parameters: https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters
+        let mut buf: [u32; 3] = self.mat_emission.map(|e| u32::from(e) << 14); // emission color in 14-bit fixed point
         for i in 0..4 {
             if self.cur_polygon_attr & (1 << i) == 0 {
                 continue;
@@ -37,24 +38,25 @@ impl Gpu3D {
 
             let mut shine: i32 = 0;
             if dot > 0 {
-                let diff = (dot << 21) >> 21;
+                let diff = (dot << 21) >> 21; // sign-extend 11-bit dot product
                 for k in 0..3 {
                     let d = (u32::from(self.mat_diffuse[k]) * lc[k]).wrapping_mul(diff as u32);
-                    buf[k] = buf[k].wrapping_add(d & 0xFFFFF);
+                    // DS 3D Polygon Light Parameters: https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters
+                    buf[k] = buf[k].wrapping_add(d & 0xFFFFF); // 20-bit accumulator
                 }
                 dot += nt[2];
-                dot = (dot << 21) >> 21;
-                dot = ((dot * dot) >> 10) & 0x3FF;
-                shine = ((dot * self.spec_recip[i]) >> 8) - (1 << 9);
+                dot = (dot << 21) >> 21; // sign-extend 11-bit dot product
+                dot = ((dot * dot) >> 10) & 0x3FF; // shininess level = dot squared, 10 bits
+                shine = ((dot * self.spec_recip[i]) >> 8) - (1 << 9); // minus 1.0 in 9-bit fixed point
                 if shine < 0 {
                     shine = 0;
                 } else {
-                    shine = (shine << 18) >> 18;
-                    shine = shine.clamp(0, 0x1FF);
+                    shine = (shine << 18) >> 18; // sign-extend 14-bit value
+                    shine = shine.clamp(0, 0x1FF); // clamp to 9 bits
                 }
             }
             if self.use_shininess_table {
-                shine = i32::from(self.shininess_table[(shine >> 2) as usize & 0x7F]) << 1;
+                shine = i32::from(self.shininess_table[(shine >> 2) as usize & 0x7F]) << 1; // shininess table index (128 entries)
             }
             for k in 0..3 {
                 let v = (u32::from(self.mat_specular[k]) * shine as u32

@@ -286,7 +286,8 @@ impl Band {
             }
         }
 
-        let poly_alpha = (p.attr >> 16) & 0x1F;
+        // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
+        let poly_alpha = (p.attr >> 16) & 0x1F; // POLYGON_ATTR alpha (bits 16-20)
         let wireframe = poly_alpha == 0;
         let mut xstart = rp.xl;
         let mut xend = rp.xr;
@@ -312,8 +313,9 @@ impl Band {
             xend -= 1;
         }
 
-        let fill_all = f.st.disp_cnt & ((1 << 4) | (1 << 5)) != 0
-            || (poly_alpha < 31 && f.st.disp_cnt & (1 << 3) != 0)
+        // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
+        let fill_all = f.st.disp_cnt & ((1 << 4) | (1 << 5)) != 0 // DISP3DCNT bit 4 (anti-aliasing) or bit 5 (edge marking): fill polygon edges
+            || (poly_alpha < 31 && f.st.disp_cnt & (1 << 3) != 0) // DISP3DCNT bit 3: alpha blending
             || wireframe;
         let last_line = y == p.y_bottom - 1;
         let swapped = xstart > xend;
@@ -353,9 +355,9 @@ impl Band {
         }
 
         let yedge = if y == p.y_top {
-            0x4
+            0x4 // edge flag: top edge
         } else if last_line {
-            0x8
+            0x8 // edge flag: bottom edge
         } else {
             0
         };
@@ -390,7 +392,7 @@ impl Band {
             .min(span.width);
         if span.l_filledge {
             while x < xlimit {
-                f(x, span.yedge | 0x1, 0);
+                f(x, span.yedge | 0x1, 0); // edge flag: left edge
                 x += 1;
             }
         } else {
@@ -412,7 +414,7 @@ impl Band {
         xlimit = (span.xend + 1).min(span.width);
         if span.r_filledge {
             while x < xlimit {
-                f(x, span.yedge | 0x2, 2);
+                f(x, span.yedge | 0x2, 2); // edge flag: right edge
                 x += 1;
             }
         }
@@ -427,7 +429,7 @@ impl Band {
     ) {
         let p = &f.polys[rp.poly];
         let depth_test = DepthTest::for_poly(p);
-        let poly_alpha = (p.attr >> 16) & 0x1F;
+        let poly_alpha = (p.attr >> 16) & 0x1F; // POLYGON_ATTR alpha (bits 16-20)
         let wireframe = poly_alpha == 0;
 
         let sbase = self.width * (y as usize & 1);
@@ -453,6 +455,7 @@ impl Band {
                     stencil[sbase + x as usize] = 1;
                 }
                 if dstattr & 0xF != 0 {
+                    // edge flags (bits 0-3) set: pixel lies on a polygon edge
                     let a2 = addr + layer;
                     if !depth_test.test(depth[a2], z, attr[a2]) {
                         stencil[sbase + x as usize] |= 2;
@@ -471,11 +474,11 @@ impl Band {
     #[expect(clippy::too_many_lines)]
     pub(super) fn render_polygon_scanline(&mut self, f: &Frame, rp: &mut RendererPolygon, y: i32) {
         let p = &f.polys[rp.poly];
-        let mut polyattr = p.attr & 0x3F00_8000;
+        let mut polyattr = p.attr & 0x3F00_8000; // keep polygon ID (bits 24-29) and fog flag (bit 15)
         if !p.facing_view {
-            polyattr |= 1 << 4;
+            polyattr |= 1 << 4; // internal flag: pixel belongs to a translucent polygon
         }
-        let poly_alpha = (p.attr >> 16) & 0x1F;
+        let poly_alpha = (p.attr >> 16) & 0x1F; // POLYGON_ATTR alpha (bits 16-20)
         let wireframe = poly_alpha == 0;
         let depth_test = DepthTest::for_poly(p);
         self.prev_is_shadow_mask = false;
@@ -521,7 +524,7 @@ impl Band {
             )
         });
 
-        let aa = f.st.disp_cnt & (1 << 4) != 0;
+        let aa = f.st.disp_cnt & (1 << 4) != 0; // DISP3DCNT bit 4: anti-aliasing
         let alpha_ref = f.st.alpha_ref;
         let row = self.row(y);
         let sbase = self.width * (y as usize & 1);
@@ -530,8 +533,9 @@ impl Band {
 
         let start_cov = |c: u32| {
             if c & (1 << 31) != 0 {
-                let v = (c >> 12) & 0x3FF;
-                if v == 0x3FF { 0 } else { v }
+                // internal edge flag in bit 31
+                let v = (c >> 12) & 0x3FF; // 10-bit vertex color component
+                if v == 0x3FF { 0 } else { v } // saturated value reads as 0
             } else {
                 0
             }
@@ -556,7 +560,7 @@ impl Band {
                     addr += layer;
                 }
                 if stencil & 2 == 0 {
-                    dstattr &= !0xF;
+                    dstattr &= !0xF; // clear edge flags (bits 0-3)
                 }
             }
 
@@ -565,6 +569,7 @@ impl Band {
 
             if !depth_test.test(self.depth[addr], z, dstattr) {
                 if dstattr & 0xF == 0 || addr >= layer {
+                    // edge flags (bits 0-3) clear, or a deeper layer
                     return;
                 }
                 addr += layer;
@@ -582,9 +587,9 @@ impl Band {
 
             let color = f.render_pixel(
                 p,
-                (vr >> 3) & 0x3F,
-                (vg >> 3) & 0x3F,
-                (vb >> 3) & 0x3F,
+                (vr >> 3) & 0x3F, // 9-bit interpolated red to 6 bits
+                (vg >> 3) & 0x3F, // 9-bit interpolated green to 6 bits
+                (vb >> 3) & 0x3F, // 9-bit interpolated blue to 6 bits
                 s,
                 t,
             );
@@ -601,8 +606,9 @@ impl Band {
                         0 => {
                             let c = span.l_edgecov;
                             if c & (1 << 31) != 0 {
+                                // internal edge flag in bit 31
                                 let v = (xcov >> 5).min(31);
-                                xcov += c & 0x3FF;
+                                xcov += c & 0x3FF; // 10-bit edge coverage fraction
                                 v
                             } else {
                                 c
@@ -611,14 +617,15 @@ impl Band {
                         2 => {
                             let c = span.r_edgecov;
                             if c & (1 << 31) != 0 {
-                                let v = 0x1F_u32.saturating_sub(xcov >> 5);
-                                xcov += c & 0x3FF;
+                                // DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing: https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing
+                                let v = 0x1F_u32.saturating_sub(xcov >> 5); // anti-aliasing coverage (0-31)
+                                xcov += c & 0x3FF; // 10-bit edge coverage fraction
                                 v
                             } else {
                                 c
                             }
                         }
-                        _ => 0x1F,
+                        _ => 0x1F, // full coverage
                     };
                     attr |= cov << 8;
                     if addr < layer {
@@ -632,10 +639,12 @@ impl Band {
                 self.attr[addr] = attr;
             } else {
                 if p.attr & (1 << 11) == 0 {
+                    // POLYGON_ATTR bit 11: translucent pixels update the depth buffer
                     z = -1;
                 }
                 self.plot_translucent_pixel(f.st, addr, color, z, polyattr, p.is_shadow);
                 if dstattr & 0xF != 0 && addr < layer {
+                    // edge flags (bits 0-3) set on a deeper layer
                     self.plot_translucent_pixel(
                         f.st,
                         addr + layer,
@@ -663,17 +672,20 @@ impl Band {
         shadow: bool,
     ) {
         let dstattr = self.attr[addr];
-        let mut attr = (polyattr & 0xE0F0)
-            | ((polyattr >> 8) & 0xFF_0000)
-            | (1 << 22)
-            | (dstattr & 0xFF00_1F0F);
+        let mut attr = (polyattr & 0xE0F0) // keep polygon fog/flag bits from POLYGON_ATTR
+            | ((polyattr >> 8) & 0xFF_0000) // translucent polygon ID (POLYGON_ATTR bits 24-29) into bits 16-21
+            | (1 << 22) // internal flag: translucent pixel already written
+            | (dstattr & 0xFF00_1F0F); // keep destination edge flags, coverage and opaque polygon ID
 
         if shadow {
             if dstattr & (1 << 22) != 0 {
+                // internal flag: translucent pixel already written
                 if dstattr & 0x007F_0000 == attr & 0x007F_0000 {
+                    // same translucent polygon ID already drawn here: skip
                     return;
                 }
             } else if dstattr & 0x3F00_0000 == polyattr & 0x3F00_0000 {
+                // same opaque polygon ID underneath
                 return;
             }
         } else if dstattr & 0x007F_0000 == attr & 0x007F_0000 {
@@ -682,7 +694,8 @@ impl Band {
         }
 
         if dstattr & (1 << 15) == 0 {
-            attr &= !(1 << 15);
+            // bit 15: fog enable of the destination
+            attr &= !(1 << 15); // clear fog enable (bit 15)
         }
 
         let blended = Raster::alpha_blend(st, color, self.color[addr], color >> 24);

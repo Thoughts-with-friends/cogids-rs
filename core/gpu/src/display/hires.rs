@@ -40,10 +40,10 @@ const HD_EVY_SHIFT: u32 = 18;
 /// Encodes how a 3D pixel was composited (see the bit constants).
 pub(crate) const fn hd_3d_info(below: u16, blend: bool, effect: u32, evy: u32) -> u32 {
     HD_3D
-        | (blend as u32) << 30
-        | (below as u32 & 0x7FFF)
+        | (blend as u32) << 30 // bit 30: 3D pixel takes part in alpha blending
+        | (below as u32 & 0x7FFF) // BGR555 color of the 2D layer below
         | (effect & 3) << HD_EFFECT_SHIFT
-        | (evy & 0x1F) << HD_EVY_SHIFT
+        | (evy & 0x1F) << HD_EVY_SHIFT // BLDY EVY (bits 0-4)
 }
 
 /// Engine A state of one line that the hi-res pass needs.
@@ -61,8 +61,9 @@ fn master_bright(px: u32, reg: u16) -> u32 {
     if !matches!(reg >> 14, 1 | 2) {
         return px;
     }
-    let factor = f32::from((reg & 0x1F).min(16)) / 16.0;
-    let ch = |shift: u32| ((px >> shift) & 0xFF) as f32;
+    // DS Video Stuff: https://problemkaputt.de/gbatek.htm#dsvideostuff
+    let factor = f32::from((reg & 0x1F).min(16)) / 16.0; // MASTER_BRIGHT factor (bits 0-4), capped at 16
+    let ch = |shift: u32| ((px >> shift) & 0xFF) as f32; // 8-bit RGB channel
     let (r, g, b) = (ch(16), ch(8), ch(0));
     let (r, g, b) = match reg >> 14 {
         1 => (
@@ -73,7 +74,7 @@ fn master_bright(px: u32, reg: u16) -> u32 {
         2 => (r - r * factor, g - g * factor, b - b * factor),
         _ => return px,
     };
-    0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+    0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32) // opaque ARGB8888
 }
 
 /// Horizontal bands xBRZ works on in parallel.
@@ -95,7 +96,7 @@ fn xbrz(src: &[u32], scale: usize) -> Vec<u32> {
         );
         let rgba: Vec<u8> = src[p0 * w..p1 * w]
             .iter()
-            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF])
+            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF]) // RGBA bytes with opaque alpha
             .collect();
         let out = xbrz::scale_rgba(&rgba, w, p1 - p0, scale);
         let row_bytes = w * scale * 4;
@@ -103,7 +104,7 @@ fn xbrz(src: &[u32], scale: usize) -> Vec<u32> {
         keep.as_chunks::<4>()
             .0
             .iter()
-            .map(|c| 0xFF00_0000 | u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]))
+            .map(|c| 0xFF00_0000 | u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2])) // opaque ARGB8888
             .collect()
     };
     (0..XBRZ_BANDS)
@@ -230,7 +231,8 @@ impl HdFrame {
             .enumerate()
             .filter(|(_, (_, line))| line.graphics)
             .for_each(|(y, (block, line))| {
-                let xpos = usize::from(line.bg0_hofs & 0x1FF);
+                // LCD I/O BG Scrolling: https://problemkaputt.de/gbatek.htm#lcdiobgscrolling
+                let xpos = usize::from(line.bg0_hofs & 0x1FF); // BG0HOFS X offset (bits 0-8)
                 for x in 0..PIXELS_PER_LINE {
                     let i = info[y * PIXELS_PER_LINE + x];
                     if i & HD_3D == 0 {
@@ -239,6 +241,7 @@ impl HdFrame {
                     // Same scrolling as render_bg_3d.
                     let sx = x + xpos;
                     let sx = if xpos & 0x100 != 0 {
+                        // bit 8: negative scroll
                         sx.wrapping_sub(512)
                     } else {
                         sx
@@ -261,20 +264,20 @@ impl HdFrame {
 
 /// One hi-res 3D pixel composited the way its native pixel was.
 fn shade_3d(c: u32, info: u32) -> u16 {
-    let below = (info & 0x7FFF) as u16;
-    let alpha = (c >> 24) & 0x1F;
+    let below = (info & 0x7FFF) as u16; // BGR555 color below the 3D pixel
+    let alpha = (c >> 24) & 0x1F; // 3D pixel alpha (bits 24-28)
     if alpha == 0 {
         return below;
     }
-    let r = (c >> 1) & 0x1F;
-    let g = (c >> 9) & 0x1F;
-    let b = (c >> 17) & 0x1F;
-    let color = (r | (g << 5) | (b << 10)) as u16;
+    let r = (c >> 1) & 0x1F; // 6-bit red to 5 bits
+    let g = (c >> 9) & 0x1F; // 6-bit green to 5 bits
+    let b = (c >> 17) & 0x1F; // 6-bit blue to 5 bits
+    let color = (r | (g << 5) | (b << 10)) as u16; // pack BGR555
     if info & HD_BLEND != 0 {
         let eva = alpha + 1;
         return blend32(color, below, eva, 32 - eva);
     }
-    let evy = (info >> HD_EVY_SHIFT) & 0x1F;
+    let evy = (info >> HD_EVY_SHIFT) & 0x1F; // BLDY EVY (bits 0-4)
     match (info >> HD_EFFECT_SHIFT) & 3 {
         2 => brighten(color, evy),
         3 => darken(color, evy),
@@ -303,7 +306,7 @@ mod tests {
 
     #[test]
     fn xbrz_keeps_flat_areas() {
-        let src = vec![0xFF12_3456; PIXELS_PER_LINE * SCANLINES];
+        let src = vec![0xFF12_3456; PIXELS_PER_LINE * SCANLINES]; // opaque test color
         let out = xbrz(&src, 3);
         assert_eq!(out.len(), PIXELS_PER_LINE * SCANLINES * 9);
         // Away from the image border the color is untouched.
@@ -317,21 +320,21 @@ mod tests {
             .map(|i| {
                 let (x, y) = (i % PIXELS_PER_LINE, i / PIXELS_PER_LINE);
                 if (x + y) % 7 < 3 || (x / 5 + y / 3) % 4 == 0 {
-                    0xFFFF_8040
+                    0xFFFF_8040 // opaque test color
                 } else {
-                    0xFF10_2030
+                    0xFF10_2030 // opaque test color
                 }
             })
             .collect();
         let rgba: Vec<u8> = src
             .iter()
-            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF])
+            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF]) // RGBA bytes with opaque alpha
             .collect();
         let whole: Vec<u32> = xbrz::scale_rgba(&rgba, PIXELS_PER_LINE, SCANLINES, 4)
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|c| 0xFF00_0000 | u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]))
+            .map(|c| 0xFF00_0000 | u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2])) // opaque ARGB8888
             .collect();
         assert!(xbrz(&src, 4) == whole);
     }
@@ -347,8 +350,8 @@ mod tests {
         assert_eq!(shade_3d(white, hd_3d_info(0, false, 3, 16)), 0);
         // Half alpha blends with black below.
         let half = (white & 0x00FF_FFFF) | (15 << 24);
-        assert_eq!(shade_3d(half, hd_3d_info(0, true, 0, 0)) & 0x1F, 15);
-        assert_eq!(master_bright(0xFF00_0000, (2 << 14) | 16), 0xFF00_0000);
-        assert_eq!(master_bright(0xFF00_0000, (1 << 14) | 16), 0xFFFF_FFFF);
+        assert_eq!(shade_3d(half, hd_3d_info(0, true, 0, 0)) & 0x1F, 15); // 5-bit blended red
+        assert_eq!(master_bright(0xFF00_0000, (2 << 14) | 16), 0xFF00_0000); // MASTER_BRIGHT mode 2 (down), factor 16: black stays black
+        assert_eq!(master_bright(0xFF00_0000, (1 << 14) | 16), 0xFFFF_FFFF); // MASTER_BRIGHT mode 1 (up), factor 16: white
     }
 }

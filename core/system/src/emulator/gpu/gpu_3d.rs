@@ -164,7 +164,8 @@ impl Emulator {
             self.gpu.engine_3d.cmd_count = 4;
             self.gpu.engine_3d.current_cmd = word;
             self.gpu.engine_3d.param_count = 0;
-            self.gpu.engine_3d.total_params = CMD_PARAM_AMOUNTS[(word & 0xFF) as usize];
+            // DS 3D Geometry Commands: https://problemkaputt.de/gbatek.htm#ds3dgeometrycommands
+            self.gpu.engine_3d.total_params = CMD_PARAM_AMOUNTS[(word & 0xFF) as usize]; // command ID is the low byte of the packed GXFIFO word
 
             if self.gpu.engine_3d.total_params > 0 {
                 return;
@@ -174,11 +175,11 @@ impl Emulator {
         }
 
         loop {
-            if (self.gpu.engine_3d.current_cmd & 0xFF) != 0
+            if (self.gpu.engine_3d.current_cmd & 0xFF) != 0 // non-zero command still waiting for parameters
                 || (self.gpu.engine_3d.cmd_count == 4 && self.gpu.engine_3d.current_cmd == 0)
             {
                 let cmd = GxCommand {
-                    command: (self.gpu.engine_3d.current_cmd & 0xFF) as u8,
+                    command: (self.gpu.engine_3d.current_cmd & 0xFF) as u8, // command ID (bits 0-7)
                     param: word,
                 };
                 self.write_command(cmd);
@@ -194,7 +195,7 @@ impl Emulator {
 
                 self.gpu.engine_3d.param_count = 0;
                 self.gpu.engine_3d.total_params =
-                    CMD_PARAM_AMOUNTS[(self.gpu.engine_3d.current_cmd & 0xFF) as usize];
+                    CMD_PARAM_AMOUNTS[(self.gpu.engine_3d.current_cmd & 0xFF) as usize]; // command ID (bits 0-7)
             }
 
             if self.gpu.engine_3d.param_count < self.gpu.engine_3d.total_params {
@@ -207,7 +208,7 @@ impl Emulator {
     /// command, `word` is its parameter. Goes to write_command().
     pub fn write_fifo_direct(&mut self, address: u32, word: u32) {
         self.write_command(GxCommand {
-            command: ((address >> 2) & 0x7F) as u8,
+            command: ((address >> 2) & 0x7F) as u8, // command port 04000440h+4*n maps to command ID n (bits 2-8 of the address)
             param: word,
         });
     }

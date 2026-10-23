@@ -17,7 +17,8 @@ impl Gpu {
     /// window mask). Lower priority values win, ties go to the lower OAM
     /// index.
     pub(super) fn render_objs(&self, a: bool, line: usize, layers: &mut LineLayers) {
-        let oam_base = if a { 0 } else { 0x400 };
+        // LCD OBJ - OAM Attributes: https://problemkaputt.de/gbatek.htm#lcdobjoamattributes
+        let oam_base = if a { 0 } else { 0x400 }; // engine B OAM starts at offset 400h
         let region = if a { Region::ObjA } else { Region::ObjB };
         let ext_region = if a {
             Region::ObjExtPalA
@@ -34,36 +35,38 @@ impl Gpu {
             let attr1 = oam(i * 8 + 2);
             let attr2 = oam(i * 8 + 4);
 
-            let affine = attr0 & (1 << 8) != 0;
+            // LCD OBJ - OAM Attributes: https://problemkaputt.de/gbatek.htm#lcdobjoamattributes
+            let affine = attr0 & (1 << 8) != 0; // attribute 0 bit 8: rotation/scaling
             if !affine && attr0 & (1 << 9) != 0 {
+                // attribute 0 bit 9 without rot/scale: OBJ disabled
                 continue; // OBJ disabled
             }
             let obj_mode = (attr0 >> 10) & 3;
             let (width, height) = OBJ_SIZES[usize::from(attr0 >> 14)][usize::from(attr1 >> 14)];
-            let double = affine && attr0 & (1 << 9) != 0;
+            let double = affine && attr0 & (1 << 9) != 0; // attribute 0 bit 9 with rot/scale: double size
             let (box_w, box_h) = if double {
                 (width * 2, height * 2)
             } else {
                 (width, height)
             };
 
-            let y = u32::from(attr0 & 0xFF);
-            let row = (line as u32).wrapping_sub(y) & 0xFF;
+            let y = u32::from(attr0 & 0xFF); // attribute 0: Y coordinate (bits 0-7)
+            let row = (line as u32).wrapping_sub(y) & 0xFF; // row within the sprite, wrapping at 256
             if row >= box_h {
                 continue;
             }
-            let mut x0 = i32::from(attr1 & 0x1FF);
+            let mut x0 = i32::from(attr1 & 0x1FF); // attribute 1: X coordinate (bits 0-8)
             if x0 >= 256 {
                 x0 -= 512;
             }
             let priority = u32::from((attr2 >> 10) & 3);
-            let tile = u32::from(attr2 & 0x3FF);
+            let tile = u32::from(attr2 & 0x3FF); // attribute 2: tile number (bits 0-9)
             let pal_bank = u32::from(attr2 >> 12);
-            let color_256 = attr0 & (1 << 13) != 0;
+            let color_256 = attr0 & (1 << 13) != 0; // attribute 0 bit 13: 256 colors
 
             // Affine matrix (identity for normal OBJs, flips folded in).
             let (pa, pb, pc, pd) = if affine {
-                let group = usize::from((attr1 >> 9) & 0x1F) * 32;
+                let group = usize::from((attr1 >> 9) & 0x1F) * 32; // attribute 1: rotation/scaling parameter group (bits 9-13)
                 (
                     i32::from(oam(group + 6) as i16),
                     i32::from(oam(group + 14) as i16),
@@ -71,8 +74,8 @@ impl Gpu {
                     i32::from(oam(group + 30) as i16),
                 )
             } else {
-                let h = if attr1 & (1 << 12) != 0 { -256 } else { 256 };
-                let v = if attr1 & (1 << 13) != 0 { -256 } else { 256 };
+                let h = if attr1 & (1 << 12) != 0 { -256 } else { 256 }; // attribute 1 bit 12: horizontal flip
+                let v = if attr1 & (1 << 13) != 0 { -256 } else { 256 }; // attribute 1 bit 13: vertical flip
                 (h, 0, 0, v)
             };
 
@@ -112,15 +115,17 @@ impl Gpu {
                     let addr = if dispcnt.bitmap_obj_1d {
                         tile * (128 << dispcnt.bitmap_obj_1d_bound as u32) + (ty * width + tx) * 2
                     } else if dispcnt.bitmap_obj_square {
-                        (tile & 0x1F) * 0x10 + (tile & 0x3E0) * 0x80 + ty * 512 + tx * 2
+                        // DS Video OBJs: https://problemkaputt.de/gbatek.htm#dsvideoobjs
+                        (tile & 0x1F) * 0x10 + (tile & 0x3E0) * 0x80 + ty * 512 + tx * 2 // 2D bitmap OBJ, 256-pixel wide VRAM layout
                     } else {
-                        (tile & 0xF) * 0x10 + (tile & 0x3F0) * 0x80 + ty * 256 + tx * 2
+                        (tile & 0xF) * 0x10 + (tile & 0x3F0) * 0x80 + ty * 256 + tx * 2 // 2D bitmap OBJ, 128-pixel wide VRAM layout
                     };
                     let c = self.vram.read_u16(region, addr);
                     if c & 0x8000 == 0 {
+                        // bitmap OBJ bit 15 = alpha
                         continue;
                     }
-                    OBJ_BITMAP | (pal_bank << 20) | u32::from(c & 0x7FFF)
+                    OBJ_BITMAP | (pal_bank << 20) | u32::from(c & 0x7FFF) // BGR555 color
                 } else {
                     let tile_row = (ty / 8)
                         * if dispcnt.tile_obj_1d {
@@ -139,7 +144,7 @@ impl Gpu {
                     } else {
                         let addr = base + (tile_row + tx / 8) * 32 + (ty & 7) * 4 + (tx & 7) / 2;
                         let byte = self.vram.read_u8(region, addr);
-                        u32::from(if tx & 1 != 0 { byte >> 4 } else { byte & 0xF })
+                        u32::from(if tx & 1 != 0 { byte >> 4 } else { byte & 0xF }) // 4bpp: low nibble for even pixels, high nibble for odd
                     };
                     if ci == 0 {
                         continue;
@@ -152,7 +157,7 @@ impl Gpu {
                         self.obj_palette_color(a, ci)
                     };
                     let semi = if obj_mode == 1 { OBJ_SEMI } else { 0 };
-                    semi | u32::from(c & 0x7FFF)
+                    semi | u32::from(c & 0x7FFF) // BGR555 color
                 };
 
                 let sx = sx as usize;
@@ -165,7 +170,7 @@ impl Gpu {
                 }
                 let existing = layers.obj[sx];
                 if existing & OPAQUE == 0 || priority <= (existing >> 16) & 3 {
-                    layers.obj[sx] = OPAQUE | (priority << 16) | color;
+                    layers.obj[sx] = OPAQUE | (priority << 16) | color; // layer priority in bits 16-17
                 }
             }
         }

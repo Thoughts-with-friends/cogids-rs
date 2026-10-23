@@ -62,6 +62,7 @@ impl Emulator {
     /// Whether EXMEMCNT bit 11 gives the NDS slot to the ARM7 (selects the
     /// CPU whose cartridge DMA gamecart_request() starts).
     pub fn arm7_has_cart_rights(&self) -> bool {
-        (self.ex_mem_cnt & (1 << 11)) != 0
+        // DS Memory Control - Cartridges and Main RAM: https://problemkaputt.de/gbatek.htm#dsmemorycontrolcartridgesandmainram
+        (self.ex_mem_cnt & (1 << 11)) != 0 // EXMEMCNT bit 11: NDS slot access rights (1 = ARM7)
     }
 }

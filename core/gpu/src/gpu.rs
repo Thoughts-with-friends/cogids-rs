@@ -103,7 +103,8 @@ impl Gpu {
 /// # Panics
 /// Panics if address is out of bounds(<= 0x3ff == 1023) for palette memory
 pub fn read_palette_value(bytes: &[u8], address: u32) -> u16 {
-    let off = (address & 0x3ff) as usize;
+    // LCD Color Palettes: https://problemkaputt.de/gbatek.htm#lcdcolorpalettes
+    let off = (address & 0x3ff) as usize; // 1K palette RAM per engine
     u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap())
 }
 
@@ -121,7 +122,8 @@ impl Gpu {
         self.frame_complete = false;
         self.frames_skipped = 0;
 
-        self.set_powcnt1(0x820F);
+        // DS Power Control: https://problemkaputt.de/gbatek.htm#dspowercontrol
+        self.set_powcnt1(0x820F); // POWCNT1: LCDs, 2D A, 3D render, 3D geometry, 2D B, display swap
         self.set_dispcnt_a(0);
         self.set_dispcnt_b(0);
         self.set_dispstat7(0);
@@ -196,7 +198,7 @@ impl Gpu {
 
     /// Read from palette A (`address` may be absolute; only bits 0-9 count).
     pub fn read_palette_a(&self, address: u32) -> u16 {
-        read_palette_value(&self.palette_upper, address & 0x3FE)
+        read_palette_value(&self.palette_upper, address & 0x3FE) // halfword-aligned offset in 1K palette RAM
     }
 
     // moved vram_reader.rs
@@ -207,7 +209,7 @@ impl Gpu {
 
     /// Read from palette B (`address` may be absolute; only bits 0-9 count).
     pub fn read_palette_b(&self, address: u32) -> u16 {
-        read_palette_value(&self.palette_lower, address & 0x3FE)
+        read_palette_value(&self.palette_lower, address & 0x3FE) // halfword-aligned offset in 1K palette RAM
     }
 
     // moved arm_rw.rs

@@ -140,17 +140,18 @@ impl RealTimeClock {
     pub const fn init(&mut self) {
         // Initialize to default date/time (2000-01-01 00:00:00)
 
-        //Place a hardcoded date into the RTC
-        //For those curious, this is January 1st, 2005, a couple of months after the release of the NDS
+        // Place a hardcoded date into the RTC
+        // For those curious, this is January 1st, 2005, a couple of months after the release of the NDS
         self.year = 0x05;
-        self.month = 0x1;
-        self.day = 0x1;
-        self.day_of_week = 0x0;
+        // DS Real-Time Clock (RTC): https://problemkaputt.de/gbatek.htm#dsrealtimeclockrtc
+        self.month = 0x1; // BCD month 01
+        self.day = 0x1; // BCD day 01
+        self.day_of_week = 0x0; // day of week 0
 
-        //Set the time to midnight
+        // Set the time to midnight
         self.hour = 0x12;
-        self.minute = 0x0;
-        self.second = 0x0;
+        self.minute = 0x0; // BCD minute 00
+        self.second = 0x0; // BCD second 00
 
         self.io_reg = 0;
         self.stat1_reg = 0;
@@ -162,13 +163,15 @@ impl RealTimeClock {
         #[cfg(feature = "log")]
         log::trace!(target: "rtc", "byte {} = {:02X}", self.input_index, self.input);
         if self.input_index == 0 {
-            self.command = (self.input & 0x70) >> 4;
+            self.command = (self.input & 0x70) >> 4; // command byte: command (bits 4-6)
 
             if (self.input & 0x80) != 0 {
+                // command byte bit 7: read
                 match self.command {
                     0 => self.internal_output[0] = self.stat1_reg,
                     1 => {
                         if (self.stat2_reg & 0x4) != 0 {
+                            // STAT2 bit 2: INT1 frequency/alarm mode
                             self.internal_output[0] = self.alarm1.day_of_week;
                             self.internal_output[1] = self.alarm1.hour;
                             self.internal_output[2] = self.alarm1.minute;
@@ -202,6 +205,7 @@ impl RealTimeClock {
                         let hour = now.hour() as u8;
 
                         if (self.stat1_reg & 0x2) > 0 {
+                            // STAT1 bit 1: 24-hour mode
                             self.internal_output[4] = byte_to_bcd(hour); // 24 hour mode
                         } else {
                             self.internal_output[4] = byte_to_bcd(hour % 12); // 12 hour mode
@@ -238,6 +242,7 @@ impl RealTimeClock {
 
                 1 => {
                     if (self.stat2_reg & 0x4) != 0 {
+                        // STAT2 bit 2: INT1 frequency/alarm mode
                         match self.input_index {
                             1 => self.alarm1.day_of_week = self.input as u8,
                             2 => self.alarm1.hour = self.input as u8,
@@ -285,7 +290,7 @@ impl RealTimeClock {
     /// Write to the RTC register.
     pub fn write(&mut self, mut value: u16, is_byte: bool) {
         if is_byte {
-            value |= self.io_reg & 0xFF00;
+            value |= self.io_reg & 0xFF00; // byte write keeps the upper half of the register
         }
 
         // Extract control bits
@@ -295,6 +300,7 @@ impl RealTimeClock {
         let is_writing = (value & 0x0010) != 0; // Bit 4: direction (1 = write)
 
         if select_out && (self.io_reg & 0x0004) == 0 {
+            // bit 2 (CS) going high starts a transfer
             self.input = 0;
             self.input_bit_num = 0;
             self.input_index = 0;
@@ -342,7 +348,7 @@ impl RealTimeClock {
         if is_writing {
             self.io_reg = value;
         } else {
-            self.io_reg = (self.io_reg & 0x0001) | (value & 0xFE);
+            self.io_reg = (self.io_reg & 0x0001) | (value & 0xFE); // keep data bit 0, take the direction/clock/select bits
         }
     }
 }

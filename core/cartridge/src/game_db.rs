@@ -8,6 +8,8 @@
 //! `0xFF` marks entries melonDS lists as unknown.
 /// `(game code, ROM size in bytes, save memory type)`, sorted by game code.
 #[rustfmt::skip]
+// Entry = (gamecode from header 00Ch as little-endian u32, ROM size in bytes, save type code); values are data, not hardware constants
+// DS Cartridge Backup: https://problemkaputt.de/gbatek.htm#dscartridgebackup
 pub static ROM_LIST: [(u32, u32, u8); 6778] = [
     (0x41464141, 0x00800000, 4), (0x414D4155, 0x00800000, 8), (0x43363341, 0x02000000, 8), (0x43443241, 0x02000000, 2),
     (0x43495941, 0x01000000, 1), (0x434D5341, 0x01000000, 2), (0x434E5341, 0x00800000, 2), (0x43575A41, 0x02000000, 2),

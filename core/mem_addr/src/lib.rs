@@ -22,7 +22,8 @@ pub const SHARED_WRAM_START: u32 = 0x0300_0000;
 pub const ARM7_WRAM_START: u32 = 0x0380_0000;
 
 /// Start address of I/O registers
-pub const IO_REGS_START: u32 = 0x0400_0000;
+// LCD I/O Display Control: https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol
+pub const IO_REGS_START: u32 = 0x0400_0000; // DISPCNT - LCD Control
 
 /// Start address of the palette memory
 pub const PALETTE_START: u32 = 0x0500_0000;

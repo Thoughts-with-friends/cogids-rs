@@ -41,9 +41,10 @@ mod tests {
 
         // Basic sanity check for first few bytes
         assert_eq!(FIRMWARE_DS[0x08], b'M');
-        assert_eq!(FIRMWARE_DS[0x09], b'A');
-        assert_eq!(FIRMWARE_DS[0x0A], b'C');
-        assert_eq!(FIRMWARE_DS[0x0B], 0x68);
+        // DS Firmware Header: https://problemkaputt.de/gbatek.htm#dsfirmwareheader
+        assert_eq!(FIRMWARE_DS[0x09], b'A'); // firmware header 08h-0Bh: "MAC" + firmware ID
+        assert_eq!(FIRMWARE_DS[0x0A], b'C'); // firmware ID
+        assert_eq!(FIRMWARE_DS[0x0B], 0x68); // firmware ID / version byte
 
         println!("Basic sanity check passed.");
         Ok(())

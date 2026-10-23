@@ -26,7 +26,8 @@ use matrix::{mtx_mult_4x4, transform};
 /// Sign-extends a 10-bit field (bits `shift..shift+10` of `v`).
 #[inline]
 const fn sext10(v: u32, shift: u32) -> i16 {
-    ((((v >> shift) & 0x3FF) << 6) as u16 as i16) >> 6
+    // DS 3D Polygon Light Parameters: https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters
+    ((((v >> shift) & 0x3FF) << 6) as u16 as i16) >> 6 // sign-extend a 10-bit field (s.9 fixed point)
 }
 
 /// 32x32 -> 64-bit product (fixed-point helper).
@@ -129,7 +130,8 @@ impl Gpu3D {
             hires: Default::default(),
         };
         // Viewport 0,0-255,191 (melonDS reset value).
-        s.set_viewport(0xBFFF_0000);
+        // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
+        s.set_viewport(0xBFFF_0000); // VIEWPORT reset value: X1=0, Y1=0, X2=255, Y2=191
         s
     }
 
@@ -159,12 +161,13 @@ impl Gpu3D {
     /// VIEWPORT (0x60): x1,y1,x2,y2 with Y flipped to screen space.
     fn set_viewport(&mut self, param: u32) {
         let v = &mut self.viewport;
-        v.x0 = (param & 0xFF) as i32;
-        v.y0 = (191 - ((param >> 8) & 0xFF) as i32) & 0xFF;
-        v.x1 = ((param >> 16) & 0xFF) as i32;
-        v.y1 = (191 - (param >> 24) as i32) & 0xFF;
-        v.width = (v.x1 - v.x0 + 1) & 0x1FF;
-        v.height = (v.y0 - v.y1 + 1) & 0xFF;
+        // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
+        v.x0 = (param & 0xFF) as i32; // X1 (bits 0-7)
+        v.y0 = (191 - ((param >> 8) & 0xFF) as i32) & 0xFF; // Y1 (bits 8-15), flipped because hardware Y counts from the bottom
+        v.x1 = ((param >> 16) & 0xFF) as i32; // X2 (bits 16-23)
+        v.y1 = (191 - (param >> 24) as i32) & 0xFF; // Y2 (bits 24-31), flipped
+        v.width = (v.x1 - v.x0 + 1) & 0x1FF; // width wraps at 9 bits
+        v.height = (v.y0 - v.y1 + 1) & 0xFF; // height wraps at 8 bits
     }
 
     /// Executes one complete GX command whose parameters are in
@@ -196,36 +199,41 @@ impl Gpu3D {
         let params: [i32; 32] = p.map(|v| v as i32);
         let mode = self.matrix_mode;
         match cmd {
-            0x10 => self.matrix_mode = p0 & 3,
+            // DS 3D Geometry Commands: https://problemkaputt.de/gbatek.htm#ds3dgeometrycommands
+            0x10 => self.matrix_mode = p0 & 3, // MTX_MODE - Set Matrix Mode (bits 0-1)
+            // DS 3D Matrix Stack: https://problemkaputt.de/gbatek.htm#ds3dmatrixstack
             0x11 => match mode {
+                // MTX_PUSH - Push Current Matrix on Stack
                 0 => {
                     if self.proj_stack_ptr > 0 {
-                        self.gxstat |= 1 << 15;
+                        // DS 3D Matrix Stack: https://problemkaputt.de/gbatek.htm#ds3dmatrixstack
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack overflow/underflow error
                     }
                     self.proj_stack = self.proj_matrix;
                     self.proj_stack_ptr = (self.proj_stack_ptr + 1) & 1;
                 }
                 3 => {
                     if self.tex_stack_ptr > 0 {
-                        self.gxstat |= 1 << 15;
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack error
                     }
                     self.tex_stack = self.tex_matrix;
                     self.tex_stack_ptr = (self.tex_stack_ptr + 1) & 1;
                 }
                 _ => {
                     if self.pos_stack_ptr > 30 {
-                        self.gxstat |= 1 << 15;
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack error
                     }
-                    let i = (self.pos_stack_ptr & 0x1F) as usize;
+                    let i = (self.pos_stack_ptr & 0x1F) as usize; // position stack has 31 entries (index wraps at 32)
                     self.pos_stack[i] = self.pos_matrix;
                     self.vec_stack[i] = self.vec_matrix;
-                    self.pos_stack_ptr = (self.pos_stack_ptr + 1) & 0x3F;
+                    self.pos_stack_ptr = (self.pos_stack_ptr + 1) & 0x3F; // stack pointer is 6 bits; bit 5 is the overflow position
                 }
             },
             0x12 => match mode {
+                // MTX_POP - Pop Current Matrix from Stack
                 0 => {
                     if self.proj_stack_ptr == 0 {
-                        self.gxstat |= 1 << 15;
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack error
                     }
                     self.proj_stack_ptr = self.proj_stack_ptr.wrapping_sub(1) & 1;
                     self.proj_matrix = self.proj_stack;
@@ -233,53 +241,57 @@ impl Gpu3D {
                 }
                 3 => {
                     if self.tex_stack_ptr == 0 {
-                        self.gxstat |= 1 << 15;
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack error
                     }
                     self.tex_stack_ptr = self.tex_stack_ptr.wrapping_sub(1) & 1;
                     self.tex_matrix = self.tex_stack;
                 }
                 _ => {
-                    let offset = ((p0 << 26) as i32) >> 26;
+                    let offset = ((p0 << 26) as i32) >> 26; // MTX_POP: sign-extend 6-bit pop count
                     self.pos_stack_ptr =
-                        (self.pos_stack_ptr as i32).wrapping_sub(offset) as u32 & 0x3F;
+                        (self.pos_stack_ptr as i32).wrapping_sub(offset) as u32 & 0x3F; // 6-bit stack pointer
                     if self.pos_stack_ptr > 30 {
-                        self.gxstat |= 1 << 15;
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack error
                     }
-                    let i = (self.pos_stack_ptr & 0x1F) as usize;
+                    let i = (self.pos_stack_ptr & 0x1F) as usize; // position stack index wraps at 32
                     self.pos_matrix = self.pos_stack[i];
                     self.vec_matrix = self.vec_stack[i];
                     self.clip_matrix_dirty = true;
                 }
             },
             0x13 => match mode {
+                // MTX_STORE - Store Current Matrix on Stack
                 0 => self.proj_stack = self.proj_matrix,
                 3 => self.tex_stack = self.tex_matrix,
                 _ => {
-                    let addr = (p0 & 0x1F) as usize;
+                    let addr = (p0 & 0x1F) as usize; // stack index (bits 0-4)
                     if addr > 30 {
-                        self.gxstat |= 1 << 15;
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack error
                     }
                     self.pos_stack[addr] = self.pos_matrix;
                     self.vec_stack[addr] = self.vec_matrix;
                 }
             },
             0x14 => match mode {
+                // MTX_RESTORE - Restore Current Matrix from Stack
                 0 => {
                     self.proj_matrix = self.proj_stack;
                     self.clip_matrix_dirty = true;
                 }
                 3 => self.tex_matrix = self.tex_stack,
                 _ => {
-                    let addr = (p0 & 0x1F) as usize;
+                    let addr = (p0 & 0x1F) as usize; // stack index (bits 0-4)
                     if addr > 30 {
-                        self.gxstat |= 1 << 15;
+                        self.gxstat |= 1 << 15; // GXSTAT bit 15: matrix stack error
                     }
                     self.pos_matrix = self.pos_stack[addr];
                     self.vec_matrix = self.vec_stack[addr];
                     self.clip_matrix_dirty = true;
                 }
             },
+            // DS 3D Matrix Load/Multiply: https://problemkaputt.de/gbatek.htm#ds3dmatrixloadmultiply
             0x15 => match mode {
+                // MTX_IDENTITY - Load Unit Matrix to Current Matrix
                 0 => {
                     self.proj_matrix = IDENTITY;
                     self.clip_matrix_dirty = true;
@@ -293,20 +305,26 @@ impl Gpu3D {
                     self.clip_matrix_dirty = true;
                 }
             },
-            0x16..=0x1C => self.matrix_command(cmd, &params),
+            0x16..=0x1C => self.matrix_command(cmd, &params), // MTX_LOAD_4x4 .. MTX_TRANS
+            // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
             0x20 => {
+                // COLOR - Directly Set Vertex Color
                 self.vertex_color = [
-                    (p0 & 0x1F) as u8,
-                    ((p0 >> 5) & 0x1F) as u8,
-                    ((p0 >> 10) & 0x1F) as u8,
+                    (p0 & 0x1F) as u8,         // red (bits 0-4)
+                    ((p0 >> 5) & 0x1F) as u8,  // green (bits 5-9)
+                    ((p0 >> 10) & 0x1F) as u8, // blue (bits 10-14)
                 ];
             }
+            // DS 3D Polygon Light Parameters: https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters
             0x21 => {
+                // NORMAL - Set Normal Vector
                 self.normal = [sext10(p0, 0), sext10(p0, 10), sext10(p0, 20)];
                 self.calculate_lighting();
             }
+            // DS 3D Texture Coordinates: https://problemkaputt.de/gbatek.htm#ds3dtexturecoordinates
             0x22 => {
-                self.raw_texcoords = [(p0 & 0xFFFF) as i16, (p0 >> 16) as i16];
+                // TEXCOORD - Set Texture Coordinates
+                self.raw_texcoords = [(p0 & 0xFFFF) as i16, (p0 >> 16) as i16]; // S (bits 0-15), T (bits 16-31), 1.11.4 fixed point
                 if self.tex_param >> 30 == 1 {
                     let (s, t) = (
                         i32::from(self.raw_texcoords[0]),
@@ -324,72 +342,86 @@ impl Gpu3D {
                     self.texcoords = self.raw_texcoords;
                 }
             }
+            // DS 3D Polygon Definitions by Vertices: https://problemkaputt.de/gbatek.htm#ds3dpolygondefinitionsbyvertices
             0x23 => {
-                self.cur_vertex = [(p0 & 0xFFFF) as i16, (p0 >> 16) as i16, p[1] as i16];
+                // VTX_16 - Set Vertex XYZ Coordinates (1.3.12 each)
+                self.cur_vertex = [(p0 & 0xFFFF) as i16, (p0 >> 16) as i16, p[1] as i16]; // X (bits 0-15), Y (bits 16-31); Z is in the second parameter
                 self.submit_vertex();
             }
             0x24 => {
+                // VTX_10 - Set Vertex XYZ Coordinates (1.3.6 each)
                 self.cur_vertex = [
-                    ((p0 & 0x3FF) << 6) as i16,
-                    ((p0 & 0x000F_FC00) >> 4) as i16,
-                    ((p0 & 0x3FF0_0000) >> 14) as i16,
+                    ((p0 & 0x3FF) << 6) as i16,        // X (bits 0-9), shifted to 1.3.12
+                    ((p0 & 0x000F_FC00) >> 4) as i16,  // Y (bits 10-19), shifted to 1.3.12
+                    ((p0 & 0x3FF0_0000) >> 14) as i16, // Z (bits 20-29), shifted to 1.3.12
                 ];
                 self.submit_vertex();
             }
             0x25 => {
+                // VTX_XY - Set Vertex XY Coordinates
                 self.cur_vertex[0] = p0 as i16;
                 self.cur_vertex[1] = (p0 >> 16) as i16;
                 self.submit_vertex();
             }
             0x26 => {
+                // VTX_XZ - Set Vertex XZ Coordinates
                 self.cur_vertex[0] = p0 as i16;
                 self.cur_vertex[2] = (p0 >> 16) as i16;
                 self.submit_vertex();
             }
             0x27 => {
+                // VTX_YZ - Set Vertex YZ Coordinates
                 self.cur_vertex[1] = p0 as i16;
                 self.cur_vertex[2] = (p0 >> 16) as i16;
                 self.submit_vertex();
             }
             0x28 => {
+                // VTX_DIFF - Set Relative Vertex Coordinates
                 let v = &mut self.cur_vertex;
                 v[0] = v[0].wrapping_add(sext10(p0, 0));
                 v[1] = v[1].wrapping_add(sext10(p0, 10));
                 v[2] = v[2].wrapping_add(sext10(p0, 20));
                 self.submit_vertex();
             }
-            0x29 => self.polygon_attr = p0,
-            0x2A => self.tex_param = p0,
-            0x2B => self.tex_palette = p0 & 0x1FFF,
+            // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
+            0x29 => self.polygon_attr = p0, // POLYGON_ATTR - Set Polygon Attributes
+            // DS 3D Texture Attributes: https://problemkaputt.de/gbatek.htm#ds3dtextureattributes
+            0x2A => self.tex_param = p0, // TEXIMAGE_PARAM - Set Texture Parameters
+            0x2B => self.tex_palette = p0 & 0x1FFF, // PLTT_BASE - palette base address (bits 0-12)
+            // DS 3D Polygon Light Parameters: https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters
             0x30 => {
+                // DIF_AMB - MaterialColor0 - Diffuse/Ambient Reflect.
                 self.mat_diffuse = [
-                    (p0 & 0x1F) as u8,
-                    ((p0 >> 5) & 0x1F) as u8,
-                    ((p0 >> 10) & 0x1F) as u8,
+                    (p0 & 0x1F) as u8,         // diffuse red (bits 0-4)
+                    ((p0 >> 5) & 0x1F) as u8,  // diffuse green (bits 5-9)
+                    ((p0 >> 10) & 0x1F) as u8, // diffuse blue (bits 10-14)
                 ];
                 self.mat_ambient = [
-                    ((p0 >> 16) & 0x1F) as u8,
-                    ((p0 >> 21) & 0x1F) as u8,
-                    ((p0 >> 26) & 0x1F) as u8,
+                    ((p0 >> 16) & 0x1F) as u8, // ambient red (bits 16-20)
+                    ((p0 >> 21) & 0x1F) as u8, // ambient green (bits 21-25)
+                    ((p0 >> 26) & 0x1F) as u8, // ambient blue (bits 26-30)
                 ];
                 if p0 & 0x8000 != 0 {
+                    // bit 15: also set the diffuse color as vertex color
                     self.vertex_color = self.mat_diffuse;
                 }
             }
             0x31 => {
+                // SPE_EMI - MaterialColor1 - Specular Ref. & Emission
                 self.mat_specular = [
-                    (p0 & 0x1F) as u8,
-                    ((p0 >> 5) & 0x1F) as u8,
-                    ((p0 >> 10) & 0x1F) as u8,
+                    (p0 & 0x1F) as u8,         // specular red (bits 0-4)
+                    ((p0 >> 5) & 0x1F) as u8,  // specular green (bits 5-9)
+                    ((p0 >> 10) & 0x1F) as u8, // specular blue (bits 10-14)
                 ];
                 self.mat_emission = [
-                    ((p0 >> 16) & 0x1F) as u8,
-                    ((p0 >> 21) & 0x1F) as u8,
-                    ((p0 >> 26) & 0x1F) as u8,
+                    ((p0 >> 16) & 0x1F) as u8, // emission red (bits 16-20)
+                    ((p0 >> 21) & 0x1F) as u8, // emission green (bits 21-25)
+                    ((p0 >> 26) & 0x1F) as u8, // emission blue (bits 26-30)
                 ];
-                self.use_shininess_table = p0 & 0x8000 != 0;
+                self.use_shininess_table = p0 & 0x8000 != 0; // bit 15: use the specular reflection shininess table
             }
             0x32 => {
+                // LIGHT_VECTOR - Set Light's Directional Vector
                 let l = (p0 >> 30) as usize;
                 let dir = [
                     i32::from(sext10(p0, 0)),
@@ -404,20 +436,23 @@ impl Gpu3D {
                         .wrapping_add(dir[2].wrapping_mul(m[8 + c]))
                 };
                 for c in 0..3 {
-                    self.light_direction[l][c] = ((-(dot(c) >> 12)) << 21 >> 21) as i16;
+                    // DS 3D Polygon Light Parameters: https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters
+                    self.light_direction[l][c] = ((-(dot(c) >> 12)) << 21 >> 21) as i16; // light vector component, sign-extended 11 bits
                 }
-                let den = -((dot(2) << 9) >> 21) + (1 << 9);
-                self.spec_recip[l] = if den == 0 { 0 } else { (1 << 18) / den };
+                let den = -((dot(2) << 9) >> 21) + (1 << 9); // 1.0 minus half-vector z, 9-bit fixed point
+                self.spec_recip[l] = if den == 0 { 0 } else { (1 << 18) / den }; // reciprocal in 18-bit fixed point
             }
             0x33 => {
+                // LIGHT_COLOR - Set Light Color
                 let l = (p0 >> 30) as usize;
                 self.light_color[l] = [
-                    (p0 & 0x1F) as u8,
-                    ((p0 >> 5) & 0x1F) as u8,
-                    ((p0 >> 10) & 0x1F) as u8,
+                    (p0 & 0x1F) as u8,         // red (bits 0-4)
+                    ((p0 >> 5) & 0x1F) as u8,  // green (bits 5-9)
+                    ((p0 >> 10) & 0x1F) as u8, // blue (bits 10-14)
                 ];
             }
             0x34 => {
+                // SHININESS - Specular Reflection Shininess Table
                 for (chunk, word) in self
                     .shininess_table
                     .as_chunks_mut::<4>()
@@ -428,27 +463,34 @@ impl Gpu3D {
                     *chunk = word.to_le_bytes();
                 }
             }
+            // DS 3D Polygon Definitions by Vertices: https://problemkaputt.de/gbatek.htm#ds3dpolygondefinitionsbyvertices
             0x40 => {
+                // BEGIN_VTXS - Start of Vertex List
                 self.polygon_mode = p0 & 3;
                 self.vertex_num_in_poly = 0;
                 self.num_consecutive_polygons = 0;
                 self.last_strip_polygon = None;
                 self.cur_polygon_attr = self.polygon_attr;
             }
-            0x41 => {}
+            0x41 => {} // END_VTXS - End of Vertex List (no effect on hardware)
+            // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
             0x50 => {
+                // SWAP_BUFFERS - Swap Rendering Engine Buffer
                 self.swap_buffers = true;
                 self.flush_attributes = p0 & 3;
             }
-            0x60 => self.set_viewport(p0),
-            0x70 => self.box_test(&p),
+            0x60 => self.set_viewport(p0), // VIEWPORT - Set Viewport
+            // DS 3D Tests: https://problemkaputt.de/gbatek.htm#ds3dtests
+            0x70 => self.box_test(&p), // BOX_TEST - Test if Cuboid Sits inside View Volume
             0x71 => {
-                self.cur_vertex = [(p0 & 0xFFFF) as i16, (p0 >> 16) as i16, p[1] as i16];
+                // POS_TEST - Set Position Coordinates for Test
+                self.cur_vertex = [(p0 & 0xFFFF) as i16, (p0 >> 16) as i16, p[1] as i16]; // X (bits 0-15), Y (bits 16-31); Z is in the second parameter
                 self.update_clip_matrix();
                 let v = self.cur_vertex.map(i32::from);
                 self.pos_test_result = transform(v, &self.clip_matrix);
             }
             0x72 => {
+                // VEC_TEST - Set Directional Vector for Test
                 let n = [
                     i32::from(sext10(p0, 0)),
                     i32::from(sext10(p0, 10)),
@@ -462,7 +504,8 @@ impl Gpu3D {
                         .wrapping_add(n[2].wrapping_mul(m[8 + c])))
                         >> 9;
                     if r & 0x1000 != 0 {
-                        r |= 0xF000;
+                        // bit 12 = sign of the 4.12 result
+                        r |= 0xF000; // sign-extend into bits 12-15
                     }
                     self.vec_test_result[c] = r as i16;
                 }

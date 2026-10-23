@@ -435,11 +435,13 @@ mod tests {
         let rom = std::env::var("LUNARIS_TEST_ROM")
             .unwrap_or_else(|_| "D:/GAME/Emulator/DS/Roms/hello_world.nds".to_owned());
         let mut emu = Emulator::new();
+
         emu.config.save_dir = Some(std::env::temp_dir());
         emu.load_rom(&rom).expect("ROM loads");
 
         let shared = Arc::new(Shared::default());
         let thread = EmuThread::start(emu, Arc::clone(&shared), AudioOutput::new(0.0));
+
         shared.set_keys(key::A);
         shared.set_touch(Some((10, 20)));
         shared.set_touch(None);

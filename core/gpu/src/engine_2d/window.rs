@@ -22,7 +22,8 @@ impl Gpu {
         let e = self.engine(a);
         let d = e.dispcnt;
         if !(d.display_win0 || d.display_win1 || d.obj_win_display) {
-            return [0x3F; W];
+            // LCD I/O Window Feature: https://problemkaputt.de/gbatek.htm#lcdiowindowfeature
+            return [0x3F; W]; // no windows: all layers and effects enabled
         }
         let pack = |bg: [bool; 4], obj: bool, fx: bool| -> u8 {
             bg.iter()
@@ -53,7 +54,7 @@ impl Gpu {
         );
 
         let line = line as u32;
-        let v_in = |v: u16| in_span(line, u32::from(v >> 8), u32::from(v & 0xFF));
+        let v_in = |v: u16| in_span(line, u32::from(v >> 8), u32::from(v & 0xFF)); // WINxV: Y1 (bits 8-15), Y2 (bits 0-7)
         let w0_v = d.display_win0 && v_in(e.win0v);
         let w1_v = d.display_win1 && v_in(e.win1v);
 
@@ -61,8 +62,10 @@ impl Gpu {
         for (x, m) in masks.iter_mut().enumerate() {
             let x32 = x as u32;
             if w0_v && in_span(x32, u32::from(e.win0h >> 8), u32::from(e.win0h & 0xFF)) {
+                // WIN0H: X1 (bits 8-15), X2 (bits 0-7)
                 *m = win0;
             } else if w1_v && in_span(x32, u32::from(e.win1h >> 8), u32::from(e.win1h & 0xFF)) {
+                // WIN1H: X1 (bits 8-15), X2 (bits 0-7)
                 *m = win1;
             } else if d.obj_win_display && layers.obj_window[x] {
                 *m = objwin;

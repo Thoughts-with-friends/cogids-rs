@@ -24,8 +24,9 @@ use super::*;
 
 /// Destination MACs of MP frames.
 pub(super) const MP_CMD_MAC: [u8; 6] = [0x03, 0x09, 0xBF, 0x00, 0x00, 0x00];
-pub(super) const MP_REPLY_MAC: [u8; 6] = [0x03, 0x09, 0xBF, 0x00, 0x00, 0x10];
-pub(super) const MP_ACK_MAC: [u8; 6] = [0x03, 0x09, 0xBF, 0x00, 0x00, 0x03];
+// DS Wifi Multiplay Master: https://problemkaputt.de/gbatek.htm#dswifimultiplaymaster
+pub(super) const MP_REPLY_MAC: [u8; 6] = [0x03, 0x09, 0xBF, 0x00, 0x00, 0x10]; // multicast address for multiplay client replies (03:09:BF:00:00:10)
+pub(super) const MP_ACK_MAC: [u8; 6] = [0x03, 0x09, 0xBF, 0x00, 0x00, 0x03]; // multicast address for multiplay ACKs (03:09:BF:00:00:03)
 
 /// µs per byte at a slot's rate.
 const fn us_per_byte(rate: u8) -> u32 {
@@ -36,7 +37,9 @@ impl WiFi {
     /// Preamble length in µs (long at 1 Mbit/s or when W_PREAMBLE bit 2 is
     /// clear).
     const fn preamble_len(&self, rate: u8) -> i32 {
+        // DS Wifi Transmit Control: https://problemkaputt.de/gbatek.htm#dswifitransmitcontrol
         if rate != 1 && self.port(W_PREAMBLE) & 0x0004 != 0 {
+            // W_PREAMBLE bit 2: short preamble (not used at 1 Mbit/s)
             96
         } else {
             192
@@ -46,7 +49,8 @@ impl WiFi {
     /// The TX header's retry counter (byte 4) saturates at 0xFF.
     fn increment_tx_count(&mut self, slot: usize) {
         let addr = self.tx_slots[slot].addr;
-        let count = self.ram[(addr + 4) & 0x1FFF];
+        // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+        let count = self.ram[(addr + 4) & 0x1FFF]; // TX header +04h: retry count
         self.set_ram_u16(addr + 4, u16::from(count.saturating_add(1)));
     }
 
@@ -69,13 +73,16 @@ impl WiFi {
         let TxSlot { addr, length, .. } = self.tx_slots[num];
 
         let no_seqno = if self.ram[(addr + 4) & 0x1FFF] != 0 {
+            // TX header +04h: non-zero = keep sequence number
             2
         } else {
-            u32::from(num == 1 && self.port(W_TXBUF_CMD) & 0x4000 != 0)
+            u32::from(num == 1 && self.port(W_TXBUF_CMD) & 0x4000 != 0) // W_TXBUF_CMD bit 14
         };
         if no_seqno == 0 {
+            // DS Wifi Transmit Control: https://problemkaputt.de/gbatek.htm#dswifitransmitcontrol
             if self.port(W_TX_HDR_CNT) & (1 << 2) == 0 {
-                self.set_ram_u16(addr + 0xC + 22, self.port(W_TX_SEQNO) << 4);
+                // W_TX_HDR_CNT bit 2: let hardware write the FCS
+                self.set_ram_u16(addr + 0xC + 22, self.port(W_TX_SEQNO) << 4); // 802.11 sequence control (header +0Ch, frame offset 22)
             }
             *self.port_mut(W_TX_SEQNO) = (self.port(W_TX_SEQNO) + 1) & 0x0FFF;
         }
@@ -83,14 +90,16 @@ impl WiFi {
         // WEP frames: no WEP processing, but some games want a non-zero FCS.
         let framectl = self.ram_u16(addr + 0xC);
         if framectl & (1 << 14) != 0 && self.port(W_WEPCNT) & (1 << 15) != 0 {
-            let fcs = (addr + 0xC + usize::from(length)).wrapping_sub(7) & !1;
+            // frame control bit 14 (WEP) with W_WEPCNT bit 15 (WEP enable)
+            let fcs = (addr + 0xC + usize::from(length)).wrapping_sub(7) & !1; // FCS position: frame end minus 4 bytes, halfword aligned
             for (i, b) in 0x2233_4466_u32.to_le_bytes().into_iter().enumerate() {
-                self.ram[(fcs + i) & 0x1FFF] = b;
+                // dummy FCS bytes
+                self.ram[(fcs + i) & 0x1FFF] = b; // 8K Wifi RAM wrap
             }
         }
 
-        let len = usize::from(length).min(0x1FF4_usize.saturating_sub(addr));
-        let total = (12 + len).min(0x2000 - addr.min(0x2000));
+        let len = usize::from(length).min(0x1FF4_usize.saturating_sub(addr)); // frame must fit before the end of Wifi RAM
+        let total = (12 + len).min(0x2000 - addr.min(0x2000)); // 12-byte TX header + frame, capped at 8K
         self.tx_buffer[..total].copy_from_slice(&self.ram[addr..addr + total]);
         if no_seqno == 2 {
             self.tx_buffer[0xD] |= 1 << 3; // frame control bit 11: retry
@@ -108,7 +117,7 @@ impl WiFi {
                     .copy_from_slice(&self.mp_client_mask.to_le_bytes());
             }
             4 => {
-                self.tx_buffer[0xC + 24..0xC + 32].copy_from_slice(&self.us_counter.to_le_bytes());
+                self.tx_buffer[0xC + 24..0xC + 32].copy_from_slice(&self.us_counter.to_le_bytes()); // beacon timestamp (frame offset 24)
             }
             5 => self.increment_tx_count(num),
             _ => {}
@@ -126,7 +135,8 @@ impl WiFi {
 
     /// Loads slot `nslot` from W_TXBUF_LOC1/2/3 (`loc` 0..=2).
     fn start_tx_loc(&mut self, nslot: usize, loc: usize) {
-        let addr = (usize::from(self.port(W_TXBUF_LOC1 + loc * 4)) & 0x0FFF) << 1;
+        // DS Wifi Transmit Buffers: https://problemkaputt.de/gbatek.htm#dswifitransmitbuffers
+        let addr = (usize::from(self.port(W_TXBUF_LOC1 + loc * 4)) & 0x0FFF) << 1; // W_TXBUF_LOCn address (bits 0-11) in halfwords
         self.load_slot(nslot, addr);
         self.tx_slots[nslot].cur_phase = 0;
         self.tx_slots[nslot].cur_phase_time = self.preamble_len(self.tx_slots[nslot].rate);
@@ -134,8 +144,10 @@ impl WiFi {
 
     /// Fills address, length and rate of a slot from its TX header.
     fn load_slot(&mut self, nslot: usize, addr: usize) {
-        let length = self.ram_u16(addr + 0xA) & 0x3FFF;
+        // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+        let length = self.ram_u16(addr + 0xA) & 0x3FFF; // TX header +0Ah: frame length (bits 0-13)
         let rate = if self.ram[(addr + 8) & 0x1FFF] == 0x14 {
+            // TX header +08h: rate 14h = 2 Mbit/s (0Ah = 1 Mbit/s)
             2
         } else {
             1
@@ -149,7 +161,8 @@ impl WiFi {
 
     /// Starts the MP host CMD transfer (slot 1).
     fn start_tx_cmd(&mut self) {
-        let addr = (usize::from(self.port(W_TXBUF_CMD)) & 0x0FFF) << 1;
+        // DS Wifi Transmit Buffers: https://problemkaputt.de/gbatek.htm#dswifitransmitbuffers
+        let addr = (usize::from(self.port(W_TXBUF_CMD)) & 0x0FFF) << 1; // W_TXBUF_CMD address (bits 0-11) in halfwords
         self.load_slot(1, addr);
         let TxSlot { length, rate, .. } = self.tx_slots[1];
 
@@ -179,7 +192,7 @@ impl WiFi {
 
     /// Starts sending the beacon (slot 4) at IRQ14.
     pub(super) fn start_tx_beacon(&mut self) {
-        let addr = (usize::from(self.port(W_TXBUF_BEACON)) & 0x0FFF) << 1;
+        let addr = (usize::from(self.port(W_TXBUF_BEACON)) & 0x0FFF) << 1; // W_TXBUF_BEACON address (bits 0-11) in halfwords
         self.load_slot(4, addr);
         self.tx_slots[4].cur_phase = 0;
         self.tx_slots[4].cur_phase_time = self.preamble_len(self.tx_slots[4].rate);
@@ -189,19 +202,23 @@ impl WiFi {
     /// Starts the highest-priority requested slot that is armed and idle
     /// (melonDS `FireTX`).
     pub(super) fn fire_tx(&mut self) {
+        // DS Wifi Receive Control: https://problemkaputt.de/gbatek.htm#dswifireceivecontrol
         if self.port(W_RXCNT) & 0x8000 == 0 {
+            // W_RXCNT bit 15: enable queuing received data to RX FIFO
             return;
         }
         let txbusy = self.port(W_TXBUSY);
         let txreq = self.port(W_TXREQ_READ);
         let mut txstart = 0;
         for (bit, port) in [
-            (0x0001, W_TXBUF_LOC1),
-            (0x0002, W_TXBUF_CMD),
-            (0x0004, W_TXBUF_LOC2),
-            (0x0008, W_TXBUF_LOC3),
+            // DS Wifi Transmit Control: https://problemkaputt.de/gbatek.htm#dswifitransmitcontrol
+            (0x0001, W_TXBUF_LOC1), // W_TXREQ bit 0: LOC1
+            (0x0002, W_TXBUF_CMD),  // W_TXREQ bit 1: CMD
+            (0x0004, W_TXBUF_LOC2), // W_TXREQ bit 2: LOC2
+            (0x0008, W_TXBUF_LOC3), // W_TXREQ bit 3: LOC3
         ] {
             if self.port(port) & 0x8000 != 0 {
+                // slot enable bit 15
                 txstart |= bit;
             }
         }
@@ -209,13 +226,17 @@ impl WiFi {
         *self.port_mut(W_TXBUSY) = txbusy | txstart;
 
         if txstart & 0x0008 != 0 {
+            // LOC3
             self.start_tx_loc(3, 2);
         } else if txstart & 0x0004 != 0 {
+            // LOC2
             self.start_tx_loc(2, 1);
         } else if txstart & 0x0002 != 0 {
-            self.mp_client_fail = 0xFFFE;
+            // CMD
+            self.mp_client_fail = 0xFFFE; // all clients failed (bits 1-15)
             self.start_tx_cmd();
         } else if txstart & 0x0001 != 0 {
+            // LOC1
             self.start_tx_loc(0, 0);
         }
     }
@@ -227,23 +248,25 @@ impl WiFi {
             return;
         }
         let mut reply = [0_u8; 12 + 28];
-        reply[0xA..0xC].copy_from_slice(&28_u16.to_le_bytes());
-        reply[0x8] = 0x14;
-        reply[0x9] = self.cur_channel;
+        // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+        reply[0xA..0xC].copy_from_slice(&28_u16.to_le_bytes()); // TX header +0Ah: frame length
+        reply[0x8] = 0x14; // TX header +08h: rate 2 Mbit/s
+        reply[0x9] = self.cur_channel; // TX header +09h: channel
 
         let bssid = self.port_mac(W_BSSID_0);
         let mac = self.port_mac(W_MACADDR_0);
         let mut put = |offset: usize, value: u16| {
-            reply[0xC + offset..0xC + offset + 2].copy_from_slice(&value.to_le_bytes());
+            reply[0xC + offset..0xC + offset + 2].copy_from_slice(&value.to_le_bytes()); // frame body after the 12-byte TX header
         };
-        put(0x00, 0x0158);
-        put(0x02, 0x00F0);
-        put(0x10, 0x0903);
-        put(0x12, 0x00BF);
-        put(0x14, 0x1000);
-        put(0x16, self.port(W_TX_SEQNO) << 4);
-        reply[0xC + 0x04..0xC + 0x0A].copy_from_slice(&bssid);
-        reply[0xC + 0x0A..0xC + 0x10].copy_from_slice(&mac);
+        // DS Wifi Nintendo Beacons: https://problemkaputt.de/gbatek.htm#dswifinintendobeacons
+        put(0x00, 0x0158); // frame control: data + CF-Ack (0158h)
+        put(0x02, 0x00F0); // duration
+        put(0x10, 0x0903); // addr1 03:09:BF (multiplay reply group)
+        put(0x12, 0x00BF); // addr1 continued
+        put(0x14, 0x1000); // addr1 00:10
+        put(0x16, self.port(W_TX_SEQNO) << 4); // sequence control
+        reply[0xC + 0x04..0xC + 0x0A].copy_from_slice(&bssid); // addr2/BSSID field
+        reply[0xC + 0x0A..0xC + 0x10].copy_from_slice(&mac); // addr3/source MAC
 
         let (ts, aid) = (self.us_timestamp, self.port(W_AID_LOW));
         if let Some(link) = self.link.as_mut() {
@@ -257,17 +280,20 @@ impl WiFi {
         // Mark the previous reply as sent.
         if self.port(W_TXBUF_REPLY2) & 0x8000 != 0 {
             let addr = self.tx_slots[5].addr;
-            self.set_ram_u16(addr, 0x0001);
+            // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+            self.set_ram_u16(addr, 0x0001); // TX status: done (bit 0)
         }
         self.tx_slots[5].rate = 2;
 
         *self.port_mut(W_TXBUF_REPLY2) = self.port(W_TXBUF_REPLY1);
         *self.port_mut(W_TXBUF_REPLY1) = 0;
 
+        // DS Wifi Multiplay Slave: https://problemkaputt.de/gbatek.htm#dswifimultiplayslave
         if self.port(W_TXBUF_REPLY2) & 0x8000 == 0 {
+            // W_TXBUF_REPLY2 bit 15: reply slot enabled
             self.tx_slots[5].valid = false;
         } else {
-            let addr = (usize::from(self.port(W_TXBUF_REPLY2)) & 0x0FFF) << 1;
+            let addr = (usize::from(self.port(W_TXBUF_REPLY2)) & 0x0FFF) << 1; // reply slot address (bits 0-11) in halfwords
             let length = self.ram_u16(addr + 0xA) & 0x3FFF;
             // A reply longer than the reply window is not sent at all.
             let duration = self.preamble_len(2) as u32 + u32::from(length) * 4;
@@ -300,34 +326,39 @@ impl WiFi {
         }
         let rate = self.tx_slots[1].rate;
         let mut ack = [0_u8; 12 + 32];
-        ack[0xA..0xC].copy_from_slice(&32_u16.to_le_bytes());
-        ack[0x8] = if rate == 2 { 0x14 } else { 0xA };
-        ack[0x9] = self.cur_channel;
+        // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+        ack[0xA..0xC].copy_from_slice(&32_u16.to_le_bytes()); // TX header +0Ah: frame length
+        ack[0x8] = if rate == 2 { 0x14 } else { 0xA }; // TX header +08h: rate 14h = 2 Mbit/s, 0Ah = 1 Mbit/s
+        ack[0x9] = self.cur_channel; // TX header +09h: channel
 
         let bssid = self.port_mac(W_BSSID_0);
         let mac = self.port_mac(W_MACADDR_0);
         let seqno = self.port(W_TX_SEQNO) << 4;
         let mut put = |offset: usize, value: u16| {
-            ack[0xC + offset..0xC + offset + 2].copy_from_slice(&value.to_le_bytes());
+            ack[0xC + offset..0xC + offset + 2].copy_from_slice(&value.to_le_bytes()); // frame body after the 12-byte TX header
         };
-        put(0x00, 0x0218);
-        put(0x04, 0x0903);
-        put(0x06, 0x00BF);
-        put(0x08, 0x0300);
-        put(0x16, seqno);
-        put(0x18, cmd_count);
-        put(0x1A, client_fail);
-        ack[0xC + 0x0A..0xC + 0x10].copy_from_slice(&bssid);
-        ack[0xC + 0x10..0xC + 0x16].copy_from_slice(&mac);
+        // DS Wifi Multiplay Master: https://problemkaputt.de/gbatek.htm#dswifimultiplaymaster
+        put(0x00, 0x0218); // frame control: data + CF-Ack + CF-Poll (0218h)
+        put(0x04, 0x0903); // addr1 03:09:BF (multiplay ACK group)
+        put(0x06, 0x00BF); // addr1 continued
+        put(0x08, 0x0300); // addr1 00:03
+        put(0x16, seqno); // sequence control
+        put(0x18, cmd_count); // command count
+        put(0x1A, client_fail); // clients that failed to reply
+        ack[0xC + 0x0A..0xC + 0x10].copy_from_slice(&bssid); // BSSID
+        ack[0xC + 0x10..0xC + 0x16].copy_from_slice(&mac); // source MAC
 
         // The TX header's first word tells the clients how far they may run
         // ahead before the next round (melonDS extension, see rx.rs).
         let runahead = if client_fail == 0 {
+            // DS Wifi Timers: https://problemkaputt.de/gbatek.htm#dswifitimers
             let next_beacon = if self.port(W_TXBUSY) & 0x0010 != 0 {
+                // W_TXBUSY bit 4: beacon pending
                 0
             } else {
-                (u32::from(self.port(W_BEACON_COUNT1)).wrapping_sub(1) << 10)
-                    .wrapping_add(0x400 - (self.us_counter & 0x3FF) as u32)
+                // DS Wifi Timers: https://problemkaputt.de/gbatek.htm#dswifitimers
+                (u32::from(self.port(W_BEACON_COUNT1)).wrapping_sub(1) << 10) // beacon count in milliseconds -> microseconds (1024 us units)
+                    .wrapping_add(0x400 - (self.us_counter & 0x3FF) as u32) // time to the next millisecond boundary
             };
             let mut runahead = i64::from(self.cmd_counter.min(next_beacon) as i32);
             if self.cmd_counter < 1000 {
@@ -387,9 +418,10 @@ impl WiFi {
                 self.set_status(if num == 5 { 8 } else { 3 });
 
                 let (len, mask) = if rate == 2 {
-                    (u32::from(length) * 4, 0x7 & STEP_MASK as u32)
+                    // DS Wifi Transmit Control: https://problemkaputt.de/gbatek.htm#dswifitransmitcontrol
+                    (u32::from(length) * 4, 0x7 & STEP_MASK as u32) // 2 Mbit/s: 4 us per byte
                 } else {
-                    (u32::from(length) * 8, 0xF & STEP_MASK as u32)
+                    (u32::from(length) * 8, 0xF & STEP_MASK as u32) // 1 Mbit/s: 8 us per byte
                 };
                 let slot = &mut self.tx_slots[num];
                 slot.halfword_time_mask = mask;
@@ -403,7 +435,7 @@ impl WiFi {
 
                 // A client sending a deauthentication leaves the session.
                 if matches!(num, 0 | 2 | 3)
-                    && self.ram_u16(addr + 0xC) & 0x00FF == 0x00C0
+                    && self.ram_u16(addr + 0xC) & 0x00FF == 0x00C0 // frame control C0h: deauthentication
                     && self.is_mp_client
                 {
                     self.is_mp = false;
@@ -456,6 +488,7 @@ impl WiFi {
                 }
                 *self.port_mut(W_TX_SEQNO) = (self.port(W_TX_SEQNO) + 1) & 0x0FFF;
                 if self.port(W_TXSTATCNT) & 0x2000 != 0 {
+                    // W_TXSTATCNT bit 13: IRQ/status on CMD transmit
                     *self.port_mut(W_TXSTAT) = 0x0B01;
                     self.set_irq(1);
                 }
@@ -463,7 +496,7 @@ impl WiFi {
             }
             // MP host: CMD_COUNT ran out.
             13 => {
-                self.set_ram_u16(addr, 0x0005);
+                self.set_ram_u16(addr, 0x0005); // TX status: done with error/retry (05h)
                 *self.port_mut(W_TX_SEQNO) = (self.port(W_TX_SEQNO) + 1) & 0x0FFF;
                 self.finish_cmd()
             }
@@ -485,13 +518,16 @@ impl WiFi {
     fn tx_done(&mut self, num: usize, addr: usize, rate: u8) -> bool {
         // For the CMD and reply slots the status is written later.
         if num != 1 && num != 5 {
-            self.set_ram_u16(addr, 0x0001);
+            // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+            self.set_ram_u16(addr, 0x0001); // TX status: done (bit 0)
         }
-        self.ram[(addr + 5) & 0x1FFF] = 0;
+        self.ram[(addr + 5) & 0x1FFF] = 0; // TX header +05h cleared
 
         match num {
             1 => {
+                // DS Wifi Transmit Errors: https://problemkaputt.de/gbatek.htm#dswifitransmiterrors
                 if self.port(W_TXSTATCNT) & 0x4000 != 0 {
+                    // W_TXSTATCNT bit 14: status update on reply transmit
                     *self.port_mut(W_TXSTAT) = 0x0800;
                     self.set_irq(1);
                 }
@@ -515,6 +551,7 @@ impl WiFi {
             }
             5 => {
                 if self.port(W_TXSTATCNT) & 0x1000 != 0 {
+                    // W_TXSTATCNT bit 12: status update on LOC transmit
                     *self.port_mut(W_TXSTAT) = 0x0401;
                     self.set_irq(1);
                 }
@@ -533,6 +570,7 @@ impl WiFi {
                         *self.port_mut(W_TXBUF_LOC1 + loc * 4) &= 0x7FFF;
                     }
                     4 if self.port(W_TXSTATCNT) & 0x8000 != 0 => {
+                        // W_TXSTATCNT bit 15: status update on beacon transmit
                         *self.port_mut(W_TXSTAT) = 0x0301;
                         self.set_irq(1);
                     }

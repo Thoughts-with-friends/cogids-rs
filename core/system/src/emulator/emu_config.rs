@@ -114,52 +114,53 @@ impl KeyInputReg {
     /// start at 1 (nothing pressed) and are cleared for each held button,
     /// matching CorgiDS `KEYINPUT_REG::get()`.
     pub fn get_value(&self) -> u16 {
-        let mut value = 0x03FF_u16;
+        // GBA Keypad Input: https://problemkaputt.de/gbatek.htm#gbakeypadinput
+        let mut value = 0x03FF_u16; // KEYINPUT: all 10 keys released (bits are 0 = pressed)
         if self.button_a {
-            value &= !0x0001;
+            value &= !0x0001; // bit 0: A pressed
         }
         if self.button_b {
-            value &= !0x0002;
+            value &= !0x0002; // bit 1: B pressed
         }
         if self.select {
-            value &= !0x0004;
+            value &= !0x0004; // bit 2: Select pressed
         }
         if self.start {
-            value &= !0x0008;
+            value &= !0x0008; // bit 3: Start pressed
         }
         if self.right {
-            value &= !0x0010;
+            value &= !0x0010; // bit 4: Right pressed
         }
         if self.left {
-            value &= !0x0020;
+            value &= !0x0020; // bit 5: Left pressed
         }
         if self.up {
-            value &= !0x0040;
+            value &= !0x0040; // bit 6: Up pressed
         }
         if self.down {
-            value &= !0x0080;
+            value &= !0x0080; // bit 7: Down pressed
         }
         if self.button_r {
-            value &= !0x0100;
+            value &= !0x0100; // bit 8: R pressed
         }
         if self.button_l {
-            value &= !0x0200;
+            value &= !0x0200; // bit 9: L pressed
         }
         value
     }
 
     /// Set value from bit-packed register format (active-low, see `get_value`)
     pub fn set_value(&mut self, value: u16) {
-        self.button_a = (value & 0x0001) == 0;
-        self.button_b = (value & 0x0002) == 0;
-        self.select = (value & 0x0004) == 0;
-        self.start = (value & 0x0008) == 0;
-        self.right = (value & 0x0010) == 0;
-        self.left = (value & 0x0020) == 0;
-        self.up = (value & 0x0040) == 0;
-        self.down = (value & 0x0080) == 0;
-        self.button_r = (value & 0x0100) == 0;
-        self.button_l = (value & 0x0200) == 0;
+        self.button_a = (value & 0x0001) == 0; // bit 0: A (0 = pressed)
+        self.button_b = (value & 0x0002) == 0; // bit 1: B (0 = pressed)
+        self.select = (value & 0x0004) == 0; // bit 2: Select (0 = pressed)
+        self.start = (value & 0x0008) == 0; // bit 3: Start (0 = pressed)
+        self.right = (value & 0x0010) == 0; // bit 4: Right (0 = pressed)
+        self.left = (value & 0x0020) == 0; // bit 5: Left (0 = pressed)
+        self.up = (value & 0x0040) == 0; // bit 6: Up (0 = pressed)
+        self.down = (value & 0x0080) == 0; // bit 7: Down (0 = pressed)
+        self.button_r = (value & 0x0100) == 0; // bit 8: R (0 = pressed)
+        self.button_l = (value & 0x0200) == 0; // bit 9: L (0 = pressed)
     }
 }
 
@@ -180,28 +181,29 @@ impl ExtKeyInReg {
     /// (active-high: 1 = closed). Unused bits read as 1. Matches CorgiDS
     /// `EXTKEYIN_REG::get()`.
     pub fn get_value(&self) -> u16 {
-        let mut value = 0x007F_u16;
+        // DS Keypad: https://problemkaputt.de/gbatek.htm#dskeypad
+        let mut value = 0x007F_u16; // EXTKEYIN: X, Y, debug button, bit 6 pen up; bits 0-6 set = released
         if self.button_x {
-            value &= !0x0001;
+            value &= !0x0001; // bit 0: X pressed
         }
         if self.button_y {
-            value &= !0x0002;
+            value &= !0x0002; // bit 1: Y pressed
         }
         if self.pen_down {
-            value &= !0x0040;
+            value &= !0x0040; // bit 6: pen down
         }
         if self.hinge_closed {
-            value |= 0x0080;
+            value |= 0x0080; // bit 7: hinge closed
         }
         value
     }
 
     /// Set value from bit-packed register format (see `get_value` for polarity)
     pub fn set_value(&mut self, value: u16) {
-        self.button_x = (value & 0x0001) == 0;
-        self.button_y = (value & 0x0002) == 0;
-        self.pen_down = (value & 0x0040) == 0;
-        self.hinge_closed = (value & 0x0080) != 0;
+        self.button_x = (value & 0x0001) == 0; // bit 0: X (0 = pressed)
+        self.button_y = (value & 0x0002) == 0; // bit 1: Y (0 = pressed)
+        self.pen_down = (value & 0x0040) == 0; // bit 6: pen down (0 = touching)
+        self.hinge_closed = (value & 0x0080) != 0; // bit 7: hinge closed
     }
 }
 
@@ -219,26 +221,27 @@ impl PowCnt2Reg {
     pub fn get_value(&self) -> u16 {
         let mut value = 0_u16;
         if self.speakers {
-            value |= 0x0001;
+            // DS Power Control: https://problemkaputt.de/gbatek.htm#dspowercontrol
+            value |= 0x0001; // POWCNT2 bit 0: sound speakers enable
         }
         if self.wifi {
-            value |= 0x0002;
+            value |= 0x0002; // POWCNT2 bit 1: Wifi enable
         }
         if self.led {
-            value |= 0x0004;
+            value |= 0x0004; // bit 2: not defined for POWCNT2 in GBATEK (kept by the emulator)
         }
         if self.cartridge {
-            value |= 0x0008;
+            value |= 0x0008; // bit 3: not defined for POWCNT2 in GBATEK (kept by the emulator)
         }
         value
     }
 
     /// Set value from bit-packed register format
     pub fn set_value(&mut self, value: u16) {
-        self.speakers = (value & 0x0001) != 0;
-        self.wifi = (value & 0x0002) != 0;
-        self.led = (value & 0x0004) != 0;
-        self.cartridge = (value & 0x0008) != 0;
+        self.speakers = (value & 0x0001) != 0; // POWCNT2 bit 0: sound speakers enable
+        self.wifi = (value & 0x0002) != 0; // POWCNT2 bit 1: Wifi enable
+        self.led = (value & 0x0004) != 0; // bit 2: not defined for POWCNT2 in GBATEK
+        self.cartridge = (value & 0x0008) != 0; // bit 3: not defined for POWCNT2 in GBATEK
     }
 }
 

@@ -135,7 +135,8 @@ impl Gpu3D {
     /// melonDS `BoxTest`: whether any face of the box is inside the view
     /// volume.
     pub(super) fn box_test(&mut self, p: &[u32; 32]) {
-        self.gxstat &= !(1 << 1);
+        // DS 3D Tests: https://problemkaputt.de/gbatek.htm#ds3dtests
+        self.gxstat &= !(1 << 1); // GXSTAT bit 1: box test result (clear)
         let x0 = p[0] as i16;
         let y0 = (p[0] >> 16) as i16;
         let z0 = p[1] as i16;
@@ -165,14 +166,14 @@ impl Gpu3D {
             [0, 1, 6, 5],
             [2, 3, 4, 7],
         ];
-        let far = self.cur_polygon_attr & (1 << 12) != 0;
+        let far = self.cur_polygon_attr & (1 << 12) != 0; // POLYGON_ATTR bit 12: far plane intersecting polygons
         for f in FACES {
             let mut face = [Vertex::default(); 10];
             for (k, &i) in f.iter().enumerate() {
                 face[k] = cube[i];
             }
             if clip_polygon(false, far, &mut face, 4, 0) > 0 {
-                self.gxstat |= 1 << 1;
+                self.gxstat |= 1 << 1; // GXSTAT bit 1: box test result = inside
                 return;
             }
         }

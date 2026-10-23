@@ -30,7 +30,8 @@ use crate::emulator::Emulator;
 /// ```
 pub fn arm_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u32 = emu.get_cpu_mut(cpu_type).get_current_instr();
-    let condition: u32 = (instruction & 0xF000_0000) >> 28;
+    // ARM CPU Flags & Condition Field (cond): https://problemkaputt.de/gbatek.htm#armcpuflagsconditionfieldcond
+    let condition: u32 = (instruction & 0xF000_0000) >> 28; // condition field (bits 28-31)
 
     // In ARM, PC reads as current + 8
     let cpu_id = emu.get_cpu(cpu_type).get_id();
@@ -59,10 +60,11 @@ pub fn arm_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     }
 
     // Build opcode
-    let op: u32 = ((instruction >> 4) & 0xF) | ((instruction >> 16) & 0xFF0);
+    let op: u32 = ((instruction >> 4) & 0xF) | ((instruction >> 16) & 0xFF0); // table index = bits 4-7 | bits 20-27 << 4
 
     // Special BLX handling
     match condition == 15 && (instruction & 0xFE00_0000) == 0xFA00_0000 && cpu_id <= 0 {
+        // cond=1111b with bits 25-27 = 101b: BLX imm (ARMv5, ARM9 only)
         true => blx(emu, cpu_type, instruction),
         false => {
             if emu.get_cpu_mut(cpu_type).check_condition(condition as i32) {

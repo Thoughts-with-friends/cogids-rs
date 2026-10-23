@@ -124,15 +124,16 @@ impl Gpu {
                         vram[line_start + x]
                     };
 
-                    let r = ((ds_color & 0x1F) << 3) as u32;
-                    let g = (((ds_color >> 5) & 0x1F) << 3) as u32;
-                    let b = (((ds_color >> 10) & 0x1F) << 3) as u32;
+                    // LCD Color Palettes: https://problemkaputt.de/gbatek.htm#lcdcolorpalettes
+                    let r = ((ds_color & 0x1F) << 3) as u32; // red (bits 0-4) to 8 bits
+                    let g = (((ds_color >> 5) & 0x1F) << 3) as u32; // green (bits 5-9) to 8 bits
+                    let b = (((ds_color >> 10) & 0x1F) << 3) as u32; // blue (bits 10-14) to 8 bits
 
                     let engine = match is_engine_a {
                         true => &mut self.engine_upper,
                         false => &mut self.engine_lower,
                     };
-                    engine.front_framebuffer[line_start + x] = 0xFF000000 | (r << 16) | (g << 8) | b
+                    engine.front_framebuffer[line_start + x] = 0xFF000000 | (r << 16) | (g << 8) | b // opaque ARGB8888
                 }
             }
             _ => {}
@@ -167,11 +168,12 @@ impl Gpu {
                     };
                     let read_offset = match engine.dispcnt.display_mode {
                         2 => 0,
-                        _ => engine.dispcapcnt.vram_read_offset as usize * 0x4000,
+                        // DS Video Capture and Main Memory Display Mode: https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode
+                        _ => engine.dispcapcnt.vram_read_offset as usize * 0x4000, // DISPCAPCNT VRAM read offset (bits 26-27) in 32K steps (16K halfwords)
                     } + line_start;
 
                     let write_offset =
-                        engine.dispcapcnt.vram_write_offset as usize * 0x4000 + line_start;
+                        engine.dispcapcnt.vram_write_offset as usize * 0x4000 + line_start; // DISPCAPCNT VRAM write offset (bits 18-19) in 32K steps (16K halfwords)
 
                     (
                         read_offset,
@@ -189,18 +191,18 @@ impl Gpu {
                     let source_a = engine.framebuffer[line_start + x];
                     let source_b = {
                         let vram_src = self.get_vram_block(vram_block);
-                        vram_src[(read_offset + x) & 0xFFFF] as u32
+                        vram_src[(read_offset + x) & 0xFFFF] as u32 // offset wraps within the 128K bank (64K halfwords)
                     };
 
                     let (ra, ga, ba) = (
-                        ((source_a >> 19) & 0x1F) as u16,
-                        ((source_a >> 11) & 0x1F) as u16,
-                        ((source_a >> 3) & 0x1F) as u16,
+                        ((source_a >> 19) & 0x1F) as u16, // source A red
+                        ((source_a >> 11) & 0x1F) as u16, // source A green
+                        ((source_a >> 3) & 0x1F) as u16,  // source A blue
                     );
                     let (rb, gb, bb) = (
-                        (source_b & 0x1F) as u16,
-                        ((source_b >> 5) & 0x1F) as u16,
-                        ((source_b >> 10) & 0x1F) as u16,
+                        (source_b & 0x1F) as u16,         // source B red (bits 0-4)
+                        ((source_b >> 5) & 0x1F) as u16,  // source B green (bits 5-9)
+                        ((source_b >> 10) & 0x1F) as u16, // source B blue (bits 10-14)
                     );
 
                     let (mut rd, mut gd, mut bd) = match engine.dispcapcnt.capture_source {
@@ -225,13 +227,13 @@ impl Gpu {
                         }
                     };
 
-                    rd = rd.min(0x1F);
-                    gd = gd.min(0x1F);
-                    bd = bd.min(0x1F);
+                    rd = rd.min(0x1F); // clamp to 5 bits
+                    gd = gd.min(0x1F); // clamp to 5 bits
+                    bd = bd.min(0x1F); // clamp to 5 bits
 
                     let vram_dest = self.get_vram_block_mut(vram_write_block);
-                    vram_dest[(write_offset + x) & 0xFFFF] =
-                        rd | (gd << 5) | (bd << 10) | (1 << 15);
+                    vram_dest[(write_offset + x) & 0xFFFF] = // offset wraps within the 128K bank (64K halfwords)
+                        rd | (gd << 5) | (bd << 10) | (1 << 15); // BGR555 with alpha bit 15 set
                 }
             }
         }
@@ -251,7 +253,8 @@ impl Gpu {
 
         // Apply master brightness
         let bright_mode = engine.master_bright >> 14;
-        let mut bright_factor = (engine.master_bright & 0x1F) as f32;
+        // DS Video Stuff: https://problemkaputt.de/gbatek.htm#dsvideostuff
+        let mut bright_factor = (engine.master_bright & 0x1F) as f32; // MASTER_BRIGHT factor (bits 0-4)
         if bright_factor > 16.0 {
             bright_factor = 16.0;
         }
@@ -261,32 +264,32 @@ impl Gpu {
                 // Increase brightness
                 for i in 0..PIXELS_PER_LINE {
                     let idx = line_start + i;
-                    let mut r = ((engine.front_framebuffer[idx] >> 16) & 0xFF) as f32;
-                    let mut g = ((engine.front_framebuffer[idx] >> 8) & 0xFF) as f32;
-                    let mut b = (engine.front_framebuffer[idx] & 0xFF) as f32;
+                    let mut r = ((engine.front_framebuffer[idx] >> 16) & 0xFF) as f32; // red channel
+                    let mut g = ((engine.front_framebuffer[idx] >> 8) & 0xFF) as f32; // green channel
+                    let mut b = (engine.front_framebuffer[idx] & 0xFF) as f32; // blue channel
 
                     r += (255.0 - r) * (bright_factor / 16.0);
                     g += (255.0 - g) * (bright_factor / 16.0);
                     b += (255.0 - b) * (bright_factor / 16.0);
 
                     engine.front_framebuffer[idx] =
-                        0xFF000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                        0xFF000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32); // opaque ARGB8888
                 }
             }
             2 => {
                 // Decrease brightness
                 for i in 0..PIXELS_PER_LINE {
                     let idx = line_start + i;
-                    let mut r = ((engine.front_framebuffer[idx] >> 16) & 0xFF) as f32;
-                    let mut g = ((engine.front_framebuffer[idx] >> 8) & 0xFF) as f32;
-                    let mut b = (engine.front_framebuffer[idx] & 0xFF) as f32;
+                    let mut r = ((engine.front_framebuffer[idx] >> 16) & 0xFF) as f32; // red channel
+                    let mut g = ((engine.front_framebuffer[idx] >> 8) & 0xFF) as f32; // green channel
+                    let mut b = (engine.front_framebuffer[idx] & 0xFF) as f32; // blue channel
 
                     r -= r * (bright_factor / 16.0);
                     g -= g * (bright_factor / 16.0);
                     b -= b * (bright_factor / 16.0);
 
                     engine.front_framebuffer[idx] =
-                        0xFF000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                        0xFF000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32); // opaque ARGB8888
                 }
             }
             _ => {}

@@ -32,11 +32,11 @@ impl<const DIR: bool> Interp<DIR> {
         self.xdiff = x1.wrapping_sub(x0);
         self.wbuffer = wbuffer;
         self.xrecip_z = if self.xdiff != 0 {
-            (1 << 22) / self.xdiff
+            (1 << 22) / self.xdiff // reciprocal in 22-bit fixed point
         } else {
             0
         };
-        let mask = if DIR { 0x7E } else { 0x7F };
+        let mask = if DIR { 0x7E } else { 0x7F }; // w fractional bits that rule out the linear (non perspective) shortcut
         self.linear = w0 == w1 && w0 & mask == 0 && w1 & mask == 0;
         if DIR {
             // Along edges, the W values are reduced to 15 bits.
@@ -108,6 +108,7 @@ impl<const DIR: bool> Interp<DIR> {
             if DIR {
                 let mut shift = 0;
                 while disp > 0x3FF {
+                    // keep the displacement within 10 bits
                     disp >>= 1;
                     shift += 1;
                 }
@@ -188,44 +189,44 @@ impl<const RIGHT: bool> Slope<RIGHT> {
         self.increment = if self.ylen == 0 {
             0
         } else if self.ylen == self.xlen && self.xlen != 1 {
-            0x40000
+            0x40000 // exactly 45 degrees: 1.0 in 14.18 fixed point
         } else {
-            let yrecip = (1 << 18) / self.ylen;
+            let yrecip = (1 << 18) / self.ylen; // reciprocal in 18-bit fixed point
             ((x1 - x0).wrapping_mul(yrecip)).wrapping_abs()
         };
-        self.x_major = self.increment > 0x40000;
+        self.x_major = self.increment > 0x40000; // more than one pixel per scanline: x-major edge
 
         self.dx = if RIGHT {
             if self.x_major {
                 if self.negative {
-                    0x20000 + 0x40000
+                    0x20000 + 0x40000 // 0.5 + 1.0 in 14.18 fixed point
                 } else {
-                    self.increment - 0x20000
+                    self.increment - 0x20000 // start half a pixel in (0.5 = 20000h)
                 }
             } else if self.increment != 0 {
-                if self.negative { 0x40000 } else { 0 }
+                if self.negative { 0x40000 } else { 0 } // 1.0 in 14.18 fixed point
             } else {
                 0
             }
         } else if self.x_major {
             if self.negative {
-                (self.increment - 0x20000) + 0x40000
+                (self.increment - 0x20000) + 0x40000 // start half a pixel in, plus 1.0
             } else {
-                0x20000
+                0x20000 // 0.5 in 14.18 fixed point
             }
         } else if self.increment != 0 {
-            if self.negative { 0x40000 } else { 0 }
+            if self.negative { 0x40000 } else { 0 } // 1.0 in 14.18 fixed point
         } else {
             0
         };
         self.dx = self.dx.wrapping_add((y - y0).wrapping_mul(self.increment));
 
         let x = self.x_val();
-        let offset = i32::from(self.increment >= 0x40000 && (RIGHT ^ self.negative));
+        let offset = i32::from(self.increment >= 0x40000 && (RIGHT ^ self.negative)); // x-major edges are offset by one scanline
         self.interp.setup(y0 - offset, y1 - offset, w0, w1, wbuffer);
         self.interp.set_x(y);
         if self.x_major {
-            self.xcov_incr = (self.ylen << 10) / self.xlen;
+            self.xcov_incr = (self.ylen << 10) / self.xlen; // coverage step in 10-bit fixed point
         }
         x
     }
@@ -268,9 +269,10 @@ impl<const RIGHT: bool> Slope<RIGHT> {
             if RIGHT {
                 startx = startx - length + 1;
             }
-            let startcov = (((startx << 10) + 0x1FF) * self.ylen) / self.xlen;
+            // DS 3D Toon, Edge, Fog, Alpha-Blending, Anti-Aliasing: https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing
+            let startcov = (((startx << 10) + 0x1FF) * self.ylen) / self.xlen; // starting edge coverage, 10-bit fraction
             let coverage =
-                (1 << 31) | (((startcov & 0x3FF) as u32) << 12) | (self.xcov_incr & 0x3FF) as u32;
+                (1 << 31) | (((startcov & 0x3FF) as u32) << 12) | (self.xcov_incr & 0x3FF) as u32; // packed: bit 31 flag, start coverage (bits 12-21), coverage step (bits 0-9)
             (if swapped { 1 } else { length }, coverage)
         } else {
             let coverage = if self.increment == 0 {
@@ -280,14 +282,14 @@ impl<const RIGHT: bool> Slope<RIGHT> {
                 if (cov >> 5) != (self.dx >> 18) {
                     cov = 31;
                 }
-                cov &= 0x1F;
+                cov &= 0x1F; // 5-bit coverage
                 let flip = if swapped {
                     RIGHT ^ self.negative
                 } else {
                     !(RIGHT ^ self.negative)
                 };
                 if flip {
-                    cov = 0x1F - cov;
+                    cov = 0x1F - cov; // invert coverage (31 - cov)
                 }
                 cov as u32
             };

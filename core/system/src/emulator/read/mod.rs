@@ -21,9 +21,10 @@ impl Emulator {
         }
         match self.wram_cnt & 3 {
             0 => (true, (address & ARM7_WRAM_MASK) as usize),
-            1 => (false, (address & 0x3FFF) as usize),
-            2 => (false, ((address & 0x3FFF) + 0x4000) as usize),
-            _ => (false, (address & 0x7FFF) as usize),
+            // DS Memory Control - WRAM: https://problemkaputt.de/gbatek.htm#dsmemorycontrolwram
+            1 => (false, (address & 0x3FFF) as usize), // WRAMCNT 1: ARM7 gets the first 16K
+            2 => (false, ((address & 0x3FFF) + 0x4000) as usize), // WRAMCNT 2: ARM7 gets the second 16K
+            _ => (false, (address & 0x7FFF) as usize),            // WRAMCNT 3: ARM7 gets all 32K
         }
     }
 

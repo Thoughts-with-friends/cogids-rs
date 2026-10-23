@@ -31,7 +31,8 @@ pub(super) enum RxSource {
 
 /// Is `a` a multicast/broadcast address.
 const fn is_group(mac: &[u8]) -> bool {
-    mac[0] & 0x01 != 0
+    // DS Wifi IEEE802.11 Frames: https://problemkaputt.de/gbatek.htm#dswifiieee80211frames
+    mac[0] & 0x01 != 0 // MAC bit 0 set: group/multicast address
 }
 
 impl WiFi {
@@ -48,8 +49,9 @@ impl WiFi {
     /// Advances an RX ring buffer address by `inc` bytes, wrapping from
     /// W_RXBUF_END to W_RXBUF_BEGIN.
     fn increment_rx_addr(&self, addr: &mut usize, inc: usize) {
-        let end = usize::from(self.port(W_RXBUF_END)) & 0x1FFE;
-        let begin = usize::from(self.port(W_RXBUF_BEGIN)) & 0x1FFE;
+        // DS Wifi Receive Buffer: https://problemkaputt.de/gbatek.htm#dswifireceivebuffer
+        let end = usize::from(self.port(W_RXBUF_END)) & 0x1FFE; // halfword aligned Wifi RAM offset
+        let begin = usize::from(self.port(W_RXBUF_BEGIN)) & 0x1FFE; // halfword aligned Wifi RAM offset
         for _ in (0..inc).step_by(2) {
             *addr = (*addr + 2) & 0x1FFE;
             if *addr == end {
@@ -62,7 +64,8 @@ impl WiFi {
     /// buffer configured).
     const fn rx_enabled(&self) -> bool {
         self.port(W_POWERSTATE) & (1 << 9) == 0
-            && self.port(W_RXCNT) & 0x8000 != 0
+            // DS Wifi Receive Control: https://problemkaputt.de/gbatek.htm#dswifireceivecontrol
+            && self.port(W_RXCNT) & 0x8000 != 0 // W_RXCNT bit 15: enable queuing received data to RX FIFO
             && self.port(W_RXBUF_BEGIN) != self.port(W_RXBUF_END)
     }
 
@@ -71,14 +74,15 @@ impl WiFi {
     fn crop_rx_frame(&mut self, framectl: u16, framelen: usize) -> usize {
         let crop = usize::from(self.port(W_RXLEN_CROP));
         if framectl & (1 << 14) != 0 {
-            let len = framelen.saturating_sub((crop >> 7) & 0x1FE);
+            // DS Wifi I/O Map: https://problemkaputt.de/gbatek.htm#dswifiiomap
+            let len = framelen.saturating_sub((crop >> 7) & 0x1FE); // W_RXLEN_CROP bits 8-15: crop amount for one frame type (halfwords)
             if len > 24 {
                 let end = (12 + 28 + len).min(self.rx_buffer.len());
                 self.rx_buffer.copy_within(12 + 28..end, 12 + 24);
             }
             len
         } else {
-            framelen.saturating_sub((crop << 1) & 0x1FE)
+            framelen.saturating_sub((crop << 1) & 0x1FE) // W_RXLEN_CROP bits 0-7: crop amount (halfwords)
         }
     }
 
@@ -86,10 +90,12 @@ impl WiFi {
     pub(super) fn start_rx(&mut self) {
         let framelen = self.rx_u16(8);
         let rate = self.rx_u16(6);
+        // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
         let (per_byte, mask) = if rate == 0x14 {
-            (4, 0x7 & STEP_MASK as u32)
+            // rate 14h = 2 Mbit/s
+            (4, 0x7 & STEP_MASK as u32) // 2 Mbit/s: 4 us per byte
         } else {
-            (8, 0xF & STEP_MASK as u32)
+            (8, 0xF & STEP_MASK as u32) // 1 Mbit/s: 8 us per byte
         };
         self.rx_time = i32::from(framelen) * per_byte;
         self.rx_halfword_time_mask = mask;
@@ -113,6 +119,7 @@ impl WiFi {
 
         let mut addr = usize::from(self.port(W_RXTX_ADDR)) << 1;
         if addr < 0x1FFF {
+            // inside 8K Wifi RAM
             let ptr = self.rx_buffer_ptr;
             let half = self
                 .rx_buffer
@@ -133,10 +140,12 @@ impl WiFi {
             self.rx_time = 0;
             self.set_status(1);
             if self.tx_cur_slot.is_none() {
-                self.com_status &= !0x1;
+                self.com_status &= !0x1; // communication state: receive done
                 self.rx_counter = 0;
             }
+            // DS Wifi Power-Down Registers: https://problemkaputt.de/gbatek.htm#dswifipowerdownregisters
             if self.com_status == 0 && self.port(W_POWERSTATE) & (1 << 9) != 0 {
+                // W_POWERSTATE bit 9: powered down
                 *self.port_mut(W_TRX_POWER) = 0;
                 self.set_status(9);
             }
@@ -146,11 +155,12 @@ impl WiFi {
     /// The whole frame is in: filter it, write its RX header and signal it
     /// (melonDS `FinishRX`).
     fn finish_rx(&mut self) {
-        self.com_status &= !0x1;
+        self.com_status &= !0x1; // communication state: receive done
         self.rx_counter = 0;
 
         if self.com_status == 0 {
             if self.port(W_POWERSTATE) & (1 << 9) != 0 {
+                // W_POWERSTATE bit 9: powered down
                 *self.port_mut(W_TRX_POWER) = 0;
                 self.set_status(9);
             } else {
@@ -180,16 +190,18 @@ impl WiFi {
             let mut header = usize::from(self.port(W_RXBUF_WRCSR)) << 1;
             self.set_ram_u16(header, rxflags);
             self.increment_rx_addr(&mut header, 2);
-            self.set_ram_u16(header, 0x0040);
+            // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+            self.set_ram_u16(header, 0x0040); // RX header flags for a multiplay reply
             self.increment_rx_addr(&mut header, 4);
             self.set_ram_u16(header, self.rx_u16(6));
             self.increment_rx_addr(&mut header, 2);
             self.set_ram_u16(header, self.rx_u16(8));
             self.increment_rx_addr(&mut header, 2);
-            self.set_ram_u16(header, 0x4080);
+            self.set_ram_u16(header, 0x4080); // RX header flags for an ACK
 
             let mut addr = usize::from(self.port(W_RXTX_ADDR)) << 1;
             if addr & 0x2 != 0 {
+                // keep the write pointer word-aligned
                 self.increment_rx_addr(&mut addr, 2);
             }
             *self.port_mut(W_RXBUF_WRCSR) = ((addr & !0x3) >> 1) as u16;
@@ -203,14 +215,14 @@ impl WiFi {
             let client_mask = self.rx_u16(0xC + 26);
             let aid = self.port(W_AID_LOW);
             if aid != 0 && client_mask & (1 << aid) != 0 {
-                self.send_mp_reply(self.rx_u16(0xC + 24), client_mask);
+                self.send_mp_reply(self.rx_u16(0xC + 24), client_mask); // multiplay command: client time at frame offset 24
             } else if let Some(link) = self.link.as_mut() {
                 link.send_reply(&[], self.us_timestamp, 0);
             }
         } else if rxflags & 0x800F == 0x8001 {
             // Beacon of our BSS: its timestamp is copied to W_US_COUNT.
             let rate = self.rx_u16(6);
-            let len = u64::from(self.rx_u16(8)) * if rate == 0x14 { 4 } else { 8 };
+            let len = u64::from(self.rx_u16(8)) * if rate == 0x14 { 4 } else { 8 }; // RX header +08h length; 4 or 8 us per byte
             let mut ts = [0; 8];
             ts.copy_from_slice(&self.rx_buffer[12 + 24..12 + 32]);
             self.us_counter = u64::from_le_bytes(ts).wrapping_add(len.wrapping_sub(76));
@@ -222,23 +234,26 @@ impl WiFi {
     fn rx_filter(&mut self, framectl: u16, seqno: u16) -> Option<(u16, bool)> {
         let bssid = self.port_mac(W_BSSID_0);
         let filter = self.port(W_RXFILTER);
-        let mut flags: u16 = 0x0010;
+        // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+        let mut flags: u16 = 0x0010; // RX header flags: bit 4 always set
         let mut cmd_dupe = false;
 
         match (framectl >> 2) & 0x3 {
             // Management.
             0 => {
                 if self.rx_mac(12 + 16) == bssid {
-                    flags |= 0x8000;
+                    flags |= 0x8000; // bit 15: frame matches our BSSID
                 }
-                let subtype = (framectl >> 4) & 0xF;
+                let subtype = (framectl >> 4) & 0xF; // frame control subtype (bits 4-7)
                 if subtype == 0x8 {
+                    // management subtype 8: beacon
                     if flags & 0x8000 == 0 && filter & 1 == 0 {
+                        // W_RXFILTER bit 0: accept foreign beacons
                         return None;
                     }
-                    flags |= 0x0001;
-                } else if (subtype <= 0x5 || (0xA..=0xC).contains(&subtype))
-                    && flags & 0x8000 == 0
+                    flags |= 0x0001; // frame type 1: beacon
+                } else if (subtype <= 0x5 || (0xA..=0xC).contains(&subtype)) // other management subtypes
+                    && flags & 0x8000 == 0 // bit 15: frame matches our BSSID
                     && filter & (3 << 9) == 0
                 {
                     return None;
@@ -247,61 +262,68 @@ impl WiFi {
             // Control: only PS-poll.
             1 => {
                 if framectl & 0xF0 != 0xA0 {
+                    // frame control A0h: disassociation
                     return None;
                 }
                 if self.rx_mac(12 + 4) == bssid {
-                    flags |= 0x8000;
+                    flags |= 0x8000; // bit 15: frame matches our BSSID
                 }
                 if flags & 0x8000 == 0 && filter & (1 << 11) == 0 {
+                    // W_RXFILTER bit 11: accept foreign frames
                     return None;
                 }
-                flags |= 0x0005;
+                flags |= 0x0005; // frame type 5
             }
             // Data.
             2 => {
-                let fromto = (framectl >> 8) & 0x3;
+                let fromto = (framectl >> 8) & 0x3; // ToDS/FromDS bits (frame control bits 8-9)
                 if self.port(W_RXFILTER2) & (1 << fromto) != 0 {
                     return None;
                 }
                 let bssid_offset = [16, 4, 10, 0][usize::from(fromto)];
                 if bssid_offset != 0 && self.rx_mac(12 + bssid_offset) == bssid {
-                    flags |= 0x8000;
+                    flags |= 0x8000; // bit 15: frame matches our BSSID
                 }
                 if flags & 0x8000 == 0 && filter & (1 << 11) == 0 {
+                    // W_RXFILTER bit 11: accept foreign frames
                     return None;
                 }
+                // DS Wifi IEEE802.11 Frames: https://problemkaputt.de/gbatek.htm#dswifiieee80211frames
                 if framectl & (1 << 11) != 0 && filter & 1 == 0 {
+                    // frame control bit 11: retry; W_RXFILTER bit 0
                     return None; // retransmission
                 }
 
                 // MP frames are recognised by their addresses alone.
                 if self.rx_mac(12 + 16) == MP_REPLY_MAC {
                     flags |= if framectl & 0xF0 == 0x50 {
-                        0x000F
+                        // data subtype 5: CF-Ack (multiplay reply)
+                        0x000F // frame type F: multiplay reply
                     } else {
-                        0x000E
+                        0x000E // frame type E: multiplay ACK
                     };
                 } else if self.rx_mac(12 + 4) == MP_CMD_MAC {
                     cmd_dupe = seqno == self.mp_last_seqno;
                     self.mp_last_seqno = seqno;
-                    flags |= 0x000C;
+                    flags |= 0x000C; // frame type C: multiplay command
                 } else if self.rx_mac(12 + 4) == MP_ACK_MAC {
-                    flags |= 0x000D;
+                    flags |= 0x000D; // frame type D
                 } else {
-                    flags |= 0x0008;
+                    flags |= 0x0008; // frame type 8: data
                 }
 
-                let kind = flags & 0xF;
+                let kind = flags & 0xF; // frame type (bits 0-3)
                 let allowed = match (framectl >> 4) & 0xF {
-                    0x0 | 0x4 => true,
-                    0x1 if kind == 0xD => filter & (1 << 7) != 0,
-                    0x1 => kind == 0xE || filter & (1 << 1) != 0,
-                    0x2 => kind == 0xC || filter & (1 << 2) != 0,
-                    0x3 => filter & (1 << 3) != 0,
-                    0x5 if kind == 0xF => filter & (1 << 8) != 0,
-                    0x5 => filter & (1 << 4) != 0,
-                    0x6 => filter & (1 << 5) != 0,
-                    0x7 => filter & (1 << 6) != 0,
+                    // frame control subtype (bits 4-7)
+                    0x0 | 0x4 => true, // always accepted
+                    0x1 if kind == 0xD => filter & (1 << 7) != 0, // W_RXFILTER bit 7
+                    0x1 => kind == 0xE || filter & (1 << 1) != 0, // W_RXFILTER bit 1
+                    0x2 => kind == 0xC || filter & (1 << 2) != 0, // W_RXFILTER bit 2
+                    0x3 => filter & (1 << 3) != 0, // W_RXFILTER bit 3
+                    0x5 if kind == 0xF => filter & (1 << 8) != 0, // W_RXFILTER bit 8
+                    0x5 => filter & (1 << 4) != 0, // W_RXFILTER bit 4
+                    0x6 => filter & (1 << 5) != 0, // W_RXFILTER bit 5
+                    0x7 => filter & (1 << 6) != 0, // W_RXFILTER bit 6
                     _ => false,
                 };
                 if !allowed {
@@ -391,8 +413,9 @@ impl WiFi {
         self.rx_buffer[6..8].copy_from_slice(&u16::from(rate).to_le_bytes());
         self.rx_buffer[8..10].copy_from_slice(&(framelen as u16).to_le_bytes());
 
-        let frame_us = framelen as u64 * if rate == 0x14 { 4 } else { 8 };
-        let frametype = framectl & 0x00FF;
+        // DS Wifi Hardware Headers: https://problemkaputt.de/gbatek.htm#dswifihardwareheaders
+        let frame_us = framelen as u64 * if rate == 0x14 { 4 } else { 8 }; // 2 Mbit/s: 4 us per byte, 1 Mbit/s: 8 us
+        let frametype = framectl & 0x00FF; // frame control low byte: type/subtype
         let dst = self.rx_mac(12 + 4);
         let mac_good = is_group(&dst) || dst == self.port_mac(W_MACADDR_0);
 
@@ -411,7 +434,7 @@ impl WiFi {
             let aid = self.rx_u16(12 + 24 + 4);
             if aid != 0 {
                 #[cfg(feature = "log")]
-                log::info!("wifi: associated as MP client {:X}", aid & 0xF);
+                log::info!("wifi: associated as MP client {:X}", aid & 0xF); // AID (bits 0-3)
                 self.is_mp = true;
                 self.is_mp_client = true;
                 self.us_timestamp = timestamp;

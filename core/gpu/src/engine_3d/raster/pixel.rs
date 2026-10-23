@@ -15,7 +15,9 @@ pub(super) enum DepthTest {
 impl DepthTest {
     /// Depth test of a polygon: equal (Z or W) when POLYGON_ATTR bit 14 is set, otherwise less.
     pub(super) fn for_poly(p: &Polygon) -> Self {
+        // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
         if p.attr & (1 << 14) != 0 {
+            // POLYGON_ATTR bit 14: depth test EQUAL (else LESS)
             if p.w_buffer {
                 Self::EqualW
             } else {
@@ -32,8 +34,9 @@ impl DepthTest {
     #[inline]
     pub(super) fn test(self, dstz: i32, z: i32, dstattr: u32) -> bool {
         match self {
-            Self::EqualZ => (dstz.wrapping_sub(z).wrapping_add(0x200) as u32) <= 0x400,
-            Self::EqualW => (dstz.wrapping_sub(z).wrapping_add(0xFF) as u32) <= 0x1FE,
+            // DS 3D Polygon Attributes: https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes
+            Self::EqualZ => (dstz.wrapping_sub(z).wrapping_add(0x200) as u32) <= 0x400, // depth test EQUAL: Z-buffer tolerance +-200h
+            Self::EqualW => (dstz.wrapping_sub(z).wrapping_add(0xFF) as u32) <= 0x1FE, // depth test EQUAL: W-buffer tolerance +-FFh
             Self::Less => z < dstz,
             Self::LessFrontFacing => {
                 // Opaque, back-facing destination: <= instead of <.
@@ -60,9 +63,10 @@ impl Frame<'_> {
     ) -> u32 {
         let st = self.st;
         let blend = (p.attr >> 4) & 3;
-        let poly_alpha = (p.attr >> 16) & 0x1F;
+        let poly_alpha = (p.attr >> 16) & 0x1F; // POLYGON_ATTR alpha (bits 16-20)
         let wireframe = poly_alpha == 0;
-        let highlight = st.disp_cnt & (1 << 1) != 0;
+        // DS 3D Display Control: https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol
+        let highlight = st.disp_cnt & (1 << 1) != 0; // DISP3DCNT bit 1: highlight shading (else toon)
 
         if blend == 2 {
             if highlight {
@@ -109,6 +113,6 @@ impl Frame<'_> {
         if wireframe {
             a = 31;
         }
-        r | (g << 8) | (b << 16) | (a << 24)
+        r | (g << 8) | (b << 16) | (a << 24) // pack 6-bit RGB and alpha
     }
 }

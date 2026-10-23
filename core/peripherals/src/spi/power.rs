@@ -41,7 +41,8 @@ pub struct PowerMan {
 impl Default for PowerMan {
     fn default() -> Self {
         let mut registers = [0; 8];
-        registers[4] = 0x40;
+        // DS Power Management Device: https://problemkaputt.de/gbatek.htm#dspowermanagementdevice
+        registers[4] = 0x40; // register 4: backlight level/charger default
         Self {
             selected: false,
             pos: 0,
@@ -52,7 +53,7 @@ impl Default for PowerMan {
 }
 
 impl PowerMan {
-    const MASKS: [u8; 8] = [0x7F, 0x00, 0x01, 0x03, 0x0F, 0, 0, 0];
+    const MASKS: [u8; 8] = [0x7F, 0x00, 0x01, 0x03, 0x0F, 0, 0, 0]; // writable bits per power management register
 
     /// First byte selects a register (bit 7 = read), the second reads or writes it.
     pub const fn transfer(&mut self, value: u8) -> u8 {
@@ -63,8 +64,9 @@ impl PowerMan {
             return 0;
         }
         let out = if self.pos == 1 {
-            let reg = (self.index & 0x07) as usize;
+            let reg = (self.index & 0x07) as usize; // register index (bits 0-2)
             if self.index & 0x80 != 0 {
+                // index bit 7: read
                 self.registers[reg]
             } else {
                 let mask = Self::MASKS[reg];

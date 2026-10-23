@@ -6,12 +6,13 @@ use crate::adpcm;
 
 /// Duty cycles 0-7 of the PSG channels (eighths high).
 const PSG_TABLE: [[i16; 8]; 8] = {
-    let mut table = [[-0x7FFF; 8]; 8];
+    // DS Sound Channels 0..15: https://problemkaputt.de/gbatek.htm#dssoundchannels015
+    let mut table = [[-0x7FFF; 8]; 8]; // PSG low level
     let mut duty = 0;
     while duty < 7 {
         let mut step = 7 - duty;
         while step < 8 {
-            table[duty][step] = 0x7FFF;
+            table[duty][step] = 0x7FFF; // PSG high level
             step += 1;
         }
         duty += 1;
@@ -59,17 +60,19 @@ impl Channel {
     /// SOUNDxCNT write: volume, shift, pan, format; a 0 -> 1 start bit sets key_on.
     pub(crate) fn set_cnt(&mut self, value: u32) {
         let old = self.cnt;
-        self.cnt = value & 0xFF7F_837F;
-        self.volume = (self.cnt & 0x7F) as i32;
+        self.cnt = value & 0xFF7F_837F; // SOUNDxCNT writable bits
+        self.volume = (self.cnt & 0x7F) as i32; // volume multiplier (bits 0-6)
         if self.volume == 127 {
             self.volume = 128;
         }
         self.volume_shift = [4, 3, 2, 0][((self.cnt >> 8) & 3) as usize];
-        self.pan = ((self.cnt >> 16) & 0x7F) as i32;
+        self.pan = ((self.cnt >> 16) & 0x7F) as i32; // panning (bits 16-22)
         if self.pan == 127 {
             self.pan = 128;
         }
+        // DS Sound Channels 0..15: https://problemkaputt.de/gbatek.htm#dssoundchannels015
         if value & (1 << 31) != 0 && old & (1 << 31) == 0 {
+            // SOUNDxCNT bit 31: start (0 -> 1 edge)
             self.key_on = true;
         }
     }
@@ -88,7 +91,7 @@ impl Channel {
     pub(crate) fn start(&mut self, bus: &mut Bus) {
         self.timer = u32::from(self.timer_reload);
         self.pos = if self.format() == 3 { -1 } else { -3 };
-        self.noise = 0x7FFF;
+        self.noise = 0x7FFF; // noise LFSR seed
         self.cur_sample = 0;
         self.fifo_read = 0;
         self.fifo_write = 0;
@@ -147,7 +150,7 @@ impl Channel {
             true
         } else if repeat & 2 != 0 {
             self.cur_sample = 0;
-            self.cnt &= !(1 << 31);
+            self.cnt &= !(1 << 31); // SOUNDxCNT bit 31: stop
             false
         } else {
             true
@@ -189,7 +192,7 @@ impl Channel {
             if self.pos == 0 {
                 let header = self.fifo_read(4, bus);
                 self.adpcm_val = i32::from(header as u16 as i16);
-                self.adpcm_index = ((header >> 16) & 0x7F).min(88) as i32;
+                self.adpcm_index = ((header >> 16) & 0x7F).min(88) as i32; // ADPCM header: initial table index (bits 16-22), max 88
                 self.adpcm_val_loop = self.adpcm_val;
                 self.adpcm_index_loop = self.adpcm_index;
             }
@@ -204,7 +207,7 @@ impl Channel {
                 self.adpcm_byte = self.fifo_read(1, bus) as u8;
             } else if self.repeat() & 2 != 0 {
                 self.cur_sample = 0;
-                self.cnt &= !(1 << 31);
+                self.cnt &= !(1 << 31); // SOUNDxCNT bit 31: stop
                 return;
             }
         } else {
@@ -233,11 +236,11 @@ impl Channel {
     /// Timer overflow: next bit of the 15-bit LFSR noise.
     pub(crate) fn next_noise(&mut self) {
         if self.noise & 1 != 0 {
-            self.noise = (self.noise >> 1) ^ 0x6000;
-            self.cur_sample = -0x7FFF;
+            self.noise = (self.noise >> 1) ^ 0x6000; // noise LFSR: carry out -> XOR 6000h
+            self.cur_sample = -0x7FFF; // noise low level
         } else {
             self.noise >>= 1;
-            self.cur_sample = 0x7FFF;
+            self.cur_sample = 0x7FFF; // noise high level
         }
     }
 
@@ -245,6 +248,7 @@ impl Channel {
     /// its volume-scaled output.
     pub(crate) fn run(&mut self, cycles: u32, bus: &mut Bus) -> i32 {
         if self.cnt & (1 << 31) == 0 {
+            // SOUNDxCNT bit 31: channel stopped
             return 0;
         }
         // 0 = PCM8, 1 = PCM16, 2 = ADPCM, 3 = PSG (ch 8-13) / noise (ch 14-15).
@@ -264,7 +268,7 @@ impl Channel {
 
         self.timer += cycles;
         while self.timer >> 16 != 0 {
-            self.timer = u32::from(self.timer_reload) + (self.timer - 0x1_0000);
+            self.timer = u32::from(self.timer_reload) + (self.timer - 0x1_0000); // timer counts up and overflows at 10000h
             match kind {
                 0 => self.next_pcm8(bus),
                 1 => self.next_pcm16(bus),
@@ -273,6 +277,7 @@ impl Channel {
                 _ => self.next_noise(),
             }
             if self.cnt & (1 << 31) == 0 {
+                // SOUNDxCNT bit 31: channel stopped
                 break;
             }
         }

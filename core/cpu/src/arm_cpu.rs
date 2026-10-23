@@ -12,19 +12,20 @@ pub const REG_PC: u32 = 15;
 /// Carry out of `a + b`.
 #[inline]
 pub const fn carry_add(a: u32, b: u32) -> bool {
-    (0xFFFF_FFFF_u32.wrapping_sub(a)) < b
+    // ARM Opcodes: Data Processing (ALU): https://problemkaputt.de/gbatek.htm#armopcodesdataprocessingalu
+    (0xFFFF_FFFF_u32.wrapping_sub(a)) < b // carry out of an unsigned 32-bit add
 }
 
 /// Signed overflow of `a + b = result`.
 #[inline]
 pub const fn add_overflow(a: u32, b: u32, result: u32) -> bool {
-    (((a ^ b) & 0x8000_0000) == 0) && (((a ^ result) & 0x8000_0000) != 0)
+    (((a ^ b) & 0x8000_0000) == 0) && (((a ^ result) & 0x8000_0000) != 0) // signed overflow: operands share a sign (bit 31) but the result differs
 }
 
 /// Signed overflow of `a - b = result`.
 #[inline]
 pub const fn sub_overflow(a: u32, b: u32, result: u32) -> bool {
-    (((a ^ b) & 0x8000_0000) != 0) && (((a ^ result) & 0x8000_0000) != 0)
+    (((a ^ b) & 0x8000_0000) != 0) && (((a ^ result) & 0x8000_0000) != 0) // signed overflow: operand signs differ and the result sign differs from a
 }
 
 /// ARM processor modes (CPSR.M)
@@ -33,19 +34,20 @@ pub const fn sub_overflow(a: u32, b: u32, result: u32) -> bool {
 pub enum PsrMode {
     /// User mode
     #[default]
-    User = 0x10,
+    // ARM CPU Flags & Condition Field (cond): https://problemkaputt.de/gbatek.htm#armcpuflagsconditionfieldcond
+    User = 0x10, // M4-M0 = 10000b
     /// FIQ (Fast Interrupt) mode
-    Fiq = 0x11,
+    Fiq = 0x11, // M4-M0 = 10001b
     /// IRQ (Interrupt) mode
-    Irq = 0x12,
+    Irq = 0x12, // M4-M0 = 10010b
     /// Supervisor mode
-    Supervisor = 0x13,
+    Supervisor = 0x13, // M4-M0 = 10011b
     /// Abort mode
-    Abort = 0x17,
+    Abort = 0x17, // M4-M0 = 10111b
     /// Undefined instruction mode
-    Undefined = 0x1B,
+    Undefined = 0x1B, // M4-M0 = 11011b
     /// System mode
-    System = 0x1F,
+    System = 0x1F, // M4-M0 = 11111b
 }
 
 impl PsrMode {
@@ -55,13 +57,13 @@ impl PsrMode {
         // 0b11101 = 0x1d
         // 0b11111 = 0x1f
         Some(match value {
-            0x10 => Self::User,
-            0x11 => Self::Fiq,
-            0x12 => Self::Irq,
-            0x13 => Self::Supervisor,
-            0x17 => Self::Abort,
-            0x1B => Self::Undefined,
-            0x1F => Self::System,
+            0x10 => Self::User,       // User
+            0x11 => Self::Fiq,        // FIQ
+            0x12 => Self::Irq,        // IRQ
+            0x13 => Self::Supervisor, // Supervisor
+            0x17 => Self::Abort,      // Abort
+            0x1B => Self::Undefined,  // Undefined
+            0x1F => Self::System,     // System
             _ => return None,
         })
     }
@@ -96,11 +98,12 @@ impl PsrFlags {
     /// Serialize flags into a 32-bit CPSR/SPSR value
     pub const fn get(&self) -> u32 {
         let mut reg = 0;
-        reg |= (self.negative as u32) << 31;
-        reg |= (self.zero as u32) << 30;
-        reg |= (self.carry as u32) << 29;
-        reg |= (self.overflow as u32) << 28;
-        reg |= (self.sticky_overflow as u32) << 27;
+        // ARM CPU Flags & Condition Field (cond): https://problemkaputt.de/gbatek.htm#armcpuflagsconditionfieldcond
+        reg |= (self.negative as u32) << 31; // N flag (bit 31)
+        reg |= (self.zero as u32) << 30; // Z flag (bit 30)
+        reg |= (self.carry as u32) << 29; // C flag (bit 29)
+        reg |= (self.overflow as u32) << 28; // V flag (bit 28)
+        reg |= (self.sticky_overflow as u32) << 27; // Q sticky overflow flag (bit 27)
 
         reg |= (self.irq_disabled as u32) << 7;
         reg |= (self.fiq_disabled as u32) << 6;
@@ -116,16 +119,17 @@ impl PsrFlags {
     pub fn set(&mut self, value: u32) {
         // 1610612829
         self.negative = (value & (1 << 31)) != 0;
-        self.zero = (value & (1 << 30)) != 0;
-        self.carry = (value & (1 << 29)) != 0;
-        self.overflow = (value & (1 << 28)) != 0;
-        self.sticky_overflow = (value & (1 << 27)) != 0;
+        self.zero = (value & (1 << 30)) != 0; // Z flag (bit 30)
+        self.carry = (value & (1 << 29)) != 0; // C flag (bit 29)
+        self.overflow = (value & (1 << 28)) != 0; // V flag (bit 28)
+        self.sticky_overflow = (value & (1 << 27)) != 0; // Q sticky overflow flag (bit 27)
 
-        self.irq_disabled = (value & (1 << 7)) != 0;
-        self.fiq_disabled = (value & (1 << 6)) != 0;
-        self.thumb_on = (value & (1 << 5)) != 0;
+        self.irq_disabled = (value & (1 << 7)) != 0; // I bit (7): IRQ disabled
+        self.fiq_disabled = (value & (1 << 6)) != 0; // F bit (6): FIQ disabled
+        self.thumb_on = (value & (1 << 5)) != 0; // T bit (5): Thumb state
 
         if let Some(mode) = PsrMode::from_u32(value & 0x1F) {
+            // CPSR mode bits M4-M0 (bits 0-4)
             self.mode = mode;
         } else {
             #[cfg(feature = "log")]
@@ -191,7 +195,7 @@ pub struct ArmCpu {
     pub cpsr: PsrFlags,
 
     /// Saved Program Status Registers (indexed by mode)
-    spsr: [PsrFlags; 0x20],
+    spsr: [PsrFlags; 0x20], // indexed by the 5-bit mode number
 
     /// Exception vector base address
     exception_base: u32,
@@ -264,88 +268,92 @@ impl ArmCpu {
             // ARM9 - timings here are doubled to represent 66 MHz
             // Of interest is that the ARM9 is incapable of sequential code fetches
             // Thus ALL code fetches are subject to the three cycle penalty... so much for 66 MHz
-            code_waitstates[0x2][0] = 1;
-            code_waitstates[0x3][0] = 8;
-            code_waitstates[0x4][0] = 8;
-            code_waitstates[0x5][0] = 10;
-            code_waitstates[0x6][0] = 10;
-            code_waitstates[0x7][0] = 8;
-            code_waitstates[0xF][0] = 8;
+            // Index: [address bits 24-27 region][0=N32, 1=S32, 2=N16, 3=S16]; region 2=Main RAM, 3=WRAM, 4=I/O, 5=palette, 6=VRAM, 7=OAM, F=BIOS
+            // DS Memory Timings: https://problemkaputt.de/gbatek.htm#dsmemorytimings
+            code_waitstates[0x2][0] = 1; // Main RAM N32 code access: 1 extra cycle(s)
+            code_waitstates[0x3][0] = 8; // shared/ARM7 WRAM N32 code access: 8 extra cycle(s)
+            code_waitstates[0x4][0] = 8; // I/O N32 code access: 8 extra cycle(s)
+            code_waitstates[0x5][0] = 10; // palette N32 code access: 10 extra cycle(s)
+            code_waitstates[0x6][0] = 10; // VRAM N32 code access: 10 extra cycle(s)
+            code_waitstates[0x7][0] = 8; // OAM N32 code access: 8 extra cycle(s)
+            code_waitstates[0xF][0] = 8; // BIOS N32 code access: 8 extra cycle(s)
 
-            code_waitstates[0x2][1] = 1;
-            code_waitstates[0x3][1] = 8;
-            code_waitstates[0x4][1] = 8;
-            code_waitstates[0x5][1] = 10;
-            code_waitstates[0x6][1] = 10;
-            code_waitstates[0x7][1] = 8;
-            code_waitstates[0xF][1] = 8;
+            code_waitstates[0x2][1] = 1; // Main RAM S32 code access: 1 extra cycle(s)
+            code_waitstates[0x3][1] = 8; // shared/ARM7 WRAM S32 code access: 8 extra cycle(s)
+            code_waitstates[0x4][1] = 8; // I/O S32 code access: 8 extra cycle(s)
+            code_waitstates[0x5][1] = 10; // palette S32 code access: 10 extra cycle(s)
+            code_waitstates[0x6][1] = 10; // VRAM S32 code access: 10 extra cycle(s)
+            code_waitstates[0x7][1] = 8; // OAM S32 code access: 8 extra cycle(s)
+            code_waitstates[0xF][1] = 8; // BIOS S32 code access: 8 extra cycle(s)
 
-            code_waitstates[0x2][2] = 1;
-            code_waitstates[0x3][2] = 4;
-            code_waitstates[0x4][2] = 4;
-            code_waitstates[0x5][2] = 5;
-            code_waitstates[0x6][2] = 5;
-            code_waitstates[0x7][2] = 4;
-            code_waitstates[0xF][2] = 4;
+            code_waitstates[0x2][2] = 1; // Main RAM N16 code access: 1 extra cycle(s)
+            code_waitstates[0x3][2] = 4; // shared/ARM7 WRAM N16 code access: 4 extra cycle(s)
+            code_waitstates[0x4][2] = 4; // I/O N16 code access: 4 extra cycle(s)
+            code_waitstates[0x5][2] = 5; // palette N16 code access: 5 extra cycle(s)
+            code_waitstates[0x6][2] = 5; // VRAM N16 code access: 5 extra cycle(s)
+            code_waitstates[0x7][2] = 4; // OAM N16 code access: 4 extra cycle(s)
+            code_waitstates[0xF][2] = 4; // BIOS N16 code access: 4 extra cycle(s)
 
-            code_waitstates[0x2][3] = 1;
-            code_waitstates[0x3][3] = 4;
-            code_waitstates[0x4][3] = 4;
-            code_waitstates[0x5][3] = 5;
-            code_waitstates[0x6][3] = 5;
-            code_waitstates[0x7][3] = 4;
-            code_waitstates[0xF][3] = 4;
+            code_waitstates[0x2][3] = 1; // Main RAM S16 code access: 1 extra cycle(s)
+            code_waitstates[0x3][3] = 4; // shared/ARM7 WRAM S16 code access: 4 extra cycle(s)
+            code_waitstates[0x4][3] = 4; // I/O S16 code access: 4 extra cycle(s)
+            code_waitstates[0x5][3] = 5; // palette S16 code access: 5 extra cycle(s)
+            code_waitstates[0x6][3] = 5; // VRAM S16 code access: 5 extra cycle(s)
+            code_waitstates[0x7][3] = 4; // OAM S16 code access: 4 extra cycle(s)
+            code_waitstates[0xF][3] = 4; // BIOS S16 code access: 4 extra cycle(s)
 
             // Nonsequential data fetches are also subject to a three cycle penalty
             // However the ARM9 *can* do sequential data fetches, allowing for some speedup
-            data_waitstates[0x2][0] = 1;
-            data_waitstates[0x3][0] = 2;
-            data_waitstates[0x4][0] = 2;
-            data_waitstates[0x5][0] = 4;
-            data_waitstates[0x6][0] = 4;
-            data_waitstates[0x7][0] = 2;
-            data_waitstates[0xF][0] = 2;
+            // data_waitstates uses the same [region][N32, S32, N16, S16] layout as code_waitstates
+            data_waitstates[0x2][0] = 1; // Main RAM N32 data access: 1 extra cycle(s)
+            data_waitstates[0x3][0] = 2; // shared/ARM7 WRAM N32 data access: 2 extra cycle(s)
+            data_waitstates[0x4][0] = 2; // I/O N32 data access: 2 extra cycle(s)
+            data_waitstates[0x5][0] = 4; // palette N32 data access: 4 extra cycle(s)
+            data_waitstates[0x6][0] = 4; // VRAM N32 data access: 4 extra cycle(s)
+            data_waitstates[0x7][0] = 2; // OAM N32 data access: 2 extra cycle(s)
+            data_waitstates[0xF][0] = 2; // BIOS N32 data access: 2 extra cycle(s)
 
-            data_waitstates[0x2][1] = 1;
-            data_waitstates[0x3][1] = 2;
-            data_waitstates[0x4][1] = 2;
-            data_waitstates[0x5][1] = 4;
-            data_waitstates[0x6][1] = 4;
-            data_waitstates[0x7][1] = 2;
-            data_waitstates[0xF][1] = 2;
+            data_waitstates[0x2][1] = 1; // Main RAM S32 data access: 1 extra cycle(s)
+            data_waitstates[0x3][1] = 2; // shared/ARM7 WRAM S32 data access: 2 extra cycle(s)
+            data_waitstates[0x4][1] = 2; // I/O S32 data access: 2 extra cycle(s)
+            data_waitstates[0x5][1] = 4; // palette S32 data access: 4 extra cycle(s)
+            data_waitstates[0x6][1] = 4; // VRAM S32 data access: 4 extra cycle(s)
+            data_waitstates[0x7][1] = 2; // OAM S32 data access: 2 extra cycle(s)
+            data_waitstates[0xF][1] = 2; // BIOS S32 data access: 2 extra cycle(s)
 
-            data_waitstates[0x2][2] = 1;
-            data_waitstates[0x3][2] = 2;
-            data_waitstates[0x4][2] = 2;
-            data_waitstates[0x5][2] = 2;
-            data_waitstates[0x6][2] = 2;
-            data_waitstates[0x7][2] = 2;
-            data_waitstates[0xF][2] = 2;
+            data_waitstates[0x2][2] = 1; // Main RAM N16 data access: 1 extra cycle(s)
+            data_waitstates[0x3][2] = 2; // shared/ARM7 WRAM N16 data access: 2 extra cycle(s)
+            data_waitstates[0x4][2] = 2; // I/O N16 data access: 2 extra cycle(s)
+            data_waitstates[0x5][2] = 2; // palette N16 data access: 2 extra cycle(s)
+            data_waitstates[0x6][2] = 2; // VRAM N16 data access: 2 extra cycle(s)
+            data_waitstates[0x7][2] = 2; // OAM N16 data access: 2 extra cycle(s)
+            data_waitstates[0xF][2] = 2; // BIOS N16 data access: 2 extra cycle(s)
 
-            data_waitstates[0x2][3] = 1;
-            data_waitstates[0x3][3] = 2;
-            data_waitstates[0x4][3] = 2;
-            data_waitstates[0x5][3] = 2;
-            data_waitstates[0x6][3] = 2;
-            data_waitstates[0x7][3] = 2;
-            data_waitstates[0xF][3] = 2;
+            data_waitstates[0x2][3] = 1; // Main RAM S16 data access: 1 extra cycle(s)
+            data_waitstates[0x3][3] = 2; // shared/ARM7 WRAM S16 data access: 2 extra cycle(s)
+            data_waitstates[0x4][3] = 2; // I/O S16 data access: 2 extra cycle(s)
+            data_waitstates[0x5][3] = 2; // palette S16 data access: 2 extra cycle(s)
+            data_waitstates[0x6][3] = 2; // VRAM S16 data access: 2 extra cycle(s)
+            data_waitstates[0x7][3] = 2; // OAM S16 data access: 2 extra cycle(s)
+            data_waitstates[0xF][3] = 2; // BIOS S16 data access: 2 extra cycle(s)
         } else {
             // ARM7 - not as much here as most waitstates only equal 1
-            code_waitstates[0x2][0] = 2;
-            code_waitstates[0x5][0] = 2;
-            code_waitstates[0x6][0] = 2;
+            // DS Memory Timings: https://problemkaputt.de/gbatek.htm#dsmemorytimings
+            code_waitstates[0x2][0] = 2; // Main RAM N32 code access: 2 extra cycle(s)
+            code_waitstates[0x5][0] = 2; // palette N32 code access: 2 extra cycle(s)
+            code_waitstates[0x6][0] = 2; // VRAM N32 code access: 2 extra cycle(s)
 
-            code_waitstates[0x2][1] = 2;
-            code_waitstates[0x5][1] = 2;
-            code_waitstates[0x6][1] = 2;
+            code_waitstates[0x2][1] = 2; // Main RAM S32 code access: 2 extra cycle(s)
+            code_waitstates[0x5][1] = 2; // palette S32 code access: 2 extra cycle(s)
+            code_waitstates[0x6][1] = 2; // VRAM S32 code access: 2 extra cycle(s)
 
-            code_waitstates[0x2][2] = 1;
+            code_waitstates[0x2][2] = 1; // Main RAM N16 code access: 1 extra cycle(s)
 
-            data_waitstates[0x2][0] = 2;
+            data_waitstates[0x2][0] = 2; // Main RAM N32 data access: 2 extra cycle(s)
 
-            data_waitstates[0x2][1] = 2;
+            data_waitstates[0x2][1] = 2; // Main RAM S32 data access: 2 extra cycle(s)
 
-            data_waitstates[0x2][2] = 1;
+            data_waitstates[0x2][2] = 1; // Main RAM N16 data access: 1 extra cycle(s)
         }
 
         Self {
@@ -353,7 +361,8 @@ impl ArmCpu {
             cpu_id,
             data_waitstates,
             // ARM9 (id 0) boots with high vectors; ARM7 vectors are always at 0.
-            exception_base: if cpu_id == 0 { 0xFFFF_0000 } else { 0 },
+            // ARM CPU Exceptions: https://problemkaputt.de/gbatek.htm#armcpuexceptions
+            exception_base: if cpu_id == 0 { 0xFFFF_0000 } else { 0 }, // ARM9 exception vectors live at FFFF0000h (CP15 high vectors), ARM7 at 00000000h
             cpu_type,
             ..Default::default()
         }
@@ -381,9 +390,10 @@ impl ArmCpu {
         self.regs[12] = entry_point;
         self.regs[14] = entry_point;
         let (sp, sp_irq, sp_svc) = if self.cpu_id == 0 {
-            (0x0300_2F7C, 0x0300_3F80, 0x0300_3FC0)
+            // BIOS RAM Usage: https://problemkaputt.de/gbatek.htm#biosramusage
+            (0x0300_2F7C, 0x0300_3F80, 0x0300_3FC0) // ARM9 SP_usr/sys, SP_irq, SP_svc as left by the BIOS (top of DTCM/shared WRAM region)
         } else {
-            (0x0380_FD80, 0x0380_FF80, 0x0380_FFC0)
+            (0x0380_FD80, 0x0380_FF80, 0x0380_FFC0) // ARM7 SP_usr/sys, SP_irq, SP_svc as left by the BIOS (top of ARM7 WRAM)
         };
         self.regs[13] = sp;
         self.sp_irq = sp_irq;
@@ -425,7 +435,8 @@ impl ArmCpu {
         self.update_reg_mode(PsrMode::Undefined);
         self.cpsr.mode = PsrMode::Undefined;
         self.cpsr.irq_disabled = true;
-        self.jp(self.exception_base + 0x04, true);
+        // ARM CPU Exceptions: https://problemkaputt.de/gbatek.htm#armcpuexceptions
+        self.jp(self.exception_base + 0x04, true); // vector +04h: Undefined Instruction
     }
     /// Takes the IRQ exception.
     ///
@@ -445,12 +456,14 @@ impl ArmCpu {
         self.update_reg_mode(PsrMode::Irq);
         self.cpsr.mode = PsrMode::Irq;
         self.cpsr.irq_disabled = true;
-        self.jp(self.exception_base + 0x18, true);
+        // ARM CPU Exceptions: https://problemkaputt.de/gbatek.htm#armcpuexceptions
+        self.jp(self.exception_base + 0x18, true); // vector +18h: IRQ
     }
 
     /// Moves the exception vectors (ARM9 CP15 control bit 13).
     pub const fn set_high_vectors(&mut self, high: bool) {
-        self.exception_base = if high { 0xFFFF_0000 } else { 0 };
+        // ARM CP15 Control Register: https://problemkaputt.de/gbatek.htm#armcp15controlregister
+        self.exception_base = if high { 0xFFFF_0000 } else { 0 }; // CP15 control bit 13 (V): exception vectors at FFFF0000h vs 00000000h
     }
 
     /// Halt execution
@@ -478,7 +491,8 @@ impl ArmCpu {
         self.update_reg_mode(PsrMode::Supervisor);
         self.cpsr.mode = PsrMode::Supervisor;
         self.cpsr.irq_disabled = true;
-        self.jp(self.exception_base + 0x08, true);
+        // ARM CPU Exceptions: https://problemkaputt.de/gbatek.htm#armcpuexceptions
+        self.jp(self.exception_base + 0x08, true); // vector +08h: Software Interrupt (SWI)
     }
 
     /// Debug helpers
@@ -611,21 +625,22 @@ impl ArmCpu {
     /// Condition code evaluation
     pub const fn check_condition(&self, condition: i32) -> bool {
         match condition {
-            0x0 => self.cpsr.zero,
-            0x1 => !self.cpsr.zero,
-            0x2 => self.cpsr.carry,
-            0x3 => !self.cpsr.carry,
-            0x4 => self.cpsr.negative,
-            0x5 => !self.cpsr.negative,
-            0x6 => self.cpsr.overflow,
-            0x7 => !self.cpsr.overflow,
-            0x8 => self.cpsr.carry && !self.cpsr.zero,
-            0x9 => !self.cpsr.carry || self.cpsr.zero,
-            0xA => self.cpsr.negative == self.cpsr.overflow,
-            0xB => self.cpsr.negative != self.cpsr.overflow,
-            0xC => !self.cpsr.zero && (self.cpsr.negative == self.cpsr.overflow),
-            0xD => self.cpsr.zero || (self.cpsr.negative != self.cpsr.overflow),
-            0xE => true,
+            // ARM CPU Flags & Condition Field (cond): https://problemkaputt.de/gbatek.htm#armcpuflagsconditionfieldcond
+            0x0 => self.cpsr.zero,                           // EQ - Z=1
+            0x1 => !self.cpsr.zero,                          // NE - Z=0
+            0x2 => self.cpsr.carry,                          // CS/HS - C=1
+            0x3 => !self.cpsr.carry,                         // CC/LO - C=0
+            0x4 => self.cpsr.negative,                       // MI - N=1
+            0x5 => !self.cpsr.negative,                      // PL - N=0
+            0x6 => self.cpsr.overflow,                       // VS - V=1
+            0x7 => !self.cpsr.overflow,                      // VC - V=0
+            0x8 => self.cpsr.carry && !self.cpsr.zero,       // HI - C=1 and Z=0
+            0x9 => !self.cpsr.carry || self.cpsr.zero,       // LS - C=0 or Z=1
+            0xA => self.cpsr.negative == self.cpsr.overflow, // GE - N=V
+            0xB => self.cpsr.negative != self.cpsr.overflow, // LT - N<>V
+            0xC => !self.cpsr.zero && (self.cpsr.negative == self.cpsr.overflow), // GT - Z=0 and N=V
+            0xD => self.cpsr.zero || (self.cpsr.negative != self.cpsr.overflow), // LE - Z=1 or N<>V
+            0xE => true,                                                         // AL - always
             _ => false,
         }
     }
@@ -633,20 +648,20 @@ impl ArmCpu {
     /// Upper-case condition suffix (`None` for AL / NV).
     pub const fn print_condition(condition: u32) -> Option<&'static str> {
         Some(match condition {
-            0x0 => "EQ",
-            0x1 => "NE",
-            0x2 => "CS",
-            0x3 => "CC",
-            0x4 => "MI",
-            0x5 => "PL",
-            0x6 => "VS",
-            0x7 => "VC",
-            0x8 => "HI",
-            0x9 => "LS",
-            0xA => "GE",
-            0xB => "LT",
-            0xC => "GT",
-            0xD => "LE",
+            0x0 => "EQ", // EQ
+            0x1 => "NE", // NE
+            0x2 => "CS", // CS
+            0x3 => "CC", // CC
+            0x4 => "MI", // MI
+            0x5 => "PL", // PL
+            0x6 => "VS", // VS
+            0x7 => "VC", // VC
+            0x8 => "HI", // HI
+            0x9 => "LS", // LS
+            0xA => "GE", // GE
+            0xB => "LT", // LT
+            0xC => "GT", // GT
+            0xD => "LE", // LE
             _ => return None,
         })
     }
@@ -688,45 +703,45 @@ impl ArmCpu {
     //WaitState bullshit
     /// Adds the time of `cycles` non-sequential 32-bit code fetches at `address`.
     pub const fn add_n32_code(&mut self, address: u32, cycles: i32) {
-        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        let idx = ((address & 0x0F00_0000) >> 24) as usize; // memory region = address bits 24-27
         self.timestamp += (1 + self.code_waitstates[idx][0]) as u64 * cycles as u64;
     }
     /// Adds the time of `cycles` sequential 32-bit code fetches at `address`.
     pub const fn add_s32_code(&mut self, address: u32, cycles: i32) {
-        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        let idx = ((address & 0x0F00_0000) >> 24) as usize; // memory region = address bits 24-27
         self.timestamp += (1 + self.code_waitstates[idx][1]) as u64 * cycles as u64;
     }
     /// Adds the time of `cycles` non-sequential 16-bit code fetches at `address`.
     pub const fn add_n16_code(&mut self, address: u32, cycles: i32) {
-        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        let idx = ((address & 0x0F00_0000) >> 24) as usize; // memory region = address bits 24-27
         self.timestamp += (1 + self.code_waitstates[idx][2]) as u64 * cycles as u64;
     }
     /// Adds the time of `cycles` sequential 16-bit code fetches at `address`.
     pub const fn add_s16_code(&mut self, address: u32, cycles: i32) {
-        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        let idx = ((address & 0x0F00_0000) >> 24) as usize; // memory region = address bits 24-27
         self.timestamp += (1 + self.code_waitstates[idx][3]) as u64 * cycles as u64;
     }
     /// Adds the time of `cycles` non-sequential 32-bit data accesses at `address`.
     pub const fn add_n32_data(&mut self, address: u32, cycles: i32) {
-        let index = ((address & 0x0F000000) >> 24) as usize;
+        let index = ((address & 0x0F000000) >> 24) as usize; // memory region = address bits 24-27
         let data_waitstates = self.data_waitstates[index][0] as u64;
         self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
     /// Adds the time of `cycles` sequential 32-bit data accesses at `address`.
     pub const fn add_s32_data(&mut self, address: u32, cycles: i32) {
-        let index = ((address & 0x0F000000) >> 24) as usize;
+        let index = ((address & 0x0F000000) >> 24) as usize; // memory region = address bits 24-27
         let data_waitstates = self.data_waitstates[index][1] as u64;
         self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
     /// Adds the time of `cycles` non-sequential 16-bit data accesses at `address`.
     pub const fn add_n16_data(&mut self, address: u32, cycles: i32) {
-        let index = ((address & 0x0F000000) >> 24) as usize;
+        let index = ((address & 0x0F000000) >> 24) as usize; // memory region = address bits 24-27
         let data_waitstates = self.data_waitstates[index][2] as u64;
         self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
     /// Adds the time of `cycles` sequential 16-bit data accesses at `address`.
     pub const fn add_s16_data(&mut self, address: u32, cycles: i32) {
-        let index = ((address & 0x0F000000) >> 24) as usize;
+        let index = ((address & 0x0F000000) >> 24) as usize; // memory region = address bits 24-27
         let data_waitstates = self.data_waitstates[index][3] as u64;
         self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
@@ -811,7 +826,7 @@ impl ArmCpu {
         let result = wide as u32;
         if self.alu_writeback(dst, result, set_condition_codes) {
             self.set_zero_neg_flags(result);
-            self.cpsr.carry = wide > 0xFFFF_FFFF;
+            self.cpsr.carry = wide > 0xFFFF_FFFF; // carry out of bit 31
             self.cpsr.overflow = add_overflow(src, operand, result);
         }
     }
@@ -883,7 +898,8 @@ impl ArmCpu {
     /// MRS: copies CPSR or the current SPSR to a register.
     pub const fn mrs(&mut self, instruction: u32) {
         let using_cpsr = (instruction & (1 << 22)) == 0;
-        let dst = (instruction >> 12) & 0xF;
+        // ARM Opcodes: PSR Transfer (MRS, MSR): https://problemkaputt.de/gbatek.htm#armopcodespsrtransfermrsmsr
+        let dst = (instruction >> 12) & 0xF; // Rd (bits 12-15)
 
         if using_cpsr {
             self.set_register(dst as i32, self.cpsr.get());
@@ -894,8 +910,9 @@ impl ArmCpu {
 
     /// MSR: writes CPSR/SPSR fields (mode change re-banks registers).
     pub fn msr(&mut self, instruction: u32) {
-        let is_imm = (instruction & (1 << 25)) != 0;
-        let using_cpsr = (instruction & (1 << 22)) == 0;
+        // ARM Opcodes: PSR Transfer (MRS, MSR): https://problemkaputt.de/gbatek.htm#armopcodespsrtransfermrsmsr
+        let is_imm = (instruction & (1 << 25)) != 0; // I bit (25): immediate operand
+        let using_cpsr = (instruction & (1 << 22)) == 0; // Psr bit (22): 0 = CPSR, 1 = SPSR
         let mode = self.cpsr.mode;
 
         let mut value = if using_cpsr {
@@ -905,29 +922,32 @@ impl ArmCpu {
         };
 
         let source = if is_imm {
-            let s = instruction & 0xFF;
-            let shift = (instruction & 0xF00) >> 7;
+            // ARM Opcodes: PSR Transfer (MRS, MSR): https://problemkaputt.de/gbatek.htm#armopcodespsrtransfermrsmsr
+            let s = instruction & 0xFF; // 8-bit immediate (bits 0-7)
+            let shift = (instruction & 0xF00) >> 7; // rotate field (bits 8-11) * 2
             self.rotr32(s, shift, false)
         } else {
-            self.get_register((instruction & 0xF) as i32)
+            self.get_register((instruction & 0xF) as i32) // Rm (bits 0-3)
         };
 
         let mut bitmask: u32 = 0;
 
         if (instruction & (1 << 19)) != 0 {
-            bitmask |= 0xFF000000;
+            // field mask bit 19 (f): flags
+            bitmask |= 0xFF000000; // field mask bit 19 (f): flags byte, bits 24-31
         }
 
         if (instruction & (1 << 16)) != 0 {
-            bitmask |= 0xFF;
+            // field mask bit 16 (c): control
+            bitmask |= 0xFF; // field mask bit 16 (c): control byte, bits 0-7
         }
 
         if self.cpsr.mode == PsrMode::User {
-            bitmask &= 0xFFFFFF00;
+            bitmask &= 0xFFFFFF00; // User mode may not change the control byte
         }
 
         if using_cpsr {
-            bitmask &= 0xFFFFFFDF;
+            bitmask &= 0xFFFFFFDF; // T bit (bit 5) cannot be changed by MSR
         }
 
         value &= !bitmask;
@@ -935,6 +955,7 @@ impl ArmCpu {
 
         if using_cpsr {
             if let Some(mode) = PsrMode::from_u32(value & 0x1F) {
+                // CPSR mode bits M4-M0 (bits 0-4)
                 self.update_reg_mode(mode);
             } else {
                 #[cfg(feature = "log")]
@@ -963,7 +984,7 @@ impl ArmCpu {
     /// Flag helpers
     pub const fn set_zero_neg_flags(&mut self, value: u32) {
         self.cpsr.zero = value == 0;
-        self.cpsr.negative = (value & (1 << 31)) != 0;
+        self.cpsr.negative = (value & (1 << 31)) != 0; // N flag = result bit 31
     }
 
     /// C and V of an addition.
@@ -983,6 +1004,7 @@ impl ArmCpu {
         let new_cpsr = self.spsr[self.cpsr.mode as usize].get();
 
         if let Some(mode) = PsrMode::from_u32(new_cpsr & 0x1F) {
+            // CPSR mode bits M4-M0 (bits 0-4)
             self.update_reg_mode(mode);
             self.cpsr.set(new_cpsr);
         } else {
@@ -1062,14 +1084,14 @@ impl ArmCpu {
         let mut result = value;
         result >>= 1;
         if self.cpsr.carry {
-            result |= 1 << 31;
+            result |= 1 << 31; // RRX: old carry into bit 31
         } else {
             result |= 0;
         };
 
         if alter_flags {
             self.set_zero_neg_flags(result);
-            self.cpsr.carry = (value & 0x1) != 0;
+            self.cpsr.carry = (value & 0x1) != 0; // RRX: carry out is bit 0
         }
         result
     }
@@ -1082,7 +1104,7 @@ impl ArmCpu {
             self.shift_flags(n, None, alter_flags);
             return n;
         }
-        let result = n.rotate_right(c & 0x1F);
+        let result = n.rotate_right(c & 0x1F); // rotate amount modulo 32
         self.shift_flags(result, Some(result >> 31 != 0), alter_flags);
         result
     }

@@ -90,12 +90,14 @@ impl Emulator {
             ])
         };
 
-        let game_code = read_u32(&self.cart.rom, 0xC);
-        let arm_rom_base = read_u32(&self.cart.rom, 0x20) as usize;
+        // DS Cartridge Header: https://problemkaputt.de/gbatek.htm#dscartridgeheader
+        let game_code = read_u32(&self.cart.rom, 0xC); // header 00Ch: gamecode
+        let arm_rom_base = read_u32(&self.cart.rom, 0x20) as usize; // header 020h: ARM9 ROM offset
 
         if (0x4000..0x8000).contains(&arm_rom_base) {
+            // ARM9 code inside the secure area (4000h-7FFFh)
             let sig0 = read_u32(&self.cart.rom, arm_rom_base);
-            let sig1 = read_u32(&self.cart.rom, arm_rom_base + 0x10);
+            let sig1 = read_u32(&self.cart.rom, arm_rom_base + 0x10); // secure area +10h: signature
 
             if sig0 == 0xE7FFDEFF && sig1 != 0xE7FFDEFF {
                 // #[cfg(feature = "log")]
@@ -105,7 +107,9 @@ impl Emulator {
 
                 self.cartridge_init_keycode(game_code, 3, 2);
 
+                // DS Cartridge Secure Area: https://problemkaputt.de/gbatek.htm#dscartridgesecurearea
                 for i in (0..0x800).step_by(8) {
+                    // first 2K of the secure area, in 8-byte KEY1 blocks
                     let ptr = arm_rom_base + i;
                     let block = [
                         read_u32(&self.cart.rom, ptr),
@@ -179,7 +183,8 @@ impl Emulator {
 
         let mem_type: SaveMemType = game_db::lookup(game_code)
             .map(|(_, t)| t)
-            .filter(|&t| t != 0xFF)
+            // DS Cartridge Backup: https://problemkaputt.de/gbatek.htm#dscartridgebackup
+            .filter(|&t| t != 0xFF) // FFh = unknown save type
             .or_else(|| self.corgids_database_type())
             .or_else(|| {
                 existing
@@ -193,7 +198,7 @@ impl Emulator {
         // (melonDS `NDSCartSlot::ParseROM`).
         self.cart
             .backup
-            .set_infrared(game_code & 0xFF == u32::from(b'I'));
+            .set_infrared(game_code & 0xFF == u32::from(b'I')); // gamecode starting with 'I': infrared cartridge
         if let Some(data) = &existing {
             self.cart.backup.load_contents(data);
         }
@@ -225,12 +230,13 @@ impl Emulator {
             .find(|entry| &entry[..16] == header)?;
         // CorgiDS codes: 2 = 512 B, 3 = 8K, 4 = 64K, 5 = 256K, 6 = 512K, 7 = 1M.
         match entry[18] {
-            0x02 => Some(1),
-            0x03 => Some(2),
-            0x04 => Some(3),
-            0x05 => Some(5),
-            0x06 => Some(6),
-            0x07 => Some(7),
+            // DS Cartridge Backup: https://problemkaputt.de/gbatek.htm#dscartridgebackup
+            0x02 => Some(1), // EEPROM 0.5K
+            0x03 => Some(2), // EEPROM 8K
+            0x04 => Some(3), // EEPROM 64K
+            0x05 => Some(5), // FLASH 256K
+            0x06 => Some(6), // FLASH 512K
+            0x07 => Some(7), // FLASH 1M
             _ => None,
         }
     }
@@ -239,11 +245,13 @@ impl Emulator {
     /// code (GBATEK "init_keycode"), applying it `level` times.
     /// Called by cartridge_load_rom() and the card protocol.
     pub fn cartridge_init_keycode(&mut self, idcode: u32, level: i32, modulo: u32) {
+        // DS Encryption by Gamecode/Idcode (KEY1): https://problemkaputt.de/gbatek.htm#dsencryptionbygamecodeidcodekey1
         if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
-            self.cart.key1_buffer[..0x1048].copy_from_slice(bios);
+            // KEY1 table: 1048h bytes at ARM7 BIOS offset 30h
+            self.cart.key1_buffer[..0x1048].copy_from_slice(bios); // KEY1 table size
         } else {
             #[cfg(feature = "log")]
-            log::warn!("arm7_bios need: 0x30..0x30 + 0x1048");
+            log::warn!("arm7_bios need: 0x30..0x30 + 0x1048"); // KEY1 table location in the ARM7 BIOS
         }
 
         self.cart.keycode[0] = idcode;
@@ -295,7 +303,8 @@ impl Emulator {
 
             match self.cart.command_id {
                 CartCommand::Dummy => {
-                    self.cart.data_output = 0xFFFF_FFFF;
+                    // DS Cartridge Protocol: https://problemkaputt.de/gbatek.htm#dscartridgeprotocol
+                    self.cart.data_output = 0xFFFF_FFFF; // data bus idle (no data)
                 }
 
                 CartCommand::GetHeader => {
@@ -304,6 +313,7 @@ impl Emulator {
                     self.cart.rom_data_index += 4;
 
                     if self.cart.rom_data_index > 0xFFF {
+                        // a ROM read returns 1000h bytes at most per command
                         self.cart.rom_data_index = 0;
                     }
 

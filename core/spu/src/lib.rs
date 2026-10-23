@@ -72,7 +72,8 @@ impl Spu {
         Self {
             channels,
             soundcnt: 0,
-            bias: 0x200,
+            // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
+            bias: 0x200, // SOUNDBIAS reset value (200h = center)
             captures: Default::default(),
             samples: Vec::with_capacity(4096),
         }
@@ -92,16 +93,20 @@ impl Spu {
     pub fn read32(&self, address: u32) -> u32 {
         let address = address & !3;
         match address {
+            // DS Sound Channels 0..15: https://problemkaputt.de/gbatek.htm#dssoundchannels015
             0x0400_0400..=0x0400_04FF => {
+                // SOUND0CNT - Sound Channel 0 Control .. SOUND15LEN - Sound Channel 15 Length
                 let ch = &self.channels[((address >> 4) & 0xF) as usize];
                 // Only SOUNDxCNT is readable.
                 if address & 0xF == 0 { ch.cnt } else { 0 }
             }
-            0x0400_0500 => u32::from(self.soundcnt),
-            0x0400_0504 => u32::from(self.bias),
-            0x0400_0508 => u32::from(self.captures[0].cnt) | (u32::from(self.captures[1].cnt) << 8),
-            0x0400_0510 => self.captures[0].dst,
-            0x0400_0518 => self.captures[1].dst,
+            // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
+            0x0400_0500 => u32::from(self.soundcnt), // SOUNDCNT - Sound Control Register
+            0x0400_0504 => u32::from(self.bias),     // SOUNDBIAS - Sound Bias Register
+            // DS Sound Capture: https://problemkaputt.de/gbatek.htm#dssoundcapture
+            0x0400_0508 => u32::from(self.captures[0].cnt) | (u32::from(self.captures[1].cnt) << 8), // SNDCAP0CNT - Sound Capture 0 Control Register
+            0x0400_0510 => self.captures[0].dst, // SNDCAP0DAD - Sound Capture 0 Destination Address
+            0x0400_0518 => self.captures[1].dst, // SNDCAP1DAD - Sound Capture 1 Destination Address
             _ => 0,
         }
     }
@@ -122,12 +127,17 @@ impl Spu {
         let address = address & !3;
         let merge = |old: u32| (old & !mask) | (value & mask);
         match address {
+            // DS Sound Channels 0..15: https://problemkaputt.de/gbatek.htm#dssoundchannels015
             0x0400_0400..=0x0400_04FF => {
-                let ch = &mut self.channels[((address >> 4) & 0xF) as usize];
+                // SOUND0CNT - Sound Channel 0 Control .. SOUND15LEN - Sound Channel 15 Length
+                // DS Sound Channels 0..15: https://problemkaputt.de/gbatek.htm#dssoundchannels015
+                let ch = &mut self.channels[((address >> 4) & 0xF) as usize]; // channel number (address bits 4-7)
                 match address & 0xF {
-                    0x0 => ch.set_cnt(merge(ch.cnt)),
-                    0x4 => ch.src = merge(ch.src) & 0x07FF_FFFC,
+                    // register within the channel
+                    0x0 => ch.set_cnt(merge(ch.cnt)), // SOUNDxCNT
+                    0x4 => ch.src = merge(ch.src) & 0x07FF_FFFC, // SOUNDxSAD: source address, word aligned, 27 bits
                     0x8 => {
+                        // SOUNDxTMR / SOUNDxPNT
                         let word = merge(u32::from(ch.timer_reload) | ((ch.loop_pos >> 2) << 16));
                         ch.timer_reload = word as u16;
                         ch.loop_pos = (word >> 16) << 2;
@@ -138,31 +148,41 @@ impl Spu {
                             _ => {}
                         }
                     }
-                    _ => ch.length = (merge(ch.length >> 2) & 0x001F_FFFF) << 2,
+                    _ => ch.length = (merge(ch.length >> 2) & 0x001F_FFFF) << 2, // SOUNDxLEN: length in words (bits 0-20)
                 }
             }
+            // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
             0x0400_0500 => {
+                // SOUNDCNT - Sound Control Register
                 let word = merge(u32::from(self.soundcnt));
-                self.soundcnt = (word as u16) & 0xBF7F;
+                // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
+                self.soundcnt = (word as u16) & 0xBF7F; // SOUNDCNT writable bits: volume (0-6), output select (8-13), enable (15)
             }
-            0x0400_0504 => self.bias = (merge(u32::from(self.bias)) & 0x3FF) as u16,
+            0x0400_0504 => self.bias = (merge(u32::from(self.bias)) & 0x3FF) as u16, // SOUNDBIAS - Sound Bias Register
+            // DS Sound Capture: https://problemkaputt.de/gbatek.htm#dssoundcapture
             0x0400_0508 => {
+                // SNDCAP0CNT - Sound Capture 0 Control Register
                 let old = u32::from(self.captures[0].cnt) | (u32::from(self.captures[1].cnt) << 8);
                 let word = merge(old);
                 if mask & 0xFF != 0 {
+                    // SNDCAP0CNT byte
                     self.captures[0].set_cnt(word as u8);
                 }
                 if mask & 0xFF00 != 0 {
+                    // SNDCAP1CNT byte
                     self.captures[1].set_cnt((word >> 8) as u8);
                 }
             }
             0x0400_0510 | 0x0400_0518 => {
+                // SNDCAP0DAD - Sound Capture 0 Destination Address / SNDCAP1DAD - Sound Capture 1 Destination Address
                 let cap = &mut self.captures[((address >> 3) & 1) as usize];
-                cap.dst = merge(cap.dst) & 0x07FF_FFFC;
+                // DS Sound Capture: https://problemkaputt.de/gbatek.htm#dssoundcapture
+                cap.dst = merge(cap.dst) & 0x07FF_FFFC; // SNDCAPxDAD: destination address, word aligned, 27 bits
             }
             0x0400_0514 | 0x0400_051C => {
+                // SNDCAP0LEN - Sound Capture 0 Length / SNDCAP1LEN - Sound Capture 1 Length
                 let cap = &mut self.captures[((address >> 3) & 1) as usize];
-                let words = merge(cap.length >> 2) & 0xFFFF;
+                let words = merge(cap.length >> 2) & 0xFFFF; // SNDCAPxLEN: length in words (bits 0-15)
                 cap.length = (words << 2).max(4);
             }
             _ => {}
@@ -170,19 +190,19 @@ impl Spu {
     }
 
     pub fn write32(&mut self, address: u32, value: u32) {
-        self.write(address, value, 0xFFFF_FFFF);
+        self.write(address, value, 0xFFFF_FFFF); // full word mask
     }
 
     /// Halfword write to a sound register -> write().
     pub fn write16(&mut self, address: u32, value: u16) {
         let shift = (address & 2) * 8;
-        self.write(address, u32::from(value) << shift, 0xFFFF << shift);
+        self.write(address, u32::from(value) << shift, 0xFFFF << shift); // halfword mask
     }
 
     /// Byte write to a sound register -> write().
     pub fn write8(&mut self, address: u32, value: u8) {
         let shift = (address & 3) * 8;
-        self.write(address, u32::from(value) << shift, 0xFF << shift);
+        self.write(address, u32::from(value) << shift, 0xFF << shift); // byte mask
     }
 
     // Older accessors kept for the register dispatch code.
@@ -204,27 +224,29 @@ impl Spu {
     }
     /// Writes SOUNDCNT.
     pub fn set_soundcnt(&mut self, value: u16) {
-        self.write16(0x0400_0500, value);
+        // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
+        self.write16(0x0400_0500, value); // SOUNDCNT - Sound Control Register
     }
     /// Writes the low byte of SOUNDCNT (master volume).
     pub fn set_soundcnt_lo(&mut self, value: u8) {
-        self.write8(0x0400_0500, value);
+        self.write8(0x0400_0500, value); // SOUNDCNT - Sound Control Register
     }
     /// Writes the high byte of SOUNDCNT (output select, enable).
     pub fn set_soundcnt_hi(&mut self, value: u8) {
-        self.write8(0x0400_0501, value);
+        self.write8(0x0400_0501, value); // SOUNDCNT - Sound Control Register (byte 1)
     }
     /// Writes SOUNDBIAS.
     pub fn set_soundbias(&mut self, value: u16) {
-        self.write16(0x0400_0504, value);
+        self.write16(0x0400_0504, value); // SOUNDBIAS - Sound Bias Register
     }
     /// Writes SNDCAP0CNT.
     pub fn set_sndcap0(&mut self, value: u8) {
-        self.write8(0x0400_0508, value);
+        // DS Sound Capture: https://problemkaputt.de/gbatek.htm#dssoundcapture
+        self.write8(0x0400_0508, value); // SNDCAP0CNT - Sound Capture 0 Control Register
     }
     /// Writes SNDCAP1CNT.
     pub fn set_sndcap1(&mut self, value: u8) {
-        self.write8(0x0400_0509, value);
+        self.write8(0x0400_0509, value); // SNDCAP1CNT - Sound Capture 1 Control Register
     }
 }
 
@@ -244,7 +266,8 @@ mod tests {
     fn psg_square_wave_is_audible() {
         let mut spu = Spu::new();
         spu.write16(0x0400_0500, 0x807F); // enable, master volume max
-        let base = 0x0400_0400 + 8 * 0x10;
+        // DS Sound Channels 0..15: https://problemkaputt.de/gbatek.htm#dssoundchannels015
+        let base = 0x0400_0400 + 8 * 0x10; // SOUND0CNT - Sound Channel 0 Control
         spu.write16(base + 8, 0xF000); // timer reload
         // Volume 127, pan centre, duty 4, PSG format, start.
         spu.write32(base, 0x7F | (64 << 16) | (4 << 24) | (3 << 29) | (1 << 31));
@@ -261,20 +284,22 @@ mod tests {
     #[test]
     fn pcm16_one_shot_stops() {
         let mut spu = Spu::new();
-        spu.write16(0x0400_0500, 0x807F);
-        spu.write32(0x0400_0404, 0x0200_0000);
-        spu.write16(0x0400_0408, 0xFC00);
+        // DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters
+        spu.write16(0x0400_0500, 0x807F); // SOUNDCNT - Sound Control Register
+        // DS Sound Channels 0..15: https://problemkaputt.de/gbatek.htm#dssoundchannels015
+        spu.write32(0x0400_0404, 0x0200_0000); // SOUND0SAD - Sound Channel 0 Data Source
+        spu.write16(0x0400_0408, 0xFC00); // SOUND0TMR - Sound Channel 0 Timer
         spu.write32(0x0400_040C, 8); // 32 bytes
         spu.write32(
-            0x0400_0400,
-            0x7F | (64 << 16) | (1 << 29) | (2 << 27) | (1 << 31),
+            0x0400_0400, // SOUND0CNT - Sound Channel 0 Control
+            0x7F | (64 << 16) | (1 << 29) | (2 << 27) | (1 << 31), // volume 127, pan 64, PCM16 (bits 29-30), one-shot (bits 27-28), start (bit 31)
         );
-        let mut bus = Fill(0x4000_4000);
+        let mut bus = Fill(0x4000_4000); // test samples
         for _ in 0..4096 {
             spu.mix(&mut bus);
         }
         assert_eq!(
-            spu.read32(0x0400_0400) & (1 << 31),
+            spu.read32(0x0400_0400) & (1 << 31), // SOUND0CNT - Sound Channel 0 Control
             0,
             "one-shot sound ends"
         );

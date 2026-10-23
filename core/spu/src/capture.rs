@@ -24,7 +24,9 @@ pub(crate) struct Capture {
 impl Capture {
     /// SNDCAPxCNT write; starting a capture resets its position and FIFO.
     pub(crate) fn set_cnt(&mut self, value: u8) {
+        // DS Sound Capture: https://problemkaputt.de/gbatek.htm#dssoundcapture
         if value & 0x80 != 0 && self.cnt & 0x80 == 0 {
+            // SNDCAPxCNT bit 7: start (0 -> 1 edge)
             self.timer = u32::from(self.timer_reload);
             self.pos = 0;
             self.fifo_read = 0;
@@ -32,8 +34,9 @@ impl Capture {
             self.write_offset = 0;
             self.level = 0;
         }
-        let mut value = value & 0x8F;
+        let mut value = value & 0x8F; // writable bits: 0-3 and 7
         if value & 0x80 == 0 {
+            // bit 7 clear: capture stopped
             value &= !1;
         }
         self.cnt = value;
@@ -64,7 +67,7 @@ impl Capture {
     pub(crate) fn push(&mut self, bytes: &[u8], bus: &mut Bus) {
         for &b in bytes {
             self.fifo[self.fifo_write] = b;
-            self.fifo_write = (self.fifo_write + 1) & 0xF;
+            self.fifo_write = (self.fifo_write + 1) & 0xF; // 16-byte capture FIFO index
         }
         self.level += bytes.len() as u32;
         if self.level >= 16 {
@@ -76,9 +79,9 @@ impl Capture {
     /// records `sample` as PCM8/PCM16, looping or stopping at the end.
     pub(crate) fn run(&mut self, cycles: u32, sample: i32, bus: &mut Bus) {
         self.timer += cycles;
-        let pcm8 = self.cnt & 0x08 != 0;
+        let pcm8 = self.cnt & 0x08 != 0; // bit 3: PCM8 format (else PCM16)
         while self.timer >> 16 != 0 {
-            self.timer = u32::from(self.timer_reload) + (self.timer - 0x1_0000);
+            self.timer = u32::from(self.timer_reload) + (self.timer - 0x1_0000); // timer counts up and overflows at 10000h
             if pcm8 {
                 self.push(&[(sample >> 8) as u8], bus);
                 self.pos += 1;
@@ -91,6 +94,7 @@ impl Capture {
                     self.flush(bus);
                 }
                 if self.cnt & 0x04 != 0 {
+                    // bit 2: one-shot (else loop)
                     self.cnt &= 0x7F; // one-shot: done
                     return;
                 }

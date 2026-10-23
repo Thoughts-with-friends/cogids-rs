@@ -29,7 +29,9 @@ impl Divisor {
     /// Convert numeric value to Divisor
     #[inline]
     pub const fn from_u32(val: u32) -> Option<Self> {
+        // GBA Timers: https://problemkaputt.de/gbatek.htm#gbatimers
         Some(match val & 0x3 {
+            // TMxCNT_H prescaler (bits 0-1)
             0 => Self::F1,
             1 => Self::F64,
             2 => Self::F256,
@@ -75,15 +77,16 @@ impl TimerReg {
     /// Get control register value
     pub const fn get_control(&self) -> u16 {
         let mut value = 0_u16;
-        value |= (self.clock_div as u16) & 0x3;
+        value |= (self.clock_div as u16) & 0x3; // prescaler (bits 0-1)
         if self.count_up_timing {
-            value |= 1 << 2;
+            // GBA Timers: https://problemkaputt.de/gbatek.htm#gbatimers
+            value |= 1 << 2; // TMxCNT_H bit 2: count-up timing
         }
         if self.irq_on_overflow {
-            value |= 1 << 6;
+            value |= 1 << 6; // TMxCNT_H bit 6: IRQ on overflow
         }
         if self.enabled {
-            value |= 1 << 7;
+            value |= 1 << 7; // TMxCNT_H bit 7: timer start/stop
         }
         value
     }
@@ -92,12 +95,14 @@ impl TimerReg {
     #[inline]
     const fn set_control(&mut self, value: u16) {
         if let Some(divisor) = Divisor::from_u32((value & 0x3) as u32) {
+            // prescaler (bits 0-1)
             self.clock_div = divisor;
             self.cycles_left = divisor.cycles_left();
         };
-        self.count_up_timing = (value & (1 << 2)) != 0;
-        self.irq_on_overflow = (value & (1 << 6)) != 0;
-        let enable = (value & (1 << 7)) != 0;
+        // GBA Timers: https://problemkaputt.de/gbatek.htm#gbatimers
+        self.count_up_timing = (value & (1 << 2)) != 0; // TMxCNT_H bit 2: count-up timing
+        self.irq_on_overflow = (value & (1 << 6)) != 0; // TMxCNT_H bit 6: IRQ on overflow
+        let enable = (value & (1 << 7)) != 0; // TMxCNT_H bit 7: timer start/stop
 
         // If timer is being newly enabled, reload the counter
         if !self.enabled && enable {
@@ -172,7 +177,7 @@ impl NDSTiming {
 
     /// Write 32-bit word to timer
     pub const fn write(&mut self, value: u32, index: usize) {
-        self.write_lo((value & 0xFFFF) as u16, index);
+        self.write_lo((value & 0xFFFF) as u16, index); // TMxCNT_L reload value (lower halfword)
         self.write_hi((value >> 16) as u16, index);
     }
 

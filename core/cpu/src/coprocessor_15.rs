@@ -12,13 +12,15 @@ const ITCM_PHYS_SIZE: usize = 32 * 1024;
 const DTCM_PHYS_SIZE: usize = 16 * 1024;
 
 /// Control register bits that are writable (others are fixed).
-const CONTROL_WRITABLE: u32 = 0x000F_F085;
+// ARM CP15 Control Register: https://problemkaputt.de/gbatek.htm#armcp15controlregister
+const CONTROL_WRITABLE: u32 = 0x000F_F085; // control bits software may change: MPU (0), DCache (2), BigEndian (7), ICache (12), V (13), RR (14), L4 (15), DTCM (16-17), ITCM (18-19)
 /// Control register bits that always read as 1 (write buffer, 32-bit, ...).
-const CONTROL_FIXED: u32 = 0x0000_0078;
+const CONTROL_FIXED: u32 = 0x0000_0078; // control bits 3-6 always read as 1 (write buffer, 26-bit exceptions/address faults off)
 
-const CONTROL_HIGH_VECTORS: u32 = 1 << 13;
-const CONTROL_DTCM_ENABLE: u32 = 1 << 16;
-const CONTROL_ITCM_ENABLE: u32 = 1 << 18;
+// ARM CP15 Control Register: https://problemkaputt.de/gbatek.htm#armcp15controlregister
+const CONTROL_HIGH_VECTORS: u32 = 1 << 13; // control bit 13 (V): exception vectors at FFFF0000h
+const CONTROL_DTCM_ENABLE: u32 = 1 << 16; // control bit 16: DTCM enable
+const CONTROL_ITCM_ENABLE: u32 = 1 << 18; // control bit 18: ITCM enable
 
 /// Side effect of an MCR write that the CPU core must apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +87,7 @@ impl Cp15 {
             pu_region: [0; 8],
             trace_process_id: 0,
             itcm_size: 0,
-            dtcm_base: 0xFFFF_FFFF,
+            dtcm_base: 0xFFFF_FFFF, // DTCM disabled: base outside the address space
             dtcm_mask: 0,
             itcm: vec![0; ITCM_PHYS_SIZE],
             dtcm: vec![0; DTCM_PHYS_SIZE],
@@ -108,22 +110,25 @@ impl Cp15 {
     /// cartridge (melonDS `NDS::SetupDirectBoot`): DTCM at 0x0300_0000
     /// (16 KiB), ITCM 32 MiB virtual, PU/cache settings as the BIOS sets them.
     pub fn direct_boot(&mut self) {
-        self.write(0x100, 0x0005_2078);
-        self.write(0x200, 0x0000_0042);
-        self.write(0x201, 0x0000_0042);
-        self.write(0x300, 0x0000_0002);
-        self.write(0x502, 0x1511_1011);
-        self.write(0x503, 0x0510_0011);
-        self.write(0x600, 0x0400_0033);
-        self.write(0x610, 0x0200_002B);
-        self.write(0x620, 0x0000_0000);
-        self.write(0x630, 0x0800_0035);
-        self.write(0x640, 0x0300_001B);
-        self.write(0x650, 0x0000_0000);
-        self.write(0x660, 0xFFFF_001D);
-        self.write(0x670, 0x027F_F017);
-        self.write(0x910, 0x0300_000A);
-        self.write(0x911, 0x0000_0020);
+        // ARM CP15 Control Register: https://problemkaputt.de/gbatek.htm#armcp15controlregister
+        self.write(0x100, 0x0005_2078); // C1,C0,0 control: MPU/caches as left by the BIOS, high vectors, DTCM + ITCM enabled
+        // ARM CP15 Protection Unit (PU): https://problemkaputt.de/gbatek.htm#armcp15protectionunitpu
+        self.write(0x200, 0x0000_0042); // C2,C0,0 data cacheable bits: regions 1 and 6
+        self.write(0x201, 0x0000_0042); // C2,C0,1 instruction cacheable bits: regions 1 and 6
+        self.write(0x300, 0x0000_0002); // C3,C0,0 data write-bufferable bits: region 1
+        self.write(0x502, 0x1511_1011); // C5,C0,2 extended data access permissions (4 bits per region)
+        self.write(0x503, 0x0510_0011); // C5,C0,3 extended instruction access permissions (4 bits per region)
+        self.write(0x600, 0x0400_0033); // C6,C0 region 0: base 04000000h, size 64MB (I/O)
+        self.write(0x610, 0x0200_002B); // C6,C1 region 1: base 02000000h, size 4MB (Main RAM)
+        self.write(0x620, 0x0000_0000); // C6,C2 region 2: disabled
+        self.write(0x630, 0x0800_0035); // C6,C3 region 3: base 08000000h, size 128MB (GBA slot)
+        self.write(0x640, 0x0300_001B); // C6,C4 region 4: base 03000000h, size 16KB (DTCM area)
+        self.write(0x650, 0x0000_0000); // C6,C5 region 5: disabled
+        self.write(0x660, 0xFFFF_001D); // C6,C6 region 6: base FFFF0000h, size 32KB (BIOS)
+        self.write(0x670, 0x027F_F017); // C6,C7 region 7: base 027FF000h, size 4KB (shared work area)
+        // ARM CP15 Tightly Coupled Memory (TCM): https://problemkaputt.de/gbatek.htm#armcp15tightlycoupledmemorytcm
+        self.write(0x910, 0x0300_000A); // C9,C1,0 DTCM: base 03000000h, size 16KB (512 << 5)
+        self.write(0x911, 0x0000_0020); // C9,C1,1 ITCM: size field 10h = 32MB virtual size at 00000000h
     }
 
     /// Whether exception vectors are at 0xFFFF0000.
@@ -134,16 +139,17 @@ impl Cp15 {
     /// Recomputes TCM windows (melonDS `UpdateDTCMSetting`/`UpdateITCMSetting`).
     fn update_tcm(&mut self) {
         if self.control & CONTROL_DTCM_ENABLE != 0 {
-            let size = (0x200_u32 << ((self.dtcm_setting >> 1) & 0x1F)).max(0x1000);
-            self.dtcm_mask = 0xFFFF_F000 & !(size - 1);
+            // ARM CP15 Tightly Coupled Memory (TCM): https://problemkaputt.de/gbatek.htm#armcp15tightlycoupledmemorytcm
+            let size = (0x200_u32 << ((self.dtcm_setting >> 1) & 0x1F)).max(0x1000); // virtual size = 512 << size field (bits 1-5), minimum 4KB
+            self.dtcm_mask = 0xFFFF_F000 & !(size - 1); // region base bits 12-31, aligned to the size
             self.dtcm_base = self.dtcm_setting & self.dtcm_mask;
         } else {
             self.dtcm_mask = 0;
-            self.dtcm_base = 0xFFFF_FFFF;
+            self.dtcm_base = 0xFFFF_FFFF; // DTCM disabled: base outside the address space
         }
 
         self.itcm_size = if self.control & CONTROL_ITCM_ENABLE != 0 {
-            0x200_u32 << ((self.itcm_setting >> 1) & 0x1F)
+            0x200_u32 << ((self.itcm_setting >> 1) & 0x1F) // ITCM virtual size = 512 << size field (bits 1-5)
         } else {
             0
         };
@@ -194,18 +200,19 @@ impl Cp15 {
             0x000 | 0x003..=0x007 => 0x4105_9461, // main ID
             0x001 => 0x0F0D_2112,                 // cache type
             0x002 => (6 << 6) | (5 << 18),        // TCM size
-            0x100 => self.control,
-            0x200 => self.pu_data_cacheable,
-            0x201 => self.pu_code_cacheable,
-            0x300 => self.pu_data_cache_write,
-            0x500 => compress_rw(self.pu_data_rw),
-            0x501 => compress_rw(self.pu_code_rw),
-            0x502 => self.pu_data_rw,
-            0x503 => self.pu_code_rw,
-            0x600..=0x671 if id & 0xE == 0 => self.pu_region[((id >> 4) & 0x7) as usize],
-            0x910 => self.dtcm_setting,
-            0x911 => self.itcm_setting,
-            0xD01 | 0xD11 => self.trace_process_id,
+            // ARM CP15 Overview: https://problemkaputt.de/gbatek.htm#armcp15overview
+            0x100 => self.control,                 // C1,C0,0 Control Register
+            0x200 => self.pu_data_cacheable, // C2,C0,0 PU Cachability Bits for Data/Unified Protection Region
+            0x201 => self.pu_code_cacheable, // C2,C0,1 PU Cachability Bits for Instruction Protection Region
+            0x300 => self.pu_data_cache_write, // C3,C0,0 PU Write-Bufferability Bits for Data Protection Regions
+            0x500 => compress_rw(self.pu_data_rw), // C5,C0,0 PU Access Permission Data/Unified Protection Region (2-bit form)
+            0x501 => compress_rw(self.pu_code_rw), // C5,C0,1 PU Access Permission Instruction Protection Region (2-bit form)
+            0x502 => self.pu_data_rw, // C5,C0,2 PU Extended Access Permission Data/Unified Protection Region
+            0x503 => self.pu_code_rw, // C5,C0,3 PU Extended Access Permission Instruction Protection Region
+            0x600..=0x671 if id & 0xE == 0 => self.pu_region[((id >> 4) & 0x7) as usize], // C6,C0..C7,0/1 PU Protection Unit Data/Unified Region 0-7 (CRm in bits 4-6)
+            0x910 => self.dtcm_setting, // C9,C1,0 Data TCM Size/Base
+            0x911 => self.itcm_setting, // C9,C1,1 Instruction TCM Size/Base
+            0xD01 | 0xD11 => self.trace_process_id, // C13,C0,1 / C13,C1,1 Trace Process ID
             _ => 0,
         }
     }
@@ -213,29 +220,33 @@ impl Cp15 {
     /// MCR: writes CP15 register `id` (melonDS `ARMv5::CP15Write`).
     pub fn write(&mut self, id: u32, value: u32) -> Cp15Effect {
         match id {
+            // ARM CP15 Overview: https://problemkaputt.de/gbatek.htm#armcp15overview
             0x100 => {
+                // C1,C0,0 Control Register
                 self.control = (self.control & !CONTROL_WRITABLE) | (value & CONTROL_WRITABLE);
                 self.update_tcm();
                 return Cp15Effect::ControlChanged;
             }
-            0x200 => self.pu_data_cacheable = value,
-            0x201 => self.pu_code_cacheable = value,
-            0x300 => self.pu_data_cache_write = value,
-            0x500 => self.pu_data_rw = expand_rw(value),
-            0x501 => self.pu_code_rw = expand_rw(value),
-            0x502 => self.pu_data_rw = value,
-            0x503 => self.pu_code_rw = value,
-            0x600..=0x671 if id & 0xE == 0 => self.pu_region[((id >> 4) & 0x7) as usize] = value,
-            0x704 | 0x782 => return Cp15Effect::Halt,
+            0x200 => self.pu_data_cacheable = value, // C2,C0,0 data cachability bits
+            0x201 => self.pu_code_cacheable = value, // C2,C0,1 instruction cachability bits
+            0x300 => self.pu_data_cache_write = value, // C3,C0,0 data write-bufferability bits
+            0x500 => self.pu_data_rw = expand_rw(value), // C5,C0,0 data access permissions (2-bit form)
+            0x501 => self.pu_code_rw = expand_rw(value), // C5,C0,1 instruction access permissions (2-bit form)
+            0x502 => self.pu_data_rw = value,            // C5,C0,2 extended data access permissions
+            0x503 => self.pu_code_rw = value, // C5,C0,3 extended instruction access permissions
+            0x600..=0x671 if id & 0xE == 0 => self.pu_region[((id >> 4) & 0x7) as usize] = value, // C6,C0..C7 protection region 0-7 (CRm in bits 4-6)
+            0x704 | 0x782 => return Cp15Effect::Halt, // C7,C0,4 / C7,C8,2 Wait For Interrupt (halt)
             0x910 => {
-                self.dtcm_setting = value & 0xFFFF_F03E;
+                // C9,C1,0 Data TCM Size/Base
+                self.dtcm_setting = value & 0xFFFF_F03E; // keep base (bits 12-31) and size field (bits 1-5)
                 self.update_tcm();
             }
             0x911 => {
-                self.itcm_setting = value & 0x0000_003E;
+                // C9,C1,1 Instruction TCM Size/Base
+                self.itcm_setting = value & 0x0000_003E; // ITCM base is fixed at 0: only the size field (bits 1-5) is kept
                 self.update_tcm();
             }
-            0xD01 | 0xD11 => self.trace_process_id = value,
+            0xD01 | 0xD11 => self.trace_process_id = value, // C13 Trace Process ID
             // Cache maintenance, drain write buffer, etc.: no cache emulated.
             _ => {}
         }
@@ -248,7 +259,8 @@ const fn compress_rw(rw: u32) -> u32 {
     let mut ret = 0;
     let mut i = 0;
     while i < 8 {
-        ret |= ((rw >> (i * 4)) & 0x3) << (i * 2);
+        // ARM CP15 Protection Unit (PU): https://problemkaputt.de/gbatek.htm#armcp15protectionunitpu
+        ret |= ((rw >> (i * 4)) & 0x3) << (i * 2); // 2-bit permission field per region
         i += 1;
     }
     ret
@@ -259,7 +271,7 @@ const fn expand_rw(value: u32) -> u32 {
     let mut ret = 0;
     let mut i = 0;
     while i < 8 {
-        ret |= ((value >> (i * 2)) & 0x3) << (i * 4);
+        ret |= ((value >> (i * 2)) & 0x3) << (i * 4); // 2-bit permission field per region, widened to 4 bits
         i += 1;
     }
     ret
@@ -275,29 +287,29 @@ mod tests {
         cp15.power_on();
         cp15.write(0x910, 0x02FF_000A); // base 0x02FF0000, 16 KiB
         assert_eq!(cp15.tcm_read::<4>(0x02FF_0000), None); // still disabled
-        cp15.write(0x100, CONTROL_DTCM_ENABLE | CONTROL_ITCM_ENABLE);
-        assert_eq!(cp15.read(0x910), 0x02FF_000A);
-        assert!(cp15.tcm_write(0x02FF_3FFC, &0x1234_5678_u32.to_le_bytes()));
+        cp15.write(0x100, CONTROL_DTCM_ENABLE | CONTROL_ITCM_ENABLE); // C1 control: enable DTCM and ITCM
+        assert_eq!(cp15.read(0x910), 0x02FF_000A); // C9,C1,0 DTCM base 02FF0000h, 16KB
+        assert!(cp15.tcm_write(0x02FF_3FFC, &0x1234_5678_u32.to_le_bytes())); // last word of DTCM
         assert_eq!(
-            cp15.tcm_read::<4>(0x02FF_3FFC),
-            Some(0x1234_5678_u32.to_le_bytes())
+            cp15.tcm_read::<4>(0x02FF_3FFC),     // last word of DTCM
+            Some(0x1234_5678_u32.to_le_bytes())  // test pattern
         );
-        assert_eq!(cp15.tcm_read::<4>(0x02FF_4000), None);
+        assert_eq!(cp15.tcm_read::<4>(0x02FF_4000), None); // first byte past the 16KB DTCM window
         // ITCM writes must not alias DTCM
-        cp15.write(0x911, 0x20);
-        assert!(cp15.tcm_write(0x3FFC, &[0xAA; 4]));
+        cp15.write(0x911, 0x20); // C9,C1,1 ITCM size field 10h
+        assert!(cp15.tcm_write(0x3FFC, &[0xAA; 4])); // ITCM address, test pattern
         assert_eq!(
-            cp15.tcm_read::<4>(0x02FF_3FFC),
-            Some(0x1234_5678_u32.to_le_bytes())
+            cp15.tcm_read::<4>(0x02FF_3FFC),     // DTCM still wins over ITCM
+            Some(0x1234_5678_u32.to_le_bytes())  // test pattern
         );
     }
 
     #[test]
     fn halt_and_control() {
         let mut cp15 = Cp15::new();
-        assert_eq!(cp15.write(0x704, 0), Cp15Effect::Halt);
-        assert_eq!(cp15.write(0x100, 0), Cp15Effect::ControlChanged);
+        assert_eq!(cp15.write(0x704, 0), Cp15Effect::Halt); // C7,C0,4 Wait For Interrupt
+        assert_eq!(cp15.write(0x100, 0), Cp15Effect::ControlChanged); // C1,C0,0 control register
         assert!(!cp15.high_vectors());
-        assert_eq!(cp15.read(0x100), CONTROL_FIXED);
+        assert_eq!(cp15.read(0x100), CONTROL_FIXED); // C1,C0,0 control register
     }
 }

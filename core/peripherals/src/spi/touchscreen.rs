@@ -57,7 +57,8 @@ impl TouchScreen {
             control_byte: 0,
             output_coords: 0,
             press_x: 0,
-            press_y: 0xFFF,
+            // DS Touch Screen Controller (TSC): https://problemkaputt.de/gbatek.htm#dstouchscreencontrollertsc
+            press_y: 0xFFF, // 12-bit ADC "not pressed" value
         }
     }
 
@@ -71,7 +72,7 @@ impl TouchScreen {
         self.output_coords = 0;
 
         self.press_x = 0;
-        self.press_y = 0xFFF;
+        self.press_y = 0xFFF; // 12-bit ADC "not pressed" value
     }
 
     /// Register a touch press event.
@@ -86,6 +87,7 @@ impl TouchScreen {
         self.press_y = y as u16;
 
         if y == 0xFFF {
+            // not pressed
             return;
         }
 
@@ -106,9 +108,9 @@ impl TouchScreen {
     pub const fn transfer_data(&mut self, input: u8) -> u8 {
         // Output previously prepared data
         let data = if self.data_pos == 0 {
-            ((self.output_coords >> 5) & 0xFF) as u8
+            ((self.output_coords >> 5) & 0xFF) as u8 // first byte: ADC bits 5-11
         } else if self.data_pos == 1 {
-            ((self.output_coords << 3) & 0xFF) as u8
+            ((self.output_coords << 3) & 0xFF) as u8 // second byte: ADC bits 0-4 in bits 3-7
         } else {
             0
         };
@@ -116,7 +118,7 @@ impl TouchScreen {
         if (input & (1 << 7)) != 0 {
             // Set control byte
             self.control_byte = input;
-            let channel = (self.control_byte >> 4) & 0x7;
+            let channel = (self.control_byte >> 4) & 0x7; // control byte channel select (bits 4-6)
             self.data_pos = 0;
 
             // Select ADC channel
@@ -124,12 +126,12 @@ impl TouchScreen {
                 1 => self.output_coords = self.press_y, // Touch Y
                 5 => self.output_coords = self.press_x, // Touch X
                 6 => self.output_coords = 0x800,        // Battery / auxiliary channel
-                _ => self.output_coords = 0xFFF,
+                _ => self.output_coords = 0xFFF,        // unsupported channel reads all ones
             }
 
             // Conversion mode change
             if (self.control_byte & 0x8) != 0 {
-                self.output_coords &= 0x0FF0;
+                self.output_coords &= 0x0FF0; // 8-bit conversion mode keeps the upper 8 bits
             }
         } else {
             self.data_pos += 1;

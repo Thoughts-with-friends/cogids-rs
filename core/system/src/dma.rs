@@ -43,24 +43,26 @@ impl DmaCnt {
     /// `is_arm9` selects the *DMA Start Timing* field width per GBATEK: 3
     /// bits (11-13) on ARM9, 2 bits (11-12) on ARM7.
     pub fn get(&self, is_arm9: bool) -> u16 {
-        let timing_mask = if is_arm9 { 0x7 } else { 0x3 };
+        // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
+        let timing_mask = if is_arm9 { 0x7 } else { 0x3 }; // start timing: 3 bits on ARM9 (bits 11-13), 2 bits on ARM7 (bits 12-13)
 
         let mut value = 0_u16;
-        value |= ((self.dest_control & 0x3) as u16) << 5;
-        value |= ((self.source_control & 0x3) as u16) << 7;
+        value |= ((self.dest_control & 0x3) as u16) << 5; // dest address control (bits 5-6)
+        value |= ((self.source_control & 0x3) as u16) << 7; // source address control (bits 7-8)
 
         if self.repeat {
-            value |= 1 << 9;
+            // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
+            value |= 1 << 9; // DMAxCNT_H bit 9: repeat
         }
         if self.word_transfer {
-            value |= 1 << 10;
+            value |= 1 << 10; // DMAxCNT_H bit 10: transfer type (1=32-bit)
         }
-        value |= ((self.timing & timing_mask) as u16) << 11;
+        value |= ((self.timing & timing_mask) as u16) << 11; // DMAxCNT_H bit 11: start timing
         if self.irq_after_transfer {
-            value |= 1 << 14;
+            value |= 1 << 14; // DMAxCNT_H bit 14: IRQ upon end of word count
         }
         if self.enabled {
-            value |= 1 << 15;
+            value |= 1 << 15; // DMAxCNT_H bit 15: DMA enable
         }
         value
     }
@@ -73,15 +75,16 @@ impl DmaCnt {
     /// could never be represented, silently preventing cartridge- and
     /// GXFIFO-triggered DMA from ever starting.
     pub fn set(&mut self, value: u16, is_arm9: bool) {
-        let timing_mask = if is_arm9 { 0x7 } else { 0x3 };
+        let timing_mask = if is_arm9 { 0x7 } else { 0x3 }; // start timing: 3 bits on ARM9, 2 bits on ARM7
 
-        self.dest_control = ((value >> 5) & 0x3) as u32;
-        self.source_control = ((value >> 7) & 0x3) as u32;
-        self.repeat = (value & (1 << 9)) != 0;
-        self.word_transfer = (value & (1 << 10)) != 0;
+        self.dest_control = ((value >> 5) & 0x3) as u32; // dest address control (bits 5-6)
+        self.source_control = ((value >> 7) & 0x3) as u32; // source address control (bits 7-8)
+        // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
+        self.repeat = (value & (1 << 9)) != 0; // DMAxCNT_H bit 9: repeat
+        self.word_transfer = (value & (1 << 10)) != 0; // DMAxCNT_H bit 10: transfer type (1=32-bit)
         self.timing = ((value >> 11) & timing_mask) as u32;
-        self.irq_after_transfer = (value & (1 << 14)) != 0;
-        self.enabled = (value & (1 << 15)) != 0;
+        self.irq_after_transfer = (value & (1 << 14)) != 0; // DMAxCNT_H bit 14: IRQ upon end of word count
+        self.enabled = (value & (1 << 15)) != 0; // DMAxCNT_H bit 15: DMA enable
 
         #[cfg(feature = "log")]
         log::debug!(
@@ -238,7 +241,7 @@ impl NDSDma {
     /// Read transfer length of DMA channel
     pub fn read_len(&self, index: usize) -> u16 {
         match index < 8 {
-            true => (self.dmas[index].length & 0xFFFF) as u16,
+            true => (self.dmas[index].length & 0xFFFF) as u16, // word count (lower halfword)
             false => 0,
         }
     }
@@ -269,7 +272,7 @@ impl NDSDma {
     pub fn write_source_lo(&mut self, index: usize, lo: u16) {
         if index < 8 {
             let dma = &mut self.dmas[index];
-            dma.source = (dma.source & 0xFFFF_0000) | u32::from(lo);
+            dma.source = (dma.source & 0xFFFF_0000) | u32::from(lo); // replace the low halfword
         }
     }
 
@@ -277,7 +280,7 @@ impl NDSDma {
     pub fn write_source_hi(&mut self, index: usize, hi: u16) {
         if index < 8 {
             let dma = &mut self.dmas[index];
-            dma.source = (dma.source & 0x0000_FFFF) | (u32::from(hi) << 16);
+            dma.source = (dma.source & 0x0000_FFFF) | (u32::from(hi) << 16); // replace the high halfword
         }
     }
 
@@ -285,7 +288,7 @@ impl NDSDma {
     pub fn write_dest_lo(&mut self, index: usize, lo: u16) {
         if index < 8 {
             let dma = &mut self.dmas[index];
-            dma.destination = (dma.destination & 0xFFFF_0000) | u32::from(lo);
+            dma.destination = (dma.destination & 0xFFFF_0000) | u32::from(lo); // replace the low halfword
         }
     }
 
@@ -293,7 +296,7 @@ impl NDSDma {
     pub fn write_dest_hi(&mut self, index: usize, hi: u16) {
         if index < 8 {
             let dma = &mut self.dmas[index];
-            dma.destination = (dma.destination & 0x0000_FFFF) | (u32::from(hi) << 16);
+            dma.destination = (dma.destination & 0x0000_FFFF) | (u32::from(hi) << 16); // replace the high halfword
         }
     }
 
@@ -305,12 +308,12 @@ impl NDSDma {
         let len32 = len as u32;
 
         dma.length = match (dma.is_arm9, len == 0, is_ch7) {
-            (true, true, _) => 0x200000,
-            (true, false, _) => len32 & 0x1FFFFF,
-            (false, true, true) => 0x10000,
-            (false, true, false) => 0x4000,
-            (false, false, true) => len32 & 0xFFFF,
-            (false, false, false) => 0x3FFF,
+            (true, true, _) => 0x200000,            // ARM9 word count 0 = 200000h
+            (true, false, _) => len32 & 0x1FFFFF,   // ARM9 word count: 21 bits
+            (false, true, true) => 0x10000,         // ARM7 DMA3 word count 0 = 10000h
+            (false, true, false) => 0x4000,         // ARM7 DMA0-2 word count 0 = 4000h
+            (false, false, true) => len32 & 0xFFFF, // ARM7 DMA3 word count: 16 bits
+            (false, false, false) => 0x3FFF, // ARM7 DMA0-2: 14-bit max (3FFFh); note the written count is not used here
         };
     }
 

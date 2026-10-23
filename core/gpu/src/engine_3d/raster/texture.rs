@@ -15,14 +15,18 @@ impl Frame<'_> {
             u32::from(u16::from_le_bytes([self.pal[a], self.pal[a + 1]]))
         };
 
-        let mut vramaddr = (texparam & 0xFFFF) << 3;
+        // DS 3D Texture Attributes: https://problemkaputt.de/gbatek.htm#ds3dtextureattributes
+        let mut vramaddr = (texparam & 0xFFFF) << 3; // TEXIMAGE_PARAM texture VRAM offset (bits 0-15) in 8-byte units
         let width = 8_i32 << ((texparam >> 20) & 7);
         let height = 8_i32 << ((texparam >> 23) & 7);
         let mut s = i32::from(s >> 4);
         let mut t = i32::from(t >> 4);
 
+        // DS 3D Texture Attributes: https://problemkaputt.de/gbatek.htm#ds3dtextureattributes
         if texparam & (1 << 16) != 0 {
+            // TEXIMAGE_PARAM bit 16: repeat in S direction
             if texparam & (1 << 18) != 0 && s & width != 0 {
+                // TEXIMAGE_PARAM bit 18: flip in S direction
                 s = (width - 1) - (s & (width - 1));
             } else {
                 s &= width - 1;
@@ -31,7 +35,9 @@ impl Frame<'_> {
             s = s.clamp(0, width - 1);
         }
         if texparam & (1 << 17) != 0 {
+            // TEXIMAGE_PARAM bit 17: repeat in T direction
             if texparam & (1 << 19) != 0 && t & height != 0 {
+                // TEXIMAGE_PARAM bit 19: flip in T direction
                 t = (height - 1) - (t & (height - 1));
             } else {
                 t &= height - 1;
@@ -41,13 +47,14 @@ impl Frame<'_> {
         }
         let (s, t, width) = (s as u32, t as u32, width as u32);
 
-        let alpha0 = if texparam & (1 << 29) != 0 { 0 } else { 31 };
+        let alpha0 = if texparam & (1 << 29) != 0 { 0 } else { 31 }; // TEXIMAGE_PARAM bit 29: color 0 is transparent
         match (texparam >> 26) & 7 {
             1 => {
                 // A3I5
                 let pixel = u32::from(tex(vramaddr + t * width + s));
-                let color = pal((texpal << 4) + ((pixel & 0x1F) << 1));
-                (color, ((pixel >> 3) & 0x1C) + (pixel >> 6))
+                // DS 3D Texture Formats: https://problemkaputt.de/gbatek.htm#ds3dtextureformats
+                let color = pal((texpal << 4) + ((pixel & 0x1F) << 1)); // A3I5: palette index bits 0-4
+                (color, ((pixel >> 3) & 0x1C) + (pixel >> 6)) // A3I5: 3-bit alpha (bits 5-7) expanded to 5 bits
             }
             2 => {
                 // 4-color palette
@@ -59,7 +66,7 @@ impl Frame<'_> {
             3 => {
                 // 16-color palette
                 let byte = u32::from(tex(vramaddr + ((t * width + s) >> 1)));
-                let pixel = if s & 1 != 0 { byte >> 4 } else { byte & 0xF };
+                let pixel = if s & 1 != 0 { byte >> 4 } else { byte & 0xF }; // 4-color/16-color: low nibble for even texels, high nibble for odd
                 let color = pal((texpal << 4) + (pixel << 1));
                 (color, if pixel == 0 { alpha0 } else { 31 })
             }
@@ -73,23 +80,25 @@ impl Frame<'_> {
                 // 4x4 compressed
                 vramaddr += (t & 0x3FC) * (width >> 2) + (s & 0x3FC);
                 vramaddr += t & 3;
-                vramaddr &= 0x7FFFF;
-                let mut slot1 = 0x20000 + ((vramaddr & 0x1FFFC) >> 1);
+                vramaddr &= 0x7FFFF; // texture VRAM is 512K
+                let mut slot1 = 0x20000 + ((vramaddr & 0x1FFFC) >> 1); // 4x4 compressed: palette index data in slot 1 (20000h)
                 if vramaddr >= 0x40000 {
-                    slot1 += 0x10000;
+                    // texels in slot 2 use the upper half of slot 1
+                    slot1 += 0x10000; // second 64K of slot 1
                 }
                 let val = if (0x20000..0x40000).contains(&vramaddr) {
+                    // slot 1 holds palette index data, not texels
                     0
                 } else {
                     u32::from(tex(vramaddr)) >> (2 * (s & 3))
                 };
                 let palinfo = tex16(slot1);
-                let base = (texpal << 4) + ((palinfo & 0x3FFF) << 2);
+                let base = (texpal << 4) + ((palinfo & 0x3FFF) << 2); // 4x4 compressed: palette offset (bits 0-13) * 4
                 let mix = |w0: u32, w1: u32| {
                     let (c0, c1) = (pal(base), pal(base + 2));
-                    let r = ((c0 & 0x1F) * w0 + (c1 & 0x1F) * w1) >> 3;
-                    let g = (((c0 & 0x3E0) * w0 + (c1 & 0x3E0) * w1) >> 3) & 0x3E0;
-                    let b = (((c0 & 0x7C00) * w0 + (c1 & 0x7C00) * w1) >> 3) & 0x7C00;
+                    let r = ((c0 & 0x1F) * w0 + (c1 & 0x1F) * w1) >> 3; // blend red (bits 0-4)
+                    let g = (((c0 & 0x3E0) * w0 + (c1 & 0x3E0) * w1) >> 3) & 0x3E0; // blend green (bits 5-9)
+                    let b = (((c0 & 0x7C00) * w0 + (c1 & 0x7C00) * w1) >> 3) & 0x7C00; // blend blue (bits 10-14)
                     r | g | b
                 };
                 match (val & 3, palinfo >> 14) {
@@ -112,7 +121,7 @@ impl Frame<'_> {
             7 => {
                 // Direct color
                 let color = tex16(vramaddr + ((t * width + s) << 1));
-                (color, if color & 0x8000 != 0 { 31 } else { 0 })
+                (color, if color & 0x8000 != 0 { 31 } else { 0 }) // direct color: bit 15 = alpha
             }
             _ => (0, 31),
         }

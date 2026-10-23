@@ -51,10 +51,11 @@ pub type IrqRequest = (Side, IpcIrq);
 
 /// IPCFIFOCNT bits stored in the register (the status bits are derived).
 const CNT_SEND_EMPTY_IRQ: u16 = 1 << 2;
-const CNT_SEND_CLEAR: u16 = 1 << 3;
-const CNT_RECV_NEMPTY_IRQ: u16 = 1 << 10;
-const CNT_ERROR: u16 = 1 << 14;
-const CNT_ENABLE: u16 = 1 << 15;
+// DS Inter Process Communication (IPC): https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc
+const CNT_SEND_CLEAR: u16 = 1 << 3; // IPCFIFOCNT bit 3: send FIFO clear
+const CNT_RECV_NEMPTY_IRQ: u16 = 1 << 10; // IPCFIFOCNT bit 10: receive FIFO not empty IRQ
+const CNT_ERROR: u16 = 1 << 14; // IPCFIFOCNT bit 14: error (read empty / send full)
+const CNT_ENABLE: u16 = 1 << 15; // IPCFIFOCNT bit 15: enable send/receive FIFO
 
 /// Both CPUs' IPCSYNC/IPCFIFOCNT registers and the two direction queues.
 #[derive(Debug, Clone, Default)]
@@ -145,14 +146,17 @@ impl Ipc {
     /// remote has its IPCSYNC IRQ enabled.
     pub const fn write_sync(&mut self, side: Side, value: u16, mask: u16) -> Option<IrqRequest> {
         let remote = side.remote();
+        // DS Inter Process Communication (IPC): https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc
         if mask & 0xFF00 != 0 {
-            let out = (value >> 8) & 0xF;
+            // upper byte written: IPCSYNC output
+            let out = (value >> 8) & 0xF; // IPCSYNC data output (bits 8-11)
             let own = self.sync_mut(side);
             *own = (*own & !0x4F00) | (value & 0x4F00);
             let other = self.sync_mut(remote);
             *other = (*other & !0x000F) | out;
 
             if value & (1 << 13) != 0 && self.sync(remote) & (1 << 14) != 0 {
+                // IPCSYNC bit 13: send IRQ, remote bit 14: IRQ enable
                 return Some((remote, IpcIrq::Sync));
             }
         }
@@ -166,14 +170,15 @@ impl Ipc {
         let recv = self.send_queue(side.remote());
         let mut value = self.cnt(side);
         if send.is_empty() {
-            value |= 1 << 0;
+            // DS Inter Process Communication (IPC): https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc
+            value |= 1 << 0; // IPCFIFOCNT bit 0: send FIFO empty
         } else if send.len() >= FIFO_DEPTH {
-            value |= 1 << 1;
+            value |= 1 << 1; // IPCFIFOCNT bit 1: send FIFO full
         }
         if recv.is_empty() {
-            value |= 1 << 8;
+            value |= 1 << 8; // IPCFIFOCNT bit 8: receive FIFO empty
         } else if recv.len() >= FIFO_DEPTH {
-            value |= 1 << 9;
+            value |= 1 << 9; // IPCFIFOCNT bit 9: receive FIFO full
         }
         value
     }
@@ -294,20 +299,20 @@ mod tests {
         let mut ipc = Ipc::new();
         // ARM9 byte-writes 0x5 to 4000181h
         assert_eq!(ipc.write_sync(Side::Arm9, 0x0500, 0xFF00), None);
-        assert_eq!(ipc.read_sync(Side::Arm7) & 0xF, 0x5);
+        assert_eq!(ipc.read_sync(Side::Arm7) & 0xF, 0x5); // IPCSYNC data input (bits 0-3)
         assert_eq!(ipc.read_sync(Side::Arm9), 0x0500);
         // byte write to 4000180h is a no-op
         ipc.write_sync(Side::Arm9, 0x0F, 0x00FF);
-        assert_eq!(ipc.read_sync(Side::Arm9), 0x0500);
+        assert_eq!(ipc.read_sync(Side::Arm9), 0x0500); // ARM7 sees its output in bits 8-11
     }
 
     #[test]
     fn sync_irq_requires_remote_enable() {
         let mut ipc = Ipc::new();
-        assert_eq!(ipc.write_sync(Side::Arm9, 1 << 13, 0xFFFF), None);
-        ipc.write_sync(Side::Arm7, 1 << 14, 0xFFFF);
+        assert_eq!(ipc.write_sync(Side::Arm9, 1 << 13, 0xFFFF), None); // IPCSYNC bit 13: send IRQ to the remote CPU
+        ipc.write_sync(Side::Arm7, 1 << 14, 0xFFFF); // IPCSYNC bit 14: enable IRQ from the remote CPU
         assert_eq!(
-            ipc.write_sync(Side::Arm9, 1 << 13, 0xFFFF),
+            ipc.write_sync(Side::Arm9, 1 << 13, 0xFFFF), // IPCSYNC bit 13: send IRQ to the remote CPU
             Some((Side::Arm7, IpcIrq::Sync))
         );
     }
@@ -317,14 +322,14 @@ mod tests {
         let mut ipc = Ipc::new();
         ipc.write_cnt(Side::Arm9, CNT_ENABLE);
         ipc.write_cnt(Side::Arm7, CNT_ENABLE | CNT_RECV_NEMPTY_IRQ);
-        assert_eq!(ipc.read_cnt(Side::Arm7) & (1 << 8), 1 << 8);
+        assert_eq!(ipc.read_cnt(Side::Arm7) & (1 << 8), 1 << 8); // IPCFIFOCNT bit 8: receive FIFO empty
         assert_eq!(
-            ipc.send(Side::Arm9, 0xDEAD_BEEF),
+            ipc.send(Side::Arm9, 0xDEAD_BEEF), // test word
             Some((Side::Arm7, IpcIrq::RecvNotEmpty))
         );
         assert_eq!(ipc.read_cnt(Side::Arm9) & 1, 0); // ARM9 send not empty
         assert_eq!(ipc.read_cnt(Side::Arm7) & (1 << 8), 0); // ARM7 recv not empty
-        assert_eq!(ipc.receive(Side::Arm7).0, 0xDEAD_BEEF);
+        assert_eq!(ipc.receive(Side::Arm7).0, 0xDEAD_BEEF); // test word
         assert_eq!(ipc.read_cnt(Side::Arm9) & 1, 1);
         // empty read sets the error flag and returns the last word
         assert_eq!(ipc.receive(Side::Arm7).0, 0xDEAD_BEEF);
